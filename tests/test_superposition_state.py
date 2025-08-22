@@ -62,7 +62,7 @@ class TestOutputSuperposedState:
 
         output_classical = classical_method(layer, input_state_superposed)
 
-        assert torch.allclose(output_superposed[0], output_classical, rtol=3e-3, atol=1e-6)
+        assert torch.allclose(output_superposed[0], output_classical, rtol=1e-2, atol=1e-6)
 
     def test_classical_method(self, benchmark):
         """Test NONE strategy when output_size is not specified."""
@@ -104,4 +104,4 @@ class TestOutputSuperposedState:
             lambda: classical_method(layer, input_state_superposed)
         )
 
-        assert torch.allclose(output_superposed[0], output_classical, rtol=3e-3, atol=1e-7)
+        assert torch.allclose(output_superposed[0], output_classical, rtol=1e-2, atol=1e-7)

@@ -505,6 +505,7 @@ class QuantumLayer(nn.Module):
             needs_gradient, apply_sampling or False, shots or self.shots
         )
         distribution = amplitudes.real ** 2 + amplitudes.imag ** 2
+        print(amplitudes.shape)
         if self.no_bunching:
             sum_probs = distribution.sum(dim=1, keepdim=True)
 
