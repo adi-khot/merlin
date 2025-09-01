@@ -151,7 +151,7 @@ class FeedForward(torch.nn.Module):
 
 
 
-    def iterate_feedforward(self, current_tuple, remaining_amplitudes, keys, accumulated_prob, intermediary, outputs, depth=0):
+    def iterate_feedforward(self, current_tuple, remaining_amplitudes, keys, accumulated_prob, intermediary, outputs, depth=0, conditional_mode=0):
         """Recursively process the feed-forward computation.
         
         Args:
@@ -167,12 +167,12 @@ class FeedForward(torch.nn.Module):
             outputs[current_tuple] = accumulated_prob
             return
         
-        next_position = len(current_tuple)
+
 
         layer_with_photon = self.layers.get(current_tuple + (1,), None)
         layer_without_photon = self.layers.get(current_tuple + (0,), None)
         
-        layer_idx_not, layer_idx = self.indices_by_value(keys, 0)
+        layer_idx_not, layer_idx = self.indices_by_value(keys, conditional_mode)
         prob_not = remaining_amplitudes[:, layer_idx_not].abs().pow(2).sum(dim=1)
         prob_with = remaining_amplitudes[:, layer_idx].abs().pow(2).sum(dim=1)
 
@@ -200,7 +200,8 @@ class FeedForward(torch.nn.Module):
                 new_prob_with,
                 intermediary, 
                 outputs, 
-                depth + 1
+                depth + 1,
+                conditional_mode,
             )
         else:
             final_tuple_with = current_key_with + (0,) * (self.m - len(current_key_with))
@@ -249,7 +250,7 @@ class FeedForward(torch.nn.Module):
         prob1 = probs[:, layer_1_idx].sum(dim=1)
         intermediary[(1,)] = prob1
         intermediary[(0,)] = prob1_not
-        self.iterate_feedforward((), amplitudes, keys, 1.0, intermediary, outputs)
+        self.iterate_feedforward((), amplitudes, keys, 1.0, intermediary, outputs, self.conditional_mode)
         return torch.stack(list(outputs.values()))
 
 
@@ -358,7 +359,6 @@ class FeedForwardBlock(torch.nn.Module):
         Returns:
             tuple: Indices where value is 0, indices where value is 1.
         """
-        # convertir en tenseur PyTorch
         t = torch.tensor(keys)
 
         # indices où la valeur vaut 0
