@@ -7,6 +7,14 @@ from perceval.components import BS, PS
 
 
 def create_circuit(M):
+    """Create a quantum photonic circuit with beam splitters and phase shifters.
+    
+    Args:
+        M (int): Number of modes in the circuit.
+        
+    Returns:
+        pcvl.Circuit: A quantum photonic circuit with alternating beam splitter layers and phase shifters.
+    """
     circuit = pcvl.Circuit(M)
 
     def layer_bs(circuit, k, M, j):
@@ -32,6 +40,15 @@ def create_circuit(M):
 
 
 def define_layer(n_modes, n_photons):
+    """Define a quantum layer for feed-forward processing.
+    
+    Args:
+        n_modes (int): Number of optical modes.
+        n_photons (int): Number of photons in the layer.
+        
+    Returns:
+        QuantumLayer: A configured quantum layer with trainable parameters.
+    """
     circuit = create_circuit(n_modes)
     input_state = [1] * n_photons + [0] * (n_modes - n_photons)
     layer = QuantumLayer(
@@ -47,6 +64,15 @@ def define_layer(n_modes, n_photons):
     return layer
 
 def define_first_layer(M, N):
+    """Define the first layer of the feed-forward network.
+    
+    Args:
+        M (int): Number of modes in the circuit.
+        N (int): Number of photons.
+        
+    Returns:
+        QuantumLayer: The first quantum layer with input parameters.
+    """
     circuit = create_circuit(M)
     input_state = [1] * N + [0] * (M - N)
     layer = QuantumLayer(
@@ -63,6 +89,17 @@ def define_first_layer(M, N):
     return layer
 
 class FeedForward(torch.nn.Module):
+    """Feed-forward quantum neural network for photonic computation.
+    
+    This class implements a feed-forward architecture where quantum layers are
+    conditionally activated based on photon detection measurements.
+    
+    Args:
+        m (int): Total number of modes.
+        n_photons (int): Number of photons in the system.
+        conditional_mode (int): Mode index used for conditional measurement.
+    """
+    
     def __init__(self, m:int, n_photons:int, conditional_mode:int):
         super().__init__()
         self.layer1 = define_first_layer(m, n_photons)
@@ -73,6 +110,11 @@ class FeedForward(torch.nn.Module):
         self.define_layers()
 
     def generate_possible_tuples(self):
+        """Generate all possible measurement outcome tuples.
+        
+        Returns:
+            set: Set of tuples representing possible measurement patterns.
+        """
         n = self.n_photons
         m = self.m
         possible_tuples = set()
@@ -85,6 +127,10 @@ class FeedForward(torch.nn.Module):
         return possible_tuples
 
     def define_layers(self):
+        """Define all quantum layers for different measurement outcomes.
+        
+        Creates a dictionary mapping measurement tuples to corresponding quantum layers.
+        """
         tuples = self.generate_possible_tuples()
         for tup in tuples:
             n = sum(tup)
@@ -92,6 +138,11 @@ class FeedForward(torch.nn.Module):
             self.layers[tup] = define_layer(self.m - m, self.n_photons - n)
 
     def parameters(self):
+        """Return an iterator over all trainable parameters.
+        
+        Yields:
+            torch.Tensor: Trainable parameters from all quantum layers.
+        """
         for param in self.layer1.parameters():
             yield param
         for layer in self.layers.values():
@@ -101,8 +152,16 @@ class FeedForward(torch.nn.Module):
 
 
     def iterate_feedforward(self, current_tuple, remaining_amplitudes, keys, accumulated_prob, intermediary, outputs, depth=0):
-        """
-
+        """Recursively process the feed-forward computation.
+        
+        Args:
+            current_tuple (tuple): Current measurement pattern.
+            remaining_amplitudes (torch.Tensor): Quantum state amplitudes.
+            keys (list): State basis keys.
+            accumulated_prob (torch.Tensor): Accumulated probability.
+            intermediary (dict): Intermediate probability values.
+            outputs (dict): Final output probabilities.
+            depth (int): Current recursion depth.
         """
         if depth >= self.m - 1:
             outputs[current_tuple] = accumulated_prob
@@ -173,6 +232,14 @@ class FeedForward(torch.nn.Module):
             outputs[final_tuple_without] = new_prob_without
 
     def forward(self, x):
+        """Forward pass of the feed-forward network.
+        
+        Args:
+            x (torch.Tensor): Input tensor.
+            
+        Returns:
+            torch.Tensor: Output probabilities for all measurement patterns.
+        """
         intermediary = {}
         outputs = {}
         probs, amplitudes = self.layer1(x, return_amplitudes=True)
@@ -187,9 +254,14 @@ class FeedForward(torch.nn.Module):
 
 
     def indices_by_value(self, keys, k):
-        """
-        data : liste de tuples ou liste de listes
-        k    : position à vérifier
+        """Find indices where a specific position has value 0 or 1.
+        
+        Args:
+            keys (list): List of tuples representing quantum states.
+            k (int): Position index to check.
+            
+        Returns:
+            tuple: Indices where value is 0, indices where value is 1.
         """
         # convertir en tenseur PyTorch
         t = torch.tensor(keys)
@@ -203,10 +275,16 @@ class FeedForward(torch.nn.Module):
 
 
     def match_indices(self, data, data_out, k, k_value):
-        """
-        data      : list of tuples (length n)
-        data_out  : list of tuples (length n-1)
-        k         : index of the column to withdraw
+        """Match indices between two state representations.
+        
+        Args:
+            data (list): List of tuples with length n.
+            data_out (list): List of tuples with length n-1.
+            k (int): Index of the column to remove.
+            k_value (int): Value to match at position k (0 or 1).
+            
+        Returns:
+            torch.Tensor: Indices of matching states.
         """
         # Convert to dict to optimize search
         out_map = {tuple(row): i for i, row in enumerate(data_out)}
@@ -225,6 +303,18 @@ class FeedForward(torch.nn.Module):
 
 
 class FeedForwardBlock(torch.nn.Module):
+    """Single block of feed-forward quantum computation.
+    
+    A simplified version of FeedForward with only three layers:
+    one input layer and two conditional output layers.
+    
+    Args:
+        layer1 (QuantumLayer): Input quantum layer.
+        layer2 (QuantumLayer): Output layer for photon detection.
+        layer2not (QuantumLayer): Output layer for no photon detection.
+        conditional_mode (int): Mode index for conditional measurement.
+    """
+    
     def __init__(self, layer1, layer2, layer2not, conditional_mode: int):
         super().__init__()
         self.layer1 = layer1
@@ -234,6 +324,14 @@ class FeedForwardBlock(torch.nn.Module):
 
 
     def forward(self, x):
+        """Forward pass of the feed-forward block.
+        
+        Args:
+            x (torch.Tensor): Input tensor.
+            
+        Returns:
+            tuple: Two tensors representing conditional outputs.
+        """
         probs, amplitudes = self.layer1(x, return_amplitudes=True)
         keys = self.layer1.computation_process.simulation_graph.mapped_keys
         layer_1_idx_not, layer_1_idx = self.indices_by_value(keys, self.conditional_mode)
@@ -251,9 +349,14 @@ class FeedForwardBlock(torch.nn.Module):
 
 
     def indices_by_value(self, keys, k):
-        """
-        data : liste de tuples ou liste de listes
-        k    : position à vérifier
+        """Find indices where a specific position has value 0 or 1.
+        
+        Args:
+            keys (list): List of tuples representing quantum states.
+            k (int): Position index to check.
+            
+        Returns:
+            tuple: Indices where value is 0, indices where value is 1.
         """
         # convertir en tenseur PyTorch
         t = torch.tensor(keys)
@@ -268,10 +371,16 @@ class FeedForwardBlock(torch.nn.Module):
 
 
     def match_indices(self, data, data_out, k, k_value):
-        """
-        data      : liste de tuples (longueur n)
-        data_out  : liste de tuples (longueur n-1)
-        k         : index de la colonne à retirer
+        """Match indices between two state representations.
+        
+        Args:
+            data (list): List of tuples with length n.
+            data_out (list): List of tuples with length n-1.
+            k (int): Index of the column to remove.
+            k_value (int): Value to match at position k (0 or 1).
+            
+        Returns:
+            torch.Tensor: Indices of matching states.
         """
         # Conversion en dictionnaire pour retrouver rapidement les indices de data_out
         out_map = {tuple(row): i for i, row in enumerate(data_out)}
@@ -328,9 +437,9 @@ if __name__ == "__main__":
         output_size=None,
         circuit=circuit,
         n_photons=N,
-        input_state=input_state,  # Random Initial quantum state used only for initialization
+        input_state=input_state,
         output_mapping_strategy=OutputMappingStrategy.NONE,
-        input_parameters=["phi"],  # Optional: Specify device
+        input_parameters=["phi"],
         trainable_parameters=["theta"],
         no_bunching=True,
     )
