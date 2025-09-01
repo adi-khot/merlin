@@ -353,7 +353,7 @@ class TestQuantumLayer:
         
         # Test forward pass (no input needed)
         output = layer()
-        assert output.shape == (3,)
+        assert output.shape == (1, 3)
         assert torch.all(torch.isfinite(output))
         
         # Test gradient computation

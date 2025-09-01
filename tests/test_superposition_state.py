@@ -51,18 +51,18 @@ class TestOutputSuperposedState:
             input_state=input_state,
             trainable_parameters=["phi"],
             input_parameters=[],
-            dtype=torch.float32,
+            dtype=torch.float64,
             no_bunching=True,
         )
 
 
-        input_state_superposed = {layer.computation_process.simulation_graph.mapped_keys[k]:input_state[0, k] for k in range(len(input_state[0]))}
+        input_state_superposed = {layer.computation_process.simulation_graph.mapped_keys[k]:input_state[1, k] for k in range(len(input_state[0]))}
 
         output_superposed = benchmark(layer)
 
         output_classical = classical_method(layer, input_state_superposed)
 
-        assert torch.allclose(output_superposed[0], output_classical, rtol=1e-2, atol=1e-6)
+        assert torch.allclose(output_superposed[1], output_classical, rtol=3e-4, atol=1e-7)
 
     def test_classical_method(self, benchmark):
         """Test NONE strategy when output_size is not specified."""
@@ -90,7 +90,7 @@ class TestOutputSuperposedState:
             input_state=input_state,
             trainable_parameters=["phi"],
             input_parameters=[],
-            dtype=torch.float32,
+            dtype=torch.float64,
             no_bunching=True,
         )
 
@@ -104,4 +104,4 @@ class TestOutputSuperposedState:
             lambda: classical_method(layer, input_state_superposed)
         )
 
-        assert torch.allclose(output_superposed[0], output_classical, rtol=1e-2, atol=1e-7)
+        assert torch.allclose(output_superposed[0], output_classical, rtol=3e-4, atol=1e-7)

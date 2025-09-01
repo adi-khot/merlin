@@ -43,6 +43,9 @@ from ..sampling.strategies import OutputMappingStrategy
 from .ansatz import Ansatz, AnsatzFactory
 
 
+
+
+
 class QuantumLayer(nn.Module):
     """
     Enhanced Quantum Neural Network Layer with factory-based architecture.
@@ -505,7 +508,6 @@ class QuantumLayer(nn.Module):
             needs_gradient, apply_sampling or False, shots or self.shots
         )
         distribution = amplitudes.real ** 2 + amplitudes.imag ** 2
-        print(amplitudes.shape)
         if self.no_bunching:
             sum_probs = distribution.sum(dim=1, keepdim=True)
 
@@ -519,6 +521,14 @@ class QuantumLayer(nn.Module):
                         valid_entries, sum_probs, torch.ones_like(sum_probs)
                     ),
                     distribution,
+                )
+                amplitudes = torch.where(
+                    valid_entries,
+                    amplitudes
+                    / torch.where(
+                        valid_entries, sum_probs.sqrt(), torch.ones_like(sum_probs)
+                    ),
+                    amplitudes,
                 )
         if apply_sampling and shots > 0:
             distribution = self.autodiff_process.sampling_noise.pcvl_sampler(
