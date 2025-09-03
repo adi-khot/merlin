@@ -1,6 +1,7 @@
 # MerLin - Photonic Quantum Machine Learning Framework
 
 ![Tests](https://img.shields.io/github/actions/workflow/status/merlinquantum/merlin/ci.yml?branch=main&style=flat-square&logo=github&label=tests)
+![Coverage](https://img.shields.io/github/actions/workflow/status/merlinquantum/merlin/coverage.yml?branch=main&style=flat-square&logo=github&label=coverage)
 
 MerLin brings quantum computing capabilities to AI practitioners through easy-to-use PyTorch integrations. Named after the legendary wizard, MerLin adds quantum wizardry to your AI toolkit with no quantum expertise required.
 
@@ -97,6 +98,39 @@ MIT License - see [LICENSE](https://github.com/merlinquantum/merlin/blob/main/LI
 
 - **Issues**: [GitHub Issues](https://github.com/merlinquantum/merlin/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/merlinquantum/merlin/discussions)
+
+## Test Coverage
+
+MerLin uses automated test coverage tracking to maintain code quality:
+
+**Coverage Reports:**
+- 🎯 **Target Coverage:** 80% (warning threshold)
+- 📊 **Reports Generated:** On every PR and commit
+- 🚫 **Non-blocking:** Coverage checks don't prevent merges
+- 📈 **Diff Coverage:** Shows coverage for changed files only
+
+**Running Coverage Locally:**
+```bash
+# Quick coverage check
+pytest tests/ --cov=merlin --cov-report=term | grep TOTAL
+
+# Detailed coverage with missing lines  
+pytest tests/ --cov=merlin --cov-report=term-missing
+
+# Generate HTML report
+pytest tests/ --cov=merlin --cov-report=html
+# Then open htmlcov/index.html in browser
+
+# Test specific module
+pytest tests/test_layer.py --cov=merlin.core --cov-report=term
+```
+
+**Coverage Configuration:**
+- Exclusions: Tests, migrations, virtual environments
+- Formats: Terminal, HTML, XML reports
+- Thresholds: 80% target (informational only)
+
+Coverage data is automatically collected and reported in PRs without blocking development workflow.
 
 ----
 
