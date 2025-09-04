@@ -176,6 +176,7 @@ def layer_compute_backward(
         Next layer amplitudes [batch_size, next_size]
     """
     inverts = []
+    device = unitary.device
     computing_tensors = []
     for p in range(m):
         # Determine output size
@@ -186,12 +187,12 @@ def layer_compute_backward(
         u_elements = torch.diag_embed(unitary[:, modes, p])
 
         destinations_tensor = torch.zeros(
-            (1, size_destinations, modes.shape[0]), dtype=u_elements.dtype
+            (1, size_destinations, modes.shape[0]), dtype=u_elements.dtype, device=device,
         )
         destinations_tensor[:, destinations, torch.arange(destinations.shape[0])] = 1
 
         sources_tensor = torch.zeros(
-            (1, sources.shape[0], size_sources), dtype=u_elements.dtype
+            (1, sources.shape[0], size_sources), dtype=u_elements.dtype, device=device,
         )
         sources_tensor[:, torch.arange(sources.shape[0]), sources] = 1
 
