@@ -26,17 +26,57 @@ Advanced users can leverage the underlying [Perceval](https://perceval.quandela.
 
 ## Installation
 
-``` bash
-   pip install merlinquantum
+Production installation:
+```bash
+pip install merlinquantum
 ```
 
-For development:
-
-``` bash
-   git clone https://github.com/merlinquantum/merlin.git
-   cd merlin
-   pip install -e ".[dev]"
+Development (includes tests, benchmarks, lint & mypy):
+```bash
+git clone https://github.com/merlinquantum/merlin.git
+cd merlin
+pip install -e '.[dev]'
 ```
+
+Examples environment (notebooks & plots):
+```bash
+pip install -e '.[examples]'
+```
+
+Build documentation locally:
+```bash
+pip install -e '.[docs]'
+cd docs
+make html  # ou: make livehtml (si sphinx-autobuild ajouté manuellement)
+```
+
+### Tests & Benchmarks
+
+Run the full test suite:
+```bash
+pytest -q
+```
+
+Run only benchmarks (pytest-benchmark):
+```bash
+pytest --benchmark-only
+```
+
+Compare two branches (example):
+```bash
+pytest tests/test_sampling.py --benchmark-save current
+# ... switch branch ...
+pytest tests/test_sampling.py --benchmark-compare current
+```
+
+Quick quality checks:
+```bash
+ruff check .
+ruff format --check .
+mypy merlin
+```
+
+Tip: run `pytest -k <keyword>` to target a subset.
 
 ## Hello Quantum World!
 
