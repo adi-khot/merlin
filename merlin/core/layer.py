@@ -568,6 +568,10 @@ class QuantumLayer(nn.Module):
             self.computation_process.converter = self.computation_process.converter.to(
                 self.dtype, device
             )
+            if hasattr(self.output_mapping, "weight"):
+                self.output_mapping = self.output_mapping.to(
+                    dtype=self.dtype, device=self.device
+                )
         return self
 
     def get_index_photons_info(self) -> dict:
