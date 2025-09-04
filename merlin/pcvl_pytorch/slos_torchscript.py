@@ -525,7 +525,7 @@ class SLOSComputeGraph:
                 layer_compute_backward(unitary, sources, destinations, modes, self.m)
             )
 
-    def to(self, dtype: torch.dtype, device: str | torch.device):
+    def to(self, device: str | torch.device):
         """
         Moves the converter to a specific device.
 
@@ -541,27 +541,18 @@ class SLOSComputeGraph:
             raise TypeError(
                 f"Expected a string or torch.device, but got {type(device).__name__}"
             )
-        if dtype not in (
-            torch.float32,
-            torch.float64,
-            torch.complex64,
-            torch.complex128,
-        ):
-            raise TypeError(
-                f"Unsupported dtype {dtype}. Supported dtypes are torch.float32, torch.float64, "
-                f"torch.complex64, and torch.complex128."
-            )
+
         if self.output_map_func is not None:
             self.target_indices.to(dtype=dtype, device=self.device)
         for idx, (sources, destinations, modes) in enumerate(
             self.vectorized_operations
         ):
             self.vectorized_operations[idx] = (
-                sources.to(dtype=dtype, device=self.device),
-                destinations.to(dtype=dtype, device=self.device),
-                modes.to(dtype=dtype, device=self.device),
+                sources.to(device=self.device),
+                destinations.to(device=self.device),
+                modes.to(device=self.device),
             )
-
+        self._create_torchscript_modules()
         return self
 
     def compute_pa_inc(

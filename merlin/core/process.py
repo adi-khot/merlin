@@ -136,8 +136,15 @@ class ComputationProcess(AbstractComputationProcess):
             return chain
         if len(self.input_state.shape) == 1:
             self.input_state = self.input_state.unsqueeze(0)
-        complex_dtype = self.input_state.dtype.to_complex()
-        self.input_state = self.input_state.to(complex_dtype)
+        if self.input_state.dtype == torch.float32:
+            self.input_state = self.input_state.to(torch.complex64)
+        elif self.input_state.dtype == torch.float64:
+            self.input_state = self.input_state.to(torch.complex128)
+
+        sum_input = self.input_state.abs().pow(2).sum(dim=1).sqrt().unsqueeze(1)
+        self.input_state = self.input_state / sum_input
+
+
         mask = (self.input_state.real ** 2 + self.input_state.imag ** 2 < 1e-13).all(dim=0)
 
         masked_input_state = (~mask).int().tolist()
@@ -151,7 +158,7 @@ class ComputationProcess(AbstractComputationProcess):
         prev_state_index, prev_state = state_list.pop(0)
 
         _, amplitude = self.simulation_graph.compute(unitary, prev_state)
-        amplitudes = torch.zeros((self.input_state.shape[-1], len(self.simulation_graph.mapped_keys)), dtype=amplitude.dtype)
+        amplitudes = torch.zeros((self.input_state.shape[-1], len(self.simulation_graph.mapped_keys)), dtype=amplitude.dtype, device=self.input_state.device)
         amplitudes[prev_state_index] = amplitude
 
 
