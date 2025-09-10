@@ -106,6 +106,7 @@ class FeedForwardBlock(torch.nn.Module):
                  n: int,
                  m:int,
                  depth: int = None,
+                 state_injection=False,
                  conditional_mode:int=0,
                  layers: List[QuantumLayer]=None,
                  ):
@@ -114,6 +115,7 @@ class FeedForwardBlock(torch.nn.Module):
         self.m = m
         self.input_size = input_size
         self.n_photons = n
+        self.state_injection = state_injection
         self.layers = {}
         if depth is None:
             depth = self.m - 1
@@ -144,8 +146,11 @@ class FeedForwardBlock(torch.nn.Module):
         possible_tuples = []
         for l in range(self.depth + 1):
             for t in product([0, 1], repeat=l):
-                if t.count(1) <= n - 1 and t.count(0) <= (m - n - 1):
+                if self.state_injection:
                     possible_tuples.append(t)
+                elif t.count(1) <= n - 1 and t.count(0) <= (m - n - 1):
+                        possible_tuples.append(t)
+
         return possible_tuples
 
     def define_layers(self):
@@ -159,20 +164,28 @@ class FeedForwardBlock(torch.nn.Module):
         self.tuples = tuples
         self.input_segments = {}  # Track input size for each layer
         start = 0
-
         for tup in tuples:
             n = sum(tup)
             m = len(tup)
-            input = min(self.m-m, input_size)
+            if self.state_injection:
+                input = min(self.m, input_size)
+            else:
+                input = min(self.m-m, input_size)
             if input > 0:
-                self.layers[tup] = define_layer_with_input(self.m - m, self.n_photons - n, input)
+                if self.state_injection:
+                    self.layers[tup] = define_layer_with_input(self.m , self.n_photons, input)
+                else:
+                    self.layers[tup] = define_layer_with_input(self.m - m, self.n_photons - n, input)
                 self.input_segments[tup] = (start, start + input)
             else:
-                self.layers[tup] = define_layer_no_input(self.m - m, self.n_photons - n)
+                if self.state_injection:
+                    self.layers[tup] = define_layer_no_input(self.m, self.n_photons)
+                else:
+                    self.layers[tup] = define_layer_no_input(self.m - m, self.n_photons - n)
                 self.input_segments[tup] = (0, 0)
             input_size -= input
             start += input
-        assert input_size == 0
+        assert input_size == 0, (f"The input size can't be higher than {start}")
 
     def parameters(self):
         """Return an iterator over all trainable parameters.
@@ -215,7 +228,6 @@ class FeedForwardBlock(torch.nn.Module):
 
         layer_with_photon = self.layers.get(current_tuple + (1,), None)
         layer_without_photon = self.layers.get(current_tuple + (0,), None)
-
         layer_idx_not, layer_idx = self._indices_by_value(keys, conditional_mode)
         prob_not = remaining_amplitudes[:, layer_idx_not].abs().pow(2).sum(dim=1)
         prob_with = remaining_amplitudes[:, layer_idx].abs().pow(2).sum(dim=1)
@@ -229,8 +241,12 @@ class FeedForwardBlock(torch.nn.Module):
         if layer_with_photon is not None:
             m = layer_with_photon.computation_process.m
             conditional_mode = min(self.conditional_mode, m-1)
-            keys_with = layer_with_photon.computation_process.simulation_graph.mapped_keys
-            match_idx_with = self._match_indices(keys, keys_with, conditional_mode, k_value=1)
+            if self.state_injection:
+                match_idx_with = layer_idx
+                keys_with = keys
+            else:
+                keys_with = layer_with_photon.computation_process.simulation_graph.mapped_keys
+                match_idx_with = self._match_indices(keys, keys_with, conditional_mode, k_value=1)
             layer_with_photon.computation_process.input_state = remaining_amplitudes[:, match_idx_with]
             start, end = self.input_segments[current_key_with]
 
@@ -259,8 +275,12 @@ class FeedForwardBlock(torch.nn.Module):
         if layer_without_photon is not None:
             m = layer_without_photon.computation_process.m
             conditional_mode = min(self.conditional_mode, m-1)
-            keys_without = layer_without_photon.computation_process.simulation_graph.mapped_keys
-            match_idx_without = self._match_indices(keys, keys_without, conditional_mode, k_value=0)
+            if self.state_injection:
+                match_idx_without = layer_idx_not
+                keys_without = keys
+            else:
+                keys_without = layer_without_photon.computation_process.simulation_graph.mapped_keys
+                match_idx_without = self._match_indices(keys, keys_without, conditional_mode, k_value=0)
             layer_without_photon.computation_process.input_state = remaining_amplitudes[:, match_idx_without]
 
             # Get input segment for this layer
@@ -298,6 +318,8 @@ class FeedForwardBlock(torch.nn.Module):
         Returns:
             torch.Tensor: Output probabilities for all measurement patterns.
         """
+        if x.shape[-1] != self.input_size:
+            raise ValueError("The input should be of size {}".format(self.input_size))
         intermediary = {}
         outputs = {}
         input_size = min(self.input_size, self.m)
@@ -305,11 +327,6 @@ class FeedForwardBlock(torch.nn.Module):
         layer = self.layers[()]
         probs, amplitudes = layer(input, return_amplitudes=True)
         keys = layer.computation_process.simulation_graph.mapped_keys
-        layer_1_idx_not, layer_1_idx = self._indices_by_value(keys, self.conditional_mode)
-        prob1_not = probs[:, layer_1_idx_not].sum(dim=1)
-        prob1 = probs[:, layer_1_idx].sum(dim=1)
-        intermediary[(1,)] = prob1
-        intermediary[(0,)] = prob1_not
         self.iterate_feedforward((), amplitudes, keys, 1.0, intermediary, outputs, 0, self.conditional_mode, x=x)
         return torch.stack(list(outputs.values()), dim=1)
 
@@ -412,17 +429,17 @@ if __name__ == "__main__":
     from perceval.components import BS, PS
     from itertools import chain
 
-    L = torch.nn.Linear(30, 30)
-    feed_forward = FeedForwardBlock(30, 3, 12,  depth=3, conditional_mode=5)
+    L = torch.nn.Linear(20, 20)
+    feed_forward = FeedForwardBlock(20, 2, 6,  depth=3, conditional_mode=5, state_injection=True)
     layers = list(feed_forward.layers.values())
-    feed_forward =  FeedForwardBlock(30,3,12, depth=3, conditional_mode=5, layers=layers)
+    feed_forward =  FeedForwardBlock(20, 2, 6, depth=3, state_injection=True, conditional_mode=5, layers=layers)
     params = chain(L.parameters(), feed_forward.parameters())
     optimizer = torch.optim.Adam(params)
     print(feed_forward.get_output_size())
     print(feed_forward.input_size_ff_layer(1))
-    print(feed_forward.size_ff_layer(2))
+    print(feed_forward.size_ff_layer(1))
     feed_forward.define_ff_layer(1, layers[1:3])
-    x = torch.rand(1, 30)
+    x = torch.rand(1, 20)
     for _ in range(10):
         res = feed_forward(L(x))
         result = feed_forward(L(x)).pow(2).sum()

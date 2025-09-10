@@ -59,7 +59,11 @@ Example
    import torch
 
    # Initialize feedforward block
-   ffb = FeedforwardBlock(n=2, m=6, depth=3)
+   ffb = FeedforwardBlock(input_size=20, n=2, m=6, depth=3)
+
+   # You can define the mode to measure (conditional_mode)
+   # By default, the input_size is divided into the first layers of the ff block,
+   # matching when possible the number of modes. For instance, here: [6, 5, 5, 4]
 
    # Define a feedforward layer
    ffb.define_ff_layer(
@@ -72,19 +76,40 @@ Example
                input_parameters=["px"],          # Which parameters are inputs
            )
        ]
-   )
-
+   )   # This will update the quantum layer to an input size of 18 for the FeedForwardBlock
+   # You can also define the layers as a list of Quantum Layers in the parameter layers in the init function.
    # Random input tensor
-   t = torch.rand(4)
+   t = torch.rand(18)
 
    # Forward pass
    o = ffb(t)
 
    # Inspect output size
+   print(ffb.get_output_size())   # 6
+
+
+   # Inspect how many quantum layers are required for the first FF layer
+   print(ffb.size_ff_layer(1))   # 2
+
+   # Inspect what is the current input size of those layers, returns a list of integers
+   print(ffb.input_size_ff_layer(1))  # [5, 5]
+
+
+   # Feedforward block with state injection
+   ffb = FeedforwardBlock(input_size=20, n=2, m=6, depth=3, state_injection=True)
+   # Default state_injection mode is False
+
+   # New output size
    print(ffb.get_output_size())   # 15
 
    # Inspect how many quantum layers are required for the first FF layer
-   print(ffb.size_ff_layer(1))    # 2
+   print(ffb.size_ff_layer(1))   # 2
+
+   # Inspect what is the current input size of those layers, returns a list of integers
+   print(ffb.input_size_ff_layer(1))  # [6, 6]
+
+
+
 
 ----------------------------
 Further Reading
