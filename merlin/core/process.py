@@ -37,7 +37,7 @@ class ComputationProcess(AbstractComputationProcess):
     def __init__(
         self,
         circuit: pcvl.Circuit,
-        input_state: list[int] | dict[list[int], float],
+        input_state: list[int] | torch.Tensor,
         trainable_parameters: list[str],
         input_parameters: list[str],
         n_photons: int = None,
@@ -64,7 +64,10 @@ class ComputationProcess(AbstractComputationProcess):
 
         self.m = circuit.m  # Number of modes
         if n_photons is None:
-            self.n_photons = sum(input_state)  # Total number of photons
+            if type(input_state) is list:
+                self.n_photons = sum(input_state)  # Total number of photons
+            else:
+                raise ValueError("The number of photons should be provided")
         else:
             self.n_photons = n_photons
         # Build computation graphs
@@ -135,33 +138,49 @@ class ComputationProcess(AbstractComputationProcess):
                     chain.append(remaining.pop(0))
 
             return chain
-        if len(self.input_state.shape) == 1:
-            self.input_state = self.input_state.unsqueeze(0)
-        if self.input_state.dtype == torch.float32:
-            self.input_state = self.input_state.to(torch.complex64)
-        elif self.input_state.dtype == torch.float64:
-            self.input_state = self.input_state.to(torch.complex128)
+
+        if type(self.input_state) is torch.Tensor:
+            if len(self.input_state.shape) == 1:
+                self.input_state = self.input_state.unsqueeze(0)
+            if self.input_state.dtype == torch.float32:
+                self.input_state = self.input_state.to(torch.complex64)
+            elif self.input_state.dtype == torch.float64:
+                self.input_state = self.input_state.to(torch.complex128)
+
+        else:
+            raise TypeError("Input state should be a tensor")
 
         sum_input = self.input_state.abs().pow(2).sum(dim=1).sqrt().unsqueeze(1)
         self.input_state = self.input_state / sum_input
 
-        mask = (self.input_state.real ** 2 + self.input_state.imag ** 2 < 1e-13).all(dim=0)
+        mask = (self.input_state.real**2 + self.input_state.imag**2 < 1e-13).all(dim=0)
 
         masked_input_state = (~mask).int().tolist()
 
-        input_states = [(k, self.simulation_graph.mapped_keys[k]) for k, mask in enumerate(masked_input_state) if mask == 1]
+        input_states = [
+            (k, self.simulation_graph.mapped_keys[k])
+            for k, mask in enumerate(masked_input_state)
+            if mask == 1
+        ]
 
         state_list = reorder_swap_chain(input_states)
 
         prev_state_index, prev_state = state_list.pop(0)
 
         _, amplitude = self.simulation_graph.compute(unitary, prev_state)
-        amplitudes = torch.zeros((self.input_state.shape[-1], len(self.simulation_graph.mapped_keys)), dtype=amplitude.dtype, device=self.input_state.device)
+        amplitudes = torch.zeros(
+            (self.input_state.shape[-1], len(self.simulation_graph.mapped_keys)),
+            dtype=amplitude.dtype,
+            device=self.input_state.device,
+        )
         amplitudes[prev_state_index] = amplitude
 
         for index, fock_state in state_list:
             amplitudes[index] = self.simulation_graph.compute_pa_inc(
-                unitary, prev_state, fock_state, changed_unitary=changed_unitary,
+                unitary,
+                prev_state,
+                fock_state,
+                changed_unitary=changed_unitary,
             )
             changed_unitary = False
             prev_state = fock_state
@@ -188,7 +207,7 @@ class ComputationProcessFactory:
     @staticmethod
     def create(
         circuit: pcvl.Circuit,
-        input_state: list[int] | dict[list[int], float],
+        input_state: list[int] | torch.Tensor,
         trainable_parameters: list[str],
         input_parameters: list[str],
         reservoir_mode: bool = False,

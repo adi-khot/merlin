@@ -485,7 +485,7 @@ class QuantumLayer(nn.Module):
         apply_sampling: bool | None = None,
         shots: int | None = None,
         return_amplitudes: bool = False,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
         """Forward pass through the quantum layer."""
         # Prepare parameters
         params = self.prepare_parameters(list(input_parameters))
@@ -504,7 +504,7 @@ class QuantumLayer(nn.Module):
         apply_sampling, shots = self.autodiff_process.autodiff_backend(
             needs_gradient, apply_sampling or False, shots or self.shots
         )
-        distribution = amplitudes.real ** 2 + amplitudes.imag ** 2
+        distribution = amplitudes.real**2 + amplitudes.imag**2
         if self.no_bunching:
             sum_probs = distribution.sum(dim=1, keepdim=True)
 
@@ -514,9 +514,7 @@ class QuantumLayer(nn.Module):
                 distribution = torch.where(
                     valid_entries,
                     distribution
-                    / torch.where(
-                        valid_entries, sum_probs, torch.ones_like(sum_probs)
-                    ),
+                    / torch.where(valid_entries, sum_probs, torch.ones_like(sum_probs)),
                     distribution,
                 )
                 amplitudes = torch.where(

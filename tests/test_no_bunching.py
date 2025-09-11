@@ -428,7 +428,9 @@ class TestNoBunchingFunctionality:
             keys_no_bunching, amplitudes_no_bunching = (
                 process_no_bunching.compute_with_keys(dummy_params)
             )
-            distribution_no_bunching = amplitudes_no_bunching.real ** 2 + amplitudes_no_bunching.imag ** 2
+            distribution_no_bunching = (
+                amplitudes_no_bunching.real**2 + amplitudes_no_bunching.imag**2
+            )
             sum_probs = distribution_no_bunching.sum(dim=1, keepdim=True)
 
             # Only normalize when sum > 0 to avoid division by zero
@@ -437,9 +439,7 @@ class TestNoBunchingFunctionality:
                 distribution_no_bunching = torch.where(
                     valid_entries,
                     distribution_no_bunching
-                    / torch.where(
-                        valid_entries, sum_probs, torch.ones_like(sum_probs)
-                    ),
+                    / torch.where(valid_entries, sum_probs, torch.ones_like(sum_probs)),
                     distribution_no_bunching,
                 )
             # Should have the same distribution size
@@ -454,7 +454,9 @@ class TestNoBunchingFunctionality:
             keys_full_fock_space, amplitudes_full_fock_space = (
                 process_full_fock_space.compute_with_keys(dummy_params)
             )
-            distribution_full_fock_space = amplitudes_full_fock_space.real ** 2 + amplitudes_full_fock_space.imag ** 2
+            distribution_full_fock_space = (
+                amplitudes_full_fock_space.real**2 + amplitudes_full_fock_space.imag**2
+            )
             # Should have the same distribution size
             expected_size = calculate_fock_space_size(n_modes, n_photons)
             assert distribution_full_fock_space.shape[-1] == expected_size

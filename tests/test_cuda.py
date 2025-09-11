@@ -75,7 +75,9 @@ def test_switch_model_to_cuda():
     assert layer.device == torch.device("cpu")
     layer = layer.to(torch.device("cuda"))
     _ = layer()
-    layer.computation_process.input_state = torch.rand((3, 6), device=torch.device("cuda"))
+    layer.computation_process.input_state = torch.rand(
+        (3, 6), device=torch.device("cuda")
+    )
     _ = layer()
     assert layer.device == torch.device("cuda")
     if len(layer.thetas) > 0:
@@ -92,7 +94,13 @@ def test_switch_model_to_cuda():
 
 class QuantumClassifier_withAnsatz(nn.Module):
     def __init__(
-        self, input_dim, hidden_dim=100, modes=10, num_classes=2, input_state=None, device="cpu",
+        self,
+        input_dim,
+        hidden_dim=100,
+        modes=10,
+        num_classes=2,
+        input_state=None,
+        device="cpu",
     ):
         super().__init__()
 
@@ -118,10 +126,14 @@ class QuantumClassifier_withAnsatz(nn.Module):
         )
 
         # Build the QLayer using Merlin
-        self.q_circuit = ml.QuantumLayer(input_size=hidden_dim, ansatz=ansatz, device=device)
+        self.q_circuit = ml.QuantumLayer(
+            input_size=hidden_dim, ansatz=ansatz, device=device
+        )
 
         # Linear output layer as in the original paper
-        self.output_layer = nn.Linear(self.q_circuit.output_size, num_classes, device=device)
+        self.output_layer = nn.Linear(
+            self.q_circuit.output_size, num_classes, device=device
+        )
 
     def forward(self, x):
         # Forward pass through the quantum-classical hybrid
@@ -216,14 +228,13 @@ def test_different_configurations():
     ]
 
     for _i, config in enumerate(configs):
-
         model = QuantumClassifier_withAnsatz(
             input_dim=768,
             hidden_dim=config["hidden_dim"],
             modes=config["modes"],
             num_classes=2,
             input_state=config["input_state"],
-            device=device
+            device=device,
         ).to(device)
 
         # Test with sample input

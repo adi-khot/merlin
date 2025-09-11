@@ -187,12 +187,16 @@ def layer_compute_backward(
         u_elements = torch.diag_embed(unitary[:, modes, p])
 
         destinations_tensor = torch.zeros(
-            (1, size_destinations, modes.shape[0]), dtype=u_elements.dtype, device=device,
+            (1, size_destinations, modes.shape[0]),
+            dtype=u_elements.dtype,
+            device=device,
         )
         destinations_tensor[:, destinations, torch.arange(destinations.shape[0])] = 1
 
         sources_tensor = torch.zeros(
-            (1, sources.shape[0], size_sources), dtype=u_elements.dtype, device=device,
+            (1, sources.shape[0], size_sources),
+            dtype=u_elements.dtype,
+            device=device,
         )
         sources_tensor[:, torch.arange(sources.shape[0]), sources] = 1
 
@@ -642,7 +646,7 @@ class SLOSComputeGraph:
             is_batched = False
         else:
             is_batched = True
-        probabilities = amplitudes.real ** 2 + amplitudes.imag ** 2
+        probabilities = amplitudes.real**2 + amplitudes.imag**2
         probabilities *= self.norm_factor_output.to(probabilities.device)
         probabilities /= self.norm_factor_input
 

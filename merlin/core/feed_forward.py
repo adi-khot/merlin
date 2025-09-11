@@ -105,15 +105,16 @@ class FeedForwardBlock(torch.nn.Module):
         conditional_mode (int): Mode index used for conditional measurement.
     """
 
-    def __init__(self,
-                 input_size: int,
-                 n: int,
-                 m: int,
-                 depth: int = None,
-                 state_injection=False,
-                 conditional_mode: int = 0,
-                 layers: list[QuantumLayer] = None,
-                 ):
+    def __init__(
+        self,
+        input_size: int,
+        n: int,
+        m: int,
+        depth: int = None,
+        state_injection=False,
+        conditional_mode: int = 0,
+        layers: list[QuantumLayer] = None,
+    ):
         super().__init__()
         self.conditional_mode = conditional_mode
         self.m = m
@@ -129,7 +130,9 @@ class FeedForwardBlock(torch.nn.Module):
         else:
             tuples = self.generate_possible_tuples()
             self.tuples = tuples
-            assert len(tuples) == len(layers), (f"Layers should be a list of Quantum Layers of length {len(tuples)}")
+            assert len(tuples) == len(layers), (
+                f"Layers should be a list of Quantum Layers of length {len(tuples)}"
+            )
             self.layers = {tuples[k]: layers[k] for k in range(len(layers))}
             start = 0
             self.input_segments = {}
@@ -137,7 +140,7 @@ class FeedForwardBlock(torch.nn.Module):
                 input_size = self.layers[tuple].input_size
                 self.input_segments[tuple] = (start, start + input_size)
                 start += input_size
-            assert start == self.input_size, (f"Input size can't be higher than {start}")
+            assert start == self.input_size, f"Input size can't be higher than {start}"
 
     def generate_possible_tuples(self):
         """Generate all possible measurement outcome tuples.
@@ -177,19 +180,25 @@ class FeedForwardBlock(torch.nn.Module):
                 input = min(self.m - m, input_size)
             if input > 0:
                 if self.state_injection:
-                    self.layers[tup] = define_layer_with_input(self.m, self.n_photons, input)
+                    self.layers[tup] = define_layer_with_input(
+                        self.m, self.n_photons, input
+                    )
                 else:
-                    self.layers[tup] = define_layer_with_input(self.m - m, self.n_photons - n, input)
+                    self.layers[tup] = define_layer_with_input(
+                        self.m - m, self.n_photons - n, input
+                    )
                 self.input_segments[tup] = (start, start + input)
             else:
                 if self.state_injection:
                     self.layers[tup] = define_layer_no_input(self.m, self.n_photons)
                 else:
-                    self.layers[tup] = define_layer_no_input(self.m - m, self.n_photons - n)
+                    self.layers[tup] = define_layer_no_input(
+                        self.m - m, self.n_photons - n
+                    )
                 self.input_segments[tup] = (0, 0)
             input_size -= input
             start += input
-        assert input_size == 0, (f"The input size can't be higher than {start}")
+        assert input_size == 0, f"The input size can't be higher than {start}"
 
     def parameters(self):
         """Return an iterator over all trainable parameters.
@@ -200,7 +209,18 @@ class FeedForwardBlock(torch.nn.Module):
         for layer in self.layers.values():
             yield from layer.parameters()
 
-    def iterate_feedforward(self, current_tuple, remaining_amplitudes, keys, accumulated_prob, intermediary, outputs, depth=0, conditional_mode=0, x=None):
+    def iterate_feedforward(
+        self,
+        current_tuple,
+        remaining_amplitudes,
+        keys,
+        accumulated_prob,
+        intermediary,
+        outputs,
+        depth=0,
+        conditional_mode=0,
+        x=None,
+    ):
         """Recursively process the feed-forward computation.
 
         Args:
@@ -246,13 +266,21 @@ class FeedForwardBlock(torch.nn.Module):
                 match_idx_with = layer_idx
                 keys_with = keys
             else:
-                keys_with = layer_with_photon.computation_process.simulation_graph.mapped_keys
-                match_idx_with = self._match_indices(keys, keys_with, conditional_mode, k_value=1)
-            layer_with_photon.computation_process.input_state = remaining_amplitudes[:, match_idx_with]
+                keys_with = (
+                    layer_with_photon.computation_process.simulation_graph.mapped_keys
+                )
+                match_idx_with = self._match_indices(
+                    keys, keys_with, conditional_mode, k_value=1
+                )
+            layer_with_photon.computation_process.input_state = remaining_amplitudes[
+                :, match_idx_with
+            ]
             start, end = self.input_segments[current_key_with]
 
             if start != end:
-                probs_with, amplitudes_with = layer_with_photon(x[:, start:end], return_amplitudes=True)
+                probs_with, amplitudes_with = layer_with_photon(
+                    x[:, start:end], return_amplitudes=True
+                )
             else:
                 probs_with, amplitudes_with = layer_with_photon(return_amplitudes=True)
 
@@ -266,10 +294,12 @@ class FeedForwardBlock(torch.nn.Module):
                 outputs,
                 depth + 1,
                 conditional_mode,
-                x  # Pass the full input tensor
+                x,  # Pass the full input tensor
             )
         else:
-            final_tuple_with = current_key_with + (0,) * (self.depth - len(current_key_with))
+            final_tuple_with = current_key_with + (0,) * (
+                self.depth - len(current_key_with)
+            )
             new_prob_with = accumulated_prob * intermediary[current_key_with]
             outputs[final_tuple_with] = new_prob_with
 
@@ -281,16 +311,24 @@ class FeedForwardBlock(torch.nn.Module):
                 keys_without = keys
             else:
                 keys_without = layer_without_photon.computation_process.simulation_graph.mapped_keys
-                match_idx_without = self._match_indices(keys, keys_without, conditional_mode, k_value=0)
-            layer_without_photon.computation_process.input_state = remaining_amplitudes[:, match_idx_without]
+                match_idx_without = self._match_indices(
+                    keys, keys_without, conditional_mode, k_value=0
+                )
+            layer_without_photon.computation_process.input_state = remaining_amplitudes[
+                :, match_idx_without
+            ]
 
             # Get input segment for this layer
             start, end = self.input_segments[current_key_without]
 
             if start != end:
-                probs_without, amplitudes_without = layer_without_photon(x[:, start:end], return_amplitudes=True)
+                probs_without, amplitudes_without = layer_without_photon(
+                    x[:, start:end], return_amplitudes=True
+                )
             else:
-                probs_without, amplitudes_without = layer_without_photon(return_amplitudes=True)
+                probs_without, amplitudes_without = layer_without_photon(
+                    return_amplitudes=True
+                )
             new_prob_without = accumulated_prob * intermediary[current_key_without]
 
             self.iterate_feedforward(
@@ -302,10 +340,12 @@ class FeedForwardBlock(torch.nn.Module):
                 outputs,
                 depth + 1,
                 conditional_mode,
-                x  # Pass the full input tensor
+                x,  # Pass the full input tensor
             )
         else:
-            final_tuple_without = current_key_without + (1,) * (self.depth - len(current_key_without))
+            final_tuple_without = current_key_without + (1,) * (
+                self.depth - len(current_key_without)
+            )
             new_prob_without = accumulated_prob * intermediary[current_key_without]
             outputs[final_tuple_without] = new_prob_without
 
@@ -327,7 +367,17 @@ class FeedForwardBlock(torch.nn.Module):
         layer = self.layers[()]
         probs, amplitudes = layer(input, return_amplitudes=True)
         keys = layer.computation_process.simulation_graph.mapped_keys
-        self.iterate_feedforward((), amplitudes, keys, 1.0, intermediary, outputs, 0, self.conditional_mode, x=x)
+        self.iterate_feedforward(
+            (),
+            amplitudes,
+            keys,
+            1.0,
+            intermediary,
+            outputs,
+            0,
+            self.conditional_mode,
+            x=x,
+        )
         return torch.stack(list(outputs.values()), dim=1)
 
     def _indices_by_value(self, keys, k):
@@ -368,7 +418,7 @@ class FeedForwardBlock(torch.nn.Module):
         idx = []
 
         for _i, tup in enumerate(data):
-            removed = tup[:k] + tup[k + 1:]
+            removed = tup[:k] + tup[k + 1 :]
             if removed in out_map:
                 j = out_map[removed]
                 if tup[k] == k_value:
@@ -386,7 +436,7 @@ class FeedForwardBlock(torch.nn.Module):
 
     def define_ff_layer(self, k: int, layers: list[QuantumLayer]):
         len_layers = self.size_ff_layer(k)
-        assert len(layers) == len_layers, (f"layers should be of length {len_layers}")
+        assert len(layers) == len_layers, f"layers should be of length {len_layers}"
         for i, t in enumerate(product([0, 1], repeat=k)):
             if t in self.layers:
                 self.layers[t] = layers[i]
@@ -426,9 +476,13 @@ if __name__ == "__main__":
     from perceval.components import BS, PS
 
     L = torch.nn.Linear(20, 20)
-    feed_forward = FeedForwardBlock(20, 2, 6, depth=3, conditional_mode=5, state_injection=True)
+    feed_forward = FeedForwardBlock(
+        20, 2, 6, depth=3, conditional_mode=5, state_injection=True
+    )
     layers = list(feed_forward.layers.values())
-    feed_forward = FeedForwardBlock(20, 2, 6, depth=3, state_injection=True, conditional_mode=5, layers=layers)
+    feed_forward = FeedForwardBlock(
+        20, 2, 6, depth=3, state_injection=True, conditional_mode=5, layers=layers
+    )
     params = chain(L.parameters(), feed_forward.parameters())
     optimizer = torch.optim.Adam(params)
     print(feed_forward.get_output_size())

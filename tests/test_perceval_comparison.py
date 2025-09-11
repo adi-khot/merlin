@@ -110,7 +110,7 @@ class TestPercevalComparison:
                     unitary, input_state
                 )
             )
-            probabilities = merlin_distribution.real ** 2 + merlin_distribution.imag ** 2
+            probabilities = merlin_distribution.real**2 + merlin_distribution.imag**2
             sum_probs = probabilities.sum(dim=1, keepdim=True)
             # Only normalize when sum > 0 to avoid division by zero
             valid_entries = sum_probs > 0
@@ -118,9 +118,7 @@ class TestPercevalComparison:
                 probabilities = torch.where(
                     valid_entries,
                     probabilities
-                    / torch.where(
-                        valid_entries, sum_probs, torch.ones_like(sum_probs)
-                    ),
+                    / torch.where(valid_entries, sum_probs, torch.ones_like(sum_probs)),
                     probabilities,
                 )
             merlin_probs = probabilities.numpy()

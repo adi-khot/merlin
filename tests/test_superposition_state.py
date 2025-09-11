@@ -16,9 +16,13 @@ def classical_method(layer, input_state):
         layer.computation_process.input_state = key
         _ = layer()
 
-        output_classical += value * layer.computation_process.simulation_graph.prev_amplitudes
+        output_classical += (
+            value * layer.computation_process.simulation_graph.prev_amplitudes
+        )
 
-    output_probs = layer.computation_process.simulation_graph.post_pa_inc(output_classical, layer.computation_process.unitary)
+    output_probs = layer.computation_process.simulation_graph.post_pa_inc(
+        output_classical, layer.computation_process.unitary
+    )
     return output_probs[1]
 
 
@@ -55,13 +59,18 @@ class TestOutputSuperposedState:
             no_bunching=True,
         )
 
-        input_state_superposed = {layer.computation_process.simulation_graph.mapped_keys[k]: input_state[1, k] for k in range(len(input_state[0]))}
+        input_state_superposed = {
+            layer.computation_process.simulation_graph.mapped_keys[k]: input_state[1, k]
+            for k in range(len(input_state[0]))
+        }
 
         output_superposed = benchmark(layer)
 
         output_classical = classical_method(layer, input_state_superposed)
 
-        assert torch.allclose(output_superposed[1], output_classical, rtol=3e-4, atol=1e-7)
+        assert torch.allclose(
+            output_superposed[1], output_classical, rtol=3e-4, atol=1e-7
+        )
 
     def test_classical_method(self, benchmark):
         """Test NONE strategy when output_size is not specified."""
@@ -77,7 +86,7 @@ class TestOutputSuperposedState:
 
         input_state = torch.rand(3, 10).to(torch.float64)
 
-        sum_values = (input_state ** 2).sum(dim=-1, keepdim=True)
+        sum_values = (input_state**2).sum(dim=-1, keepdim=True)
 
         input_state = input_state / sum_values
 
@@ -93,8 +102,10 @@ class TestOutputSuperposedState:
             no_bunching=True,
         )
 
-        input_state_superposed = {layer.computation_process.simulation_graph.mapped_keys[k]: input_state[0, k] for k in
-                                  range(len(input_state[0]))}
+        input_state_superposed = {
+            layer.computation_process.simulation_graph.mapped_keys[k]: input_state[0, k]
+            for k in range(len(input_state[0]))
+        }
 
         output_superposed = layer()
 
@@ -102,4 +113,6 @@ class TestOutputSuperposedState:
             lambda: classical_method(layer, input_state_superposed)
         )
 
-        assert torch.allclose(output_superposed[0], output_classical, rtol=3e-4, atol=1e-7)
+        assert torch.allclose(
+            output_superposed[0], output_classical, rtol=3e-4, atol=1e-7
+        )

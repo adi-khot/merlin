@@ -24,7 +24,6 @@
 Tests for the FeedForward class.
 """
 
-
 import pytest
 import torch
 
