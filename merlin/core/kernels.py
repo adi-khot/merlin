@@ -2,11 +2,10 @@ import torch
 import perceval as pcvl
 import numpy as np
 
-from .utils import generate_all_fock_states
 from ..sampling.autodiff import AutoDiffProcess
 from ..pcvl_pytorch.locirc_to_tensor import CircuitConverter
 from ..pcvl_pytorch.slos_torchscript import build_slos_distribution_computegraph as build_slos_graph
-
+from .loss import NKernelAlignment
 from typing import Union
 from torch import Tensor
 
@@ -240,7 +239,8 @@ class FidelityKernel(torch.nn.Module):
             dtype=self.dtype
         )
         # Find index of input state in output distribution
-        keys, _ = self._slos_graph.compute(torch.eye(m, dtype = torch.cfloat), input_state)
+        complex_dtype = torch.complex128 if self.dtype == torch.float64 else torch.complex64
+        keys, _ = self._slos_graph.compute(torch.eye(m, dtype=complex_dtype), input_state)
         self._input_state_index = keys.index(tuple(input_state))
         # For sampling
         self._autodiff_process = AutoDiffProcess()
@@ -298,7 +298,6 @@ class FidelityKernel(torch.nn.Module):
             upper_idx = torch.triu_indices(
                 len_x1, len_x1,
                 offset=1,
-                dtype=self.feature_map.dtype,
                 device=self.feature_map.device,
             )
             all_circuits = U_forward[upper_idx[0]] @ U_adjoint[upper_idx[1]]
@@ -308,11 +307,13 @@ class FidelityKernel(torch.nn.Module):
             all_circuits, self.input_state)[1]
 
         if self.shots > 0:
+            # Convert complex amplitudes to real probabilities for multinomial sampling
+            real_probs = torch.abs(all_probs)
             all_probs = self._autodiff_process.sampling_noise.pcvl_sampler(
-                all_probs, self.shots, self.sampling_method
+                real_probs, self.shots, self.sampling_method
             )
 
-        transition_probs = all_probs[:, self._input_state_index]
+        transition_probs = torch.abs(all_probs[:, self._input_state_index])
 
         if x2 is None:
             # Copy transition probs to upper & lower diagonal
@@ -320,6 +321,7 @@ class FidelityKernel(torch.nn.Module):
                 len_x1, len_x1, dtype=self.dtype, device=self.device)
             
             upper_idx = upper_idx.to(self.device)
+            transition_probs = transition_probs.to(dtype=self.dtype, device=self.device)
             kernel_matrix[upper_idx[0], upper_idx[1]] = transition_probs
             kernel_matrix[upper_idx[1], upper_idx[0]] = transition_probs
             kernel_matrix.fill_diagonal_(1)
@@ -328,6 +330,7 @@ class FidelityKernel(torch.nn.Module):
                 kernel_matrix = self._project_psd(kernel_matrix)
 
         else:
+            transition_probs = transition_probs.to(dtype=self.dtype, device=self.device)
             kernel_matrix = transition_probs.reshape(len_x1, len(x2))
 
             if self.force_psd and equal_inputs:
@@ -354,12 +357,12 @@ class FidelityKernel(torch.nn.Module):
         probs = self._slos_graph.compute(U @ U_adjoint, self.input_state)[1]
 
         if self.shots > 0:
+            # Convert complex amplitudes to real probabilities for multinomial sampling
+            real_probs = torch.abs(probs)
             probs = self._autodiff_process.sampling_noise.pcvl_sampler(
-                probs, self.shots, self.sampling_method
+                real_probs, self.shots, self.sampling_method
             )
-        print(f"Probs: {probs} of shape {probs.shape}")
-        print(f"input_state index: {self._input_state_index}")
-        return probs[self._input_state_index].item()
+        return torch.abs(probs[0, self._input_state_index]).item()
 
     @staticmethod
     def _project_psd(matrix: Tensor) -> Tensor:

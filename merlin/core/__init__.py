@@ -28,6 +28,8 @@ from .generators import CircuitGenerator, CircuitType, StateGenerator, StatePatt
 from .layer import QuantumLayer
 from .photonicbackend import PhotonicBackend
 from .process import ComputationProcess, ComputationProcessFactory
+from .kernels import FeatureMap, FidelityKernel
+from .loss import NKernelAlignment
 
 __all__ = [
     "QuantumLayer",
