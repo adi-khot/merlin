@@ -4,8 +4,8 @@ import numpy as np
 import perceval as pcvl
 from sklearn.svm import SVC
 
-from merlin.core.kernels import FeatureMap, FidelityKernel
-from merlin.core.loss import NKernelAlignment
+from merlin.algorithms.kernels import FeatureMap, FidelityKernel
+from merlin.algorithms.loss import NKernelAlignment
 
 
 class TestFeatureMap:
