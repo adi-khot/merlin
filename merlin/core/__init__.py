@@ -22,14 +22,13 @@
 
 """Core quantum layer components."""
 
-from ..algorithms.kernels import FeatureMap, FidelityKernel
-from ..algorithms.loss import NKernelAlignment
 from .ansatz import Ansatz, AnsatzFactory
 from .base import AbstractComputationProcess
 from .generators import CircuitGenerator, CircuitType, StateGenerator, StatePattern
 from .layer import QuantumLayer
 from .photonicbackend import PhotonicBackend
 from .process import ComputationProcess, ComputationProcessFactory
+
 
 __all__ = [
     "QuantumLayer",
@@ -43,7 +42,4 @@ __all__ = [
     "StatePattern",
     "CircuitGenerator",
     "StateGenerator",
-    "FeatureMap",
-    "FidelityKernel",
-    "NKernelAlignment",
 ]
