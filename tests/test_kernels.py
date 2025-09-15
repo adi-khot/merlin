@@ -1262,8 +1262,82 @@ def test_backend_integration_performance_comparison():
     return min(times), max(times)
 
 
-if __name__ == "__main__":
-    test_iris_dataset_quantum_kernel()
-    test_iris_dataset_kernel_training_with_nka()
-    test_iris_with_simple_backend_integration()
-    test_backend_integration_performance_comparison()
+@pytest.fixture(scope="module")
+def cuda_device():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+    return torch.device("cuda")
+
+
+@pytest.mark.parametrize("constructor", ["simple", "from_backend", "builder"])
+def test_fidelity_kernel_gpu_execution_all_constructors(cuda_device, constructor):
+    device = cuda_device
+    # Small synthetic data on GPU
+    X_train = torch.tensor([[0.1, 0.2], [0.8, 0.9], [0.3, 0.7]], dtype=torch.float32, device=device)
+    X_test = torch.tensor([[0.2, 0.3], [0.7, 0.8]], dtype=torch.float32, device=device)
+
+    # Build kernels via each constructor
+    if constructor == "simple":
+        kernel = FidelityKernel.simple(
+            input_size=2, n_modes=4, n_photons=2,
+            circuit_type=CircuitType.SERIES, reservoir_mode=True
+        )
+    elif constructor == "from_backend":
+        backend = PhotonicBackend(
+            circuit_type=CircuitType.SERIES, n_modes=4, n_photons=2, reservoir_mode=True
+        )
+        kernel = FidelityKernel.from_photonic_backend(
+            input_size=2, photonic_backend=backend
+        )
+    else:  # "builder"
+        builder = KernelCircuitBuilder()
+        kernel = (builder
+                  .input_size(2)
+                  .n_modes(4)
+                  .n_photons(2)
+                  .circuit_type(CircuitType.SERIES)
+                  .reservoir_mode(True)
+                  .build_fidelity_kernel())
+
+    # Move kernel to CUDA and run
+    kernel = kernel.to(device)
+    K_train = kernel(X_train)
+    K_test = kernel(X_test, X_train)
+
+    # Assert results are on GPU and have valid shapes
+    assert isinstance(K_train, torch.Tensor) and isinstance(K_test, torch.Tensor)
+    assert K_train.device.type == "cuda" and K_test.device.type == "cuda"
+    assert K_train.shape == (X_train.shape[0], X_train.shape[0])
+    assert K_test.shape == (X_test.shape[0], X_train.shape[0])
+
+    # Basic numeric sanity
+    assert torch.isfinite(K_train).all() and torch.isfinite(K_test).all()
+
+
+def test_fidelity_kernel_gpu_training_step(cuda_device):
+    device = cuda_device
+    # Small trainable kernel
+    kernel = FidelityKernel.simple(
+        input_size=2, n_modes=4, n_photons=2,
+        circuit_type=CircuitType.SERIES, reservoir_mode=False
+    ).to(device)
+
+    # If no parameters (unexpected), skip gracefully
+    if sum(p.numel() for p in kernel.parameters()) == 0:
+        pytest.skip("No trainable parameters available in this configuration")
+
+    # Data and labels on GPU
+    X = torch.tensor([[0.1, 0.2], [0.8, 0.9], [0.3, 0.7], [0.6, 0.4]],
+                     dtype=torch.float32, device=device)
+    y = torch.tensor([1, -1, 1, -1], dtype=torch.float32, device=device)
+
+    # One training step on GPU
+    optimizer = torch.optim.Adam(kernel.parameters(), lr=1e-2)
+    loss_fn = NKernelAlignment()
+    optimizer.zero_grad()
+    K = kernel(X)
+    loss = loss_fn(K, y)
+    loss.backward()
+    optimizer.step()
+
+    assert torch.isfinite(loss).item() == 1
