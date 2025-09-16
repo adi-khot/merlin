@@ -595,15 +595,13 @@ class FidelityKernel(torch.nn.Module):
         """
         # Convert inputs to tensors and ensure they are on the correct device
         if isinstance(x1, np.ndarray):
-            x1 = torch.from_numpy(x1).to(device=self.device, dtype=self.dtype)
-        elif isinstance(x1, torch.Tensor):
-            x1 = x1.to(device=self.device, dtype=self.dtype)
+            x1 = torch.from_numpy(x1).to(device=x1.device, dtype=self.dtype)
 
         if x2 is not None:
             if isinstance(x2, np.ndarray):
-                x2 = torch.from_numpy(x2).to(device=self.device, dtype=self.dtype)
+                x2 = torch.from_numpy(x2).to(device=x1.device, dtype=self.dtype)
             elif isinstance(x2, torch.Tensor):
-                x2 = x2.to(device=self.device, dtype=self.dtype)
+                x2 = x2.to(device=x1.device, dtype=self.dtype)
 
         # Return scalar value for input datapoints
         if self.feature_map.is_datapoint(x1):
