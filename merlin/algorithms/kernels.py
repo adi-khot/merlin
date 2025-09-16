@@ -1,5 +1,6 @@
 import itertools
-from collections.abc import Callable  # NEW
+from collections.abc import Callable
+from typing import cast
 
 import numpy as np
 import perceval as pcvl
@@ -15,7 +16,7 @@ from ..pcvl_pytorch.slos_torchscript import (
 )
 from ..sampling.autodiff import AutoDiffProcess
 
-dtype_to_torch = {
+dtype_to_torch: dict[object, torch.dtype] = {
     "float": torch.float64,
     "complex": torch.complex128,
     "float64": torch.float64,
@@ -80,7 +81,7 @@ class FeatureMap:
             device=device,
         )
         # Set training parameters as torch parameters
-        self._training_dict = {}
+        self._training_dict: dict[str, torch.nn.Parameter] = {}
         for param_name in self.trainable_parameters:
             param_length = len(self._circuit_graph.spec_mappings[param_name])
 
@@ -157,11 +158,15 @@ class FeatureMap:
         Computes the unitary associated with the feature map and given datapoint.
         """
         # Normalize input to tensor on correct device/dtype
-        if not isinstance(x, torch.Tensor):
-            x = [x] if isinstance(x, (float, int)) else x
-            x = torch.tensor(x, dtype=self.dtype, device=self.device)
-        else:
+        if isinstance(x, torch.Tensor):
             x = x.to(dtype=self.dtype, device=self.device)
+        elif isinstance(x, np.ndarray):
+            x = torch.from_numpy(x).to(device=self.device, dtype=self.dtype)
+        elif isinstance(x, (float, int)):
+            # scalar datapoint: only valid if input_size == 1
+            x = torch.tensor([x], dtype=self.dtype, device=self.device)
+        else:
+            raise TypeError(f"Unsupported input type: {type(x)!r}")
 
         # Encode x to match the circuit's input parameter spec
         x_encoded = self._encode_x(x)
@@ -169,35 +174,53 @@ class FeatureMap:
         if not self.is_trainable:
             return self._circuit_graph.to_tensor(x_encoded)
 
-        if not training_parameters:
-            training_parameters = self._training_dict.values()
-
-        return self._circuit_graph.to_tensor(x_encoded, *training_parameters)
+        # Use provided training parameters or fall back to internal ones
+        if training_parameters:
+            params_to_use: tuple[Tensor, ...] = training_parameters
+        else:
+            # Cast to a Tensor tuple for mypy; Parameter is a Tensor subtype
+            params_to_use = cast(
+                tuple[Tensor, ...], tuple(self._training_dict.values())
+            )
+        return self._circuit_graph.to_tensor(x_encoded, *params_to_use)
 
     def is_datapoint(self, x: Tensor | np.ndarray | float | int) -> bool:
         """Checks whether an input data is a singular datapoint or dataset."""
-        if self.input_size == 1 and (isinstance(x, (float, int)) or x.ndim == 0):
-            return True
+        if isinstance(x, (float, int)):
+            if self.input_size == 1:
+                return True
+            raise ValueError(
+                f"Given value shape () does not match data shape {self.input_size}."
+            )
 
-        error_msg = f"Given value shape {tuple(x.shape)} does not match data shape {self.input_size}."
-        num_elements = x.numel() if isinstance(x, Tensor) else x.size
+        # x is array-like (Tensor or ndarray)
+        if isinstance(x, Tensor):
+            ndim = x.ndim
+            shape = tuple(x.shape)
+            num_elements = x.numel()
+        else:
+            ndim = x.ndim
+            shape = tuple(x.shape)
+            num_elements = x.size
 
-        if num_elements % self.input_size or x.ndim > 2:
+        error_msg = (
+            f"Given value shape {shape} does not match data shape {self.input_size}."
+        )
+        if num_elements % self.input_size or ndim > 2:
             raise ValueError(error_msg)
 
         if self.input_size == 1:
             if num_elements == 1:
                 return True
-            elif x.ndim == 1:
+            if ndim == 1:
                 return False
-            elif x.ndim == 2 and 1 in x.shape:
+            if ndim == 2 and 1 in shape:
                 return False
         else:
-            if x.ndim == 1 and x.shape[0] == self.input_size:
+            if ndim == 1 and shape[0] == self.input_size:
                 return True
-            elif x.ndim == 2:
-                return 1 in x.shape and self.input_size in x.shape
-
+            if ndim == 2:
+                return 1 in shape and self.input_size in shape
         raise ValueError(error_msg)
 
     @classmethod
@@ -279,29 +302,14 @@ class FeatureMap:
     ) -> "FeatureMap":
         """
         Simple factory method to create a FeatureMap with minimal configuration.
-
-        :param input_size: Dimensionality of input data
-        :param n_modes: Number of modes in the photonic circuit
-        :param n_photons: Number of photons. If None, defaults to input_size
-        :param circuit_type: Type of circuit topology
-        :param state_pattern: Pattern for initial state generation
-        :param reservoir_mode: Whether to use reservoir computing mode
-        :param trainable_parameters: Optional trainable parameters
-        :param dtype: Data type for computations
-        :param device: Device for computations
-        :return: Configured FeatureMap instance
-
-        Examples
-        --------
-        >>> # Create a simple feature map for 2D data
-        >>> feature_map = FeatureMap.simple(
-        ...     input_size=2,
-        ...     n_modes=4,
-        ...     circuit_type="series"
-        ... )
         """
         if n_photons is None:
             n_photons = input_size
+        # Coerce string enums
+        if isinstance(circuit_type, str):
+            circuit_type = CircuitType(circuit_type.lower())
+        if isinstance(state_pattern, str):
+            state_pattern = StatePattern(state_pattern.lower())
 
         backend = PhotonicBackend(
             circuit_type=circuit_type,
@@ -525,7 +533,7 @@ class FidelityKernel(torch.nn.Module):
 
     def __init__(
         self,
-        feature_map: FeatureMap | pcvl.Circuit,
+        feature_map: FeatureMap,
         input_state: list[int],
         *,
         shots: int | None = None,
@@ -543,7 +551,12 @@ class FidelityKernel(torch.nn.Module):
         self.no_bunching = no_bunching
         self.force_psd = force_psd
         self.device = device or feature_map.device
-        self.dtype = dtype or feature_map.dtype
+        # Normalize to a torch.dtype
+        if dtype is None:
+            self.dtype = feature_map.dtype
+        else:
+            mapped = dtype_to_torch.get(dtype)
+            self.dtype = mapped if mapped is not None else feature_map.dtype
         self.input_size = self.feature_map.input_size
 
         if self.feature_map.circuit.m != len(input_state):
@@ -586,37 +599,39 @@ class FidelityKernel(torch.nn.Module):
         # For sampling
         self._autodiff_process = AutoDiffProcess()
 
-    def forward(self, x1: float | np.ndarray | Tensor, x2=None):
+    def forward(
+        self,
+        x1: float | np.ndarray | Tensor,
+        x2: float | np.ndarray | Tensor | None = None,
+    ):
         """
         Calculate the quantum kernel for input data `x1` and `x2.` If
         `x1` and `x2` are datapoints, a scalar value is returned. For
         input datasets the kernel matrix is computed.
-
-        :param x1: Input datapoint or dataset.
-        :param x2: Input datapoint or dataset. If `None`, the kernel
-            matrix is assumed to be symmetric with input datasets, x1,
-            x1 and only the upper triangular is calculated. Default:
-            `None`.
-
-        If you would like the diagonal and lower triangular to be
-        explicitly calculated for identical inputs, please specify an
-        argument `x2`.
         """
         # Convert inputs to tensors and ensure they are on the correct device
         if isinstance(x1, np.ndarray):
-            x1 = torch.from_numpy(x1).to(device=x1.device, dtype=self.dtype)
+            x1 = torch.from_numpy(x1).to(device=self.device, dtype=self.dtype)
+        elif isinstance(x1, torch.Tensor):
+            x1 = x1.to(device=self.device, dtype=self.dtype)
 
         if x2 is not None:
             if isinstance(x2, np.ndarray):
-                x2 = torch.from_numpy(x2).to(device=x1.device, dtype=self.dtype)
+                x2 = torch.from_numpy(x2).to(device=self.device, dtype=self.dtype)
             elif isinstance(x2, torch.Tensor):
-                x2 = x2.to(device=x1.device, dtype=self.dtype)
+                x2 = x2.to(device=self.device, dtype=self.dtype)
 
         # Return scalar value for input datapoints
         if self.feature_map.is_datapoint(x1):
             if x2 is None:
                 raise ValueError("For input datapoints, please specify an x2 argument.")
             return self._return_kernel_scalar(x1, x2)
+
+        # Ensure tensors before reshaping (satisfies mypy)
+        if not isinstance(x1, torch.Tensor):
+            x1 = torch.as_tensor(x1, dtype=self.dtype, device=self.device)
+        if x2 is not None and not isinstance(x2, torch.Tensor):
+            x2 = torch.as_tensor(x2, dtype=self.dtype, device=self.device)
 
         x1 = x1.reshape(-1, self.input_size)
         x2 = x2.reshape(-1, self.input_size) if x2 is not None else None
@@ -687,15 +702,35 @@ class FidelityKernel(torch.nn.Module):
 
         return kernel_matrix
 
-    def _return_kernel_scalar(self, x1, x2):
+    def _return_kernel_scalar(
+        self,
+        x1: Tensor | np.ndarray | float | int,
+        x2: Tensor | np.ndarray | float | int,
+    ) -> float:
         """Returns scalar kernel value for input datapoints"""
-        if isinstance(x1, float):
-            x1, x2 = np.array(x1), np.array(x2)
+        # Normalize to torch.Tensor on correct device/dtype
+        if isinstance(x1, np.ndarray):
+            x1_t = torch.from_numpy(x1)
+        elif isinstance(x1, (float, int)):
+            x1_t = torch.tensor([x1])
+        else:
+            x1_t = x1
+        if isinstance(x2, np.ndarray):
+            x2_t = torch.from_numpy(x2)
+        elif isinstance(x2, (float, int)):
+            x2_t = torch.tensor([x2])
+        else:
+            x2_t = x2
 
-        x1, x2 = x1.reshape(self.input_size), x2.reshape(self.input_size)
+        x1_t = torch.as_tensor(x1_t, dtype=self.dtype, device=self.device).reshape(
+            self.input_size
+        )
+        x2_t = torch.as_tensor(x2_t, dtype=self.dtype, device=self.device).reshape(
+            self.input_size
+        )
 
-        U = self.feature_map.compute_unitary(x1)
-        U_adjoint = self.feature_map.compute_unitary(x2)
+        U = self.feature_map.compute_unitary(x1_t)
+        U_adjoint = self.feature_map.compute_unitary(x2_t)
         U_adjoint = U_adjoint.conj().T
 
         probs = self._slos_graph.compute(U @ U_adjoint, self.input_state)[1]
@@ -788,25 +823,14 @@ class FidelityKernel(torch.nn.Module):
     ) -> "FidelityKernel":
         """
         Simple factory method to create a FidelityKernel with minimal configuration.
-
-        :param input_size: Dimensionality of input data
-        :param n_modes: Number of modes in the photonic circuit
-        :param n_photons: Number of photons. If None, defaults to input_size
-        :param input_state: Input Fock state. If None, auto-generated
-        :param circuit_type: Type of circuit topology
-        :param state_pattern: Pattern for initial state generation
-        :param reservoir_mode: Whether to use reservoir computing mode
-        :param shots: Number of sampling shots
-        :param sampling_method: Sampling method for shots
-        :param no_bunching: Whether to exclude bunched states
-        :param force_psd: Whether to project to positive semi-definite
-        :param trainable_parameters: Optional trainable parameters
-        :param dtype: Data type for computations
-        :param device: Device for computations
-        :return: Configured FidelityKernel
         """
         if n_photons is None:
             n_photons = input_size
+        # Coerce string enums
+        if isinstance(circuit_type, str):
+            circuit_type = CircuitType(circuit_type.lower())
+        if isinstance(state_pattern, str):
+            state_pattern = StatePattern(state_pattern.lower())
 
         backend = PhotonicBackend(
             circuit_type=circuit_type,
