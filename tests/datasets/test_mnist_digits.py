@@ -1,15 +1,12 @@
-import ast
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pytest
 
-from merlin.datasets import DatasetMetadata
-from merlin.datasets import mnist_digits
-
+from merlin.datasets import DatasetMetadata, mnist_digits
 
 # --- Helpers to build tiny IDX files (no network) ---
+
 
 def _write_idx_file(path: Path, dtype_code: int, dims: list[int], data: np.ndarray):
     """Write a minimal IDX file at path.

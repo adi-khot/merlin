@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from merlin.datasets import spiral, DatasetMetadata
+from merlin.datasets import DatasetMetadata, spiral
 
 
 @pytest.mark.parametrize(

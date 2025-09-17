@@ -1,7 +1,6 @@
 import numpy as np
-import pytest
 
-from merlin.datasets import iris, DatasetMetadata
+from merlin.datasets import DatasetMetadata, iris
 
 
 def test_iris_train_test_shapes_and_ranges():
