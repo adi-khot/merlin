@@ -610,8 +610,8 @@ class FidelityKernel(torch.nn.Module):
         input datasets the kernel matrix is computed.
         """
         # Convert inputs to tensors and ensure they are on the correct device
-        if isinstance(x1, np.ndarray):
-            x1 = torch.from_numpy(x1).to(device=x1.device, dtype=self.dtype)
+        if not isinstance(x1, torch.Tensor):
+            x1 = torch.as_tensor(x1, dtype=self.dtype)
 
         if x2 is not None:
             if isinstance(x2, np.ndarray):
@@ -624,6 +624,10 @@ class FidelityKernel(torch.nn.Module):
             if x2 is None:
                 raise ValueError("For input datapoints, please specify an x2 argument.")
             return self._return_kernel_scalar(x1, x2)
+
+        # Ensure tensors before reshaping (satisfies mypy)
+        if x2 is not None and not isinstance(x2, torch.Tensor):
+            x2 = torch.as_tensor(x2, dtype=self.dtype, device=self.device)
 
         x1 = x1.reshape(-1, self.input_size)
         x2 = x2.reshape(-1, self.input_size) if x2 is not None else None
@@ -661,7 +665,7 @@ class FidelityKernel(torch.nn.Module):
 
         if self.shots > 0:
             # Convert complex amplitudes to real probabilities for multinomial sampling
-            real_probs = torch.abs(all_probs).square()
+            real_probs = torch.abs(all_probs)
             all_probs = self._autodiff_process.sampling_noise.pcvl_sampler(
                 real_probs, self.shots, self.sampling_method
             )
