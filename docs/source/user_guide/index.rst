@@ -14,3 +14,4 @@ User Guide
    hybrid_models
    output_mappings
    feed_forward
+   algorithms

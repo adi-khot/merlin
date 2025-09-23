@@ -28,6 +28,8 @@ into PyTorch neural networks with automatic differentiation support.
 """
 
 # Core API - Most users will only need these
+from .algorithms.kernels import FeatureMap, FidelityKernel
+from .algorithms.loss import NKernelAlignment
 from .core.ansatz import Ansatz, AnsatzFactory
 
 # Essential enums
@@ -69,4 +71,7 @@ __all__ = [
     "ModGroupingMapper",
     "CircuitConverter",
     "build_slos_distribution_computegraph",
+    "NKernelAlignment",
+    "FeatureMap",
+    "FidelityKernel",
 ]
