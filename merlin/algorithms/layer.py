@@ -40,7 +40,7 @@ from ..core.process import ComputationProcessFactory
 from ..sampling.autodiff import AutoDiffProcess
 from ..torch_utils.torch_codes import OutputMapper
 from ..sampling.strategies import OutputMappingStrategy
-from ..core.ansatz import Ansatz, AnsatzFactory
+from ..builder.ansatz import Ansatz, AnsatzFactory
 
 
 class QuantumLayer(nn.Module):

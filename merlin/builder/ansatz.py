@@ -30,7 +30,7 @@ from ..core.generators import CircuitGenerator, StateGenerator
 from ..core.process import ComputationProcessFactory
 from ..sampling.strategies import OutputMappingStrategy
 from ..torch_utils.torch_codes import FeatureEncoder
-from .photonicbackend import PhotonicBackend
+from ..core.photonicbackend import PhotonicBackend
 
 
 class Ansatz:

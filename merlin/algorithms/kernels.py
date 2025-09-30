@@ -7,7 +7,7 @@ import perceval as pcvl
 import torch
 from torch import Tensor
 
-from ..core.ansatz import AnsatzFactory
+from ..builder.ansatz import AnsatzFactory
 from ..core.generators import CircuitType, StatePattern
 from ..core.photonicbackend import PhotonicBackend
 from ..pcvl_pytorch.locirc_to_tensor import CircuitConverter

@@ -30,7 +30,7 @@ into PyTorch neural networks with automatic differentiation support.
 # Core API - Most users will only need these
 from .algorithms.kernels import FeatureMap, FidelityKernel
 from .algorithms.loss import NKernelAlignment
-from .core.ansatz import Ansatz, AnsatzFactory
+from .builder.ansatz import Ansatz, AnsatzFactory
 
 # Essential enums
 # Advanced components (for power users)

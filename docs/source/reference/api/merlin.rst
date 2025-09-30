@@ -13,6 +13,7 @@ Subpackages
    :maxdepth: 4
 
    merlin.algorithms
+   merlin.builder
    merlin.core
    merlin.datasets
    merlin.pcvl_pytorch

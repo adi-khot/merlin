@@ -20,21 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-"""Core quantum layer components."""
+"""Builder components for constructing quantum circuits and ansatzes."""
+from .ansatz import Ansatz, AnsatzFactory
 
-from .base import AbstractComputationProcess
-from .generators import CircuitGenerator, CircuitType, StateGenerator, StatePattern
-from .photonicbackend import PhotonicBackend
-from .process import ComputationProcess, ComputationProcessFactory
-
-__all__ = [
-    "PhotonicBackend",
-    "AnsatzFactory",
-    "AbstractComputationProcess",
-    "ComputationProcess",
-    "ComputationProcessFactory",
-    "CircuitType",
-    "StatePattern",
-    "CircuitGenerator",
-    "StateGenerator",
-]
+__all__ = ["Ansatz", "AnsatzFactory"]
