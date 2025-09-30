@@ -1,60 +1,45 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
+import os
 from pathlib import Path
 
 import pytest
 import torch
 import torch.nn.functional as F
 
-_HELPERS_PATH = Path(__file__).resolve().parents[1] / "helpers.py"
-_SPEC = importlib.util.spec_from_file_location("_merlin_test_helpers", _HELPERS_PATH)
-_HELPERS_MODULE = importlib.util.module_from_spec(_SPEC)
-sys.modules.setdefault("_merlin_test_helpers", _HELPERS_MODULE)
-assert _SPEC.loader is not None
-_SPEC.loader.exec_module(_HELPERS_MODULE)
-load_merlin_module = _HELPERS_MODULE.load_merlin_module
+# Route Perceval persistent data into the repository tree before importing merlin
+_PCVL_HOME = Path(__file__).resolve().parents[2] / ".pcvl_home"
+(_PCVL_HOME / "Library" / "Application Support" / "perceval-quandela" / "job_group").mkdir(
+    parents=True, exist_ok=True
+)
+os.environ["HOME"] = str(_PCVL_HOME)
 
-
-def _ensure_perceval_home(monkeypatch):
-    home_dir = Path(__file__).resolve().parents[2] / ".pcvl_home"
-    (home_dir / "Library" / "Application Support").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("HOME", str(home_dir))
+import perceval as pcvl
+from merlin import OutputMappingStrategy, QuantumLayer
+from merlin.builder import CircuitBuilder
+from merlin.datasets import iris as iris_dataset
 
 
 @pytest.fixture(autouse=True)
 def perceval_home(monkeypatch):
-    _ensure_perceval_home(monkeypatch)
+    monkeypatch.setenv("HOME", str(_PCVL_HOME))
 
 
 @pytest.fixture
 def iris_batch():
-    load_merlin_module("merlin.datasets")
-    iris_mod = load_merlin_module("merlin.datasets.iris")
-    features, labels, _ = iris_mod.get_data_train()
+    features, labels, _ = iris_dataset.get_data_train()
     x = torch.tensor(features[:16], dtype=torch.float32)
     y = torch.tensor(labels[:16], dtype=torch.long)
     return x, y
 
 
-def _load_core_modules():
-    layer_mod = load_merlin_module("merlin.algorithms.layer")
-    strategies_mod = load_merlin_module("merlin.sampling.strategies")
-    builder_mod = load_merlin_module("merlin.builder.circuit_builder")
-    return (
-        layer_mod.QuantumLayer,
-        strategies_mod.OutputMappingStrategy,
-        builder_mod.CircuitBuilder,
-    )
-
-
-def _check_training_step(layer, inputs, targets):
+def _check_training_step(layer: QuantumLayer, inputs: torch.Tensor, targets: torch.Tensor):
     layer.train()
     layer.zero_grad()
     logits = layer(inputs)
     loss = F.cross_entropy(logits, targets)
     loss.backward()
+
     grads = [p.grad for p in layer.parameters() if p.requires_grad]
     assert logits.shape == (inputs.shape[0], 3)
     assert torch.isfinite(loss)
@@ -62,10 +47,41 @@ def _check_training_step(layer, inputs, targets):
     assert all(torch.all(torch.isfinite(g)) for g in grads if g is not None)
 
 
+def _train_for_classification(
+    layer: QuantumLayer,
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    min_relative_improvement: float = 0.05,
+    min_accuracy: float = 0.6,
+) -> tuple[float, float]:
+    layer.train()
+    optimizer = torch.optim.Adam(layer.parameters(), lr=0.05)
+
+    with torch.no_grad():
+        initial_loss = F.cross_entropy(layer(inputs), targets).item()
+
+    for _ in range(60):
+        optimizer.zero_grad()
+        logits = layer(inputs)
+        loss = F.cross_entropy(logits, targets)
+        loss.backward()
+        optimizer.step()
+
+    layer.eval()
+    with torch.no_grad():
+        final_logits = layer(inputs)
+        final_loss = F.cross_entropy(final_logits, targets).item()
+        predictions = final_logits.argmax(dim=1)
+        accuracy = (predictions == targets).float().mean().item()
+    if min_relative_improvement > 0:
+        assert final_loss <= initial_loss * (1 - min_relative_improvement)
+    assert accuracy >= min_accuracy
+    return initial_loss, final_loss
+
+
 def test_builder_api_pipeline_on_iris(iris_batch):
     features, labels = iris_batch
-    QuantumLayer, OutputMappingStrategy, CircuitBuilder = _load_core_modules()
-    import perceval as pcvl
 
     builder = CircuitBuilder(n_modes=10, n_photons=5)
     builder.add_entangling_layer(depth=1)
@@ -87,11 +103,11 @@ def test_builder_api_pipeline_on_iris(iris_batch):
     )
 
     _check_training_step(layer, features, labels)
+    _train_for_classification(layer, features, labels)
 
 
 def test_simple_api_pipeline_on_iris(iris_batch):
     features, labels = iris_batch
-    QuantumLayer, OutputMappingStrategy, _ = _load_core_modules()
 
     layer = QuantumLayer.simple(
         input_size=features.shape[1],
@@ -102,19 +118,32 @@ def test_simple_api_pipeline_on_iris(iris_batch):
     )
 
     _check_training_step(layer, features, labels)
+    _train_for_classification(layer, features, labels)
 
 
 def test_manual_pcvl_circuit_pipeline_on_iris(iris_batch):
     features, labels = iris_batch
-    QuantumLayer, OutputMappingStrategy, _ = _load_core_modules()
-    import perceval as pcvl
 
+    wl = pcvl.GenericInterferometer(
+            4,
+            lambda i: pcvl.BS() // pcvl.PS(pcvl.P(f"theta_li{i}")) //
+                    pcvl.BS() // pcvl.PS(pcvl.P(f"theta_lo{i}")),
+            shape=pcvl.InterferometerShape.RECTANGLE
+        )
     circuit = pcvl.Circuit(4)
+    circuit.add(0, wl)
     for mode in range(4):
         circuit.add(mode, pcvl.PS(pcvl.P(f"input{mode}")))
-    circuit.add((0, 1), pcvl.BS(theta=pcvl.P("theta0")))
-    circuit.add((2, 3), pcvl.BS(theta=pcvl.P("theta1")))
-    circuit.add((1, 2), pcvl.BS(theta=pcvl.P("theta2")))
+
+
+    wr = pcvl.GenericInterferometer(
+            4,
+            lambda i: pcvl.BS() // pcvl.PS(pcvl.P(f"theta_ri{i}")) //
+                    pcvl.BS() // pcvl.PS(pcvl.P(f"theta_ro{i}")),
+            shape=pcvl.InterferometerShape.RECTANGLE
+        )
+    
+    circuit.add(0, wr)
 
     layer = QuantumLayer(
         input_size=features.shape[1],
@@ -128,3 +157,10 @@ def test_manual_pcvl_circuit_pipeline_on_iris(iris_batch):
     )
 
     _check_training_step(layer, features, labels)
+    _train_for_classification(
+        layer,
+        features,
+        labels,
+        min_relative_improvement=0.0,
+        min_accuracy=0.4,
+    )
