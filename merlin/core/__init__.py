@@ -26,6 +26,8 @@ from .base import AbstractComputationProcess
 from .generators import CircuitGenerator, CircuitType, StateGenerator, StatePattern
 from .photonicbackend import PhotonicBackend
 from .process import ComputationProcess, ComputationProcessFactory
+from .components import Component, Rotation, BeamSplitter, EntanglingBlock, Measurement
+from .circuit import Circuit
 
 __all__ = [
     "PhotonicBackend",
@@ -37,4 +39,10 @@ __all__ = [
     "StatePattern",
     "CircuitGenerator",
     "StateGenerator",
+    "Component",
+    "Rotation",
+    "BeamSplitter",
+    "EntanglingBlock",
+    "Measurement",
+    "Circuit"
 ]
