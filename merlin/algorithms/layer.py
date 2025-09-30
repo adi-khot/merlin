@@ -41,6 +41,7 @@ from ..sampling.autodiff import AutoDiffProcess
 from ..torch_utils.torch_codes import OutputMapper
 from ..sampling.strategies import OutputMappingStrategy
 from ..builder.ansatz import Ansatz, AnsatzFactory
+from ..builder.circuit_builder import CircuitBuilder
 
 
 class QuantumLayer(nn.Module):
@@ -610,64 +611,85 @@ class QuantumLayer(nn.Module):
         dtype: torch.dtype | None = None,
         no_bunching: bool = True,
     ):
-        """
-        Simplified interface for creating a QuantumLayer.
+        """Create a ready-to-train layer with a 10-mode, 5-photon architecture.
 
-        Uses SERIES circuit type with PERIODIC state pattern as defaults.
-        Automatically calculates the number of modes based on n_params.
+        The circuit is assembled via :class:`CircuitBuilder` with the following layout:
+
+        1. An initial entangling layer to correlate the modes;
+        2. A full input encoding layer spanning all modes;
+        3. Enough trainable rotation layers to expose exactly ``n_params`` trainable angles;
+        4. A final entangling layer to remix the modes prior to measurement.
 
         Args:
-            input_size (int): Size of the input vector
-            n_params (int): Total number of parameters desired (default: 100). Formula: n_params = 2 * n_modes^2
-            shots (int): Number of shots for sampling (default: 0)
-            reservoir_mode (bool): Whether to use reservoir mode (default: False)
-            output_size (int, optional): Output dimension. If None, uses distribution size
-            output_mapping_strategy: How to map quantum output to classical output
-            device: PyTorch device
-            dtype: PyTorch dtype
-            no_bunching: Whether to exclude states with multiple photons per mode
+            input_size: Size of the classical input vector.
+            n_params: Number of trainable parameters to allocate across rotation layers.
+            shots: Number of sampling shots for stochastic evaluation.
+            reservoir_mode: Reserved for API compatibility (unused in builder mode).
+            output_size: Optional classical output width.
+            output_mapping_strategy: Strategy used to post-process the quantum distribution.
+            device: Optional target device for tensors.
+            dtype: Optional tensor dtype.
+            no_bunching: Whether to restrict to states without photon bunching.
 
         Returns:
-            QuantumLayer: Configured quantum layer instance
+            QuantumLayer configured with the described architecture.
         """
-        # Calculate minimum modes needed based on n_params
-        # n_params = 2 * n_modes^2, so n_modes = sqrt(n_params / 2)
-        min_modes_from_params = int(math.ceil(math.sqrt(n_params / 2)))
+        _ = reservoir_mode  # Reserved for API compatibility; builder path ignores this flag.
 
-        # Ensure we have at least input_size + 1 modes
-        n_modes = max(min_modes_from_params, input_size + 1)
+        n_modes = 10
+        n_photons = 5
 
-        # Number of photons equals input_size
-        n_photons = input_size
+        builder = CircuitBuilder(n_modes=n_modes, n_photons=n_photons)
 
-        # Create experiment configuration
-        experiment = Experiment(
-            circuit_type=CircuitType.SERIES,  # Default to SERIES
-            n_modes=n_modes,
-            n_photons=n_photons,
-            reservoir_mode=reservoir_mode,
-            use_bandwidth_tuning=False,  # Keep simple by default
-            state_pattern=StatePattern.PERIODIC,  # Default to PERIODIC
-        )
+        # Pre-encoding entanglement
+        builder.add_entangling_layer(depth=1)
 
-        # Create ansatz using AnsatzFactory
-        ansatz = AnsatzFactory.create(
-            PhotonicBackend=experiment,
-            input_size=input_size,
-            output_size=output_size,  # Can be None for automatic calculation
-            output_mapping_strategy=output_mapping_strategy,
-            dtype=dtype,
-        )
+        # Input encoding across all modes (prefix ``input``)
+        input_modes = list(range(min(input_size, n_modes)))
+        builder.add_input_encoding(modes=input_modes, name="input")
 
-        # IMPORTANT: Override the ansatz's output_mapping_strategy to ensure our parameter is used
-        # This is necessary because _init_from_ansatz uses ansatz.output_mapping_strategy
-        ansatz.output_mapping_strategy = output_mapping_strategy
+        # Allocate trainable rotations to match the requested parameter budget
+        remaining = max(int(n_params), 0)
+        trainable_prefixes: list[str] = []
+        layer_idx = 0
 
-        # Create and return the QuantumLayer instance
+        while remaining > 0:
+            prefix = f"theta_layer{layer_idx}"
+            if remaining >= n_modes:
+                builder.add_trainable_layer(name=prefix)
+                remaining -= n_modes
+            else:
+                modes = list(range(remaining))
+                builder.add_trainable_layer(modes=modes, name=prefix)
+                remaining = 0
+
+            trainable_prefixes.append(prefix)
+            layer_idx += 1
+
+        # Post-encoding entanglement
+        builder.add_entangling_layer(depth=1)
+
+        pcvl_circuit = builder.to_pcvl_circuit(pcvl)
+
+        if n_params > 0:
+            param_names = [p.name for p in pcvl_circuit.get_parameters()]
+            trainable_count = sum(
+                1
+                for name in param_names
+                if any(name.startswith(prefix) for prefix in trainable_prefixes)
+            )
+            if trainable_count != n_params:
+                raise ValueError(
+                    f"Requested {n_params} trainable parameters but constructed circuit exposes {trainable_count}."
+                )
+
         return cls(
             input_size=input_size,
             output_size=output_size,
-            ansatz=ansatz,
+            circuit=pcvl_circuit,
+            n_photons=n_photons,
+            trainable_parameters=trainable_prefixes,
+            input_parameters=["input"],
             output_mapping_strategy=output_mapping_strategy,
             shots=shots,
             no_bunching=no_bunching,
