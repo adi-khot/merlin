@@ -124,7 +124,7 @@ def test_trainable_parameter_budget_matches_request(quantum_layer_api):
     theta_param_count = sum(
         param.numel()
         for name, param in layer.named_parameters()
-        if name.startswith("theta_layer")
+        if name.startswith("theta")
     )
     assert theta_param_count == requested_params
 
@@ -161,6 +161,7 @@ def test_gradient_flow_for_strategies(quantum_layer_api):
         p.grad is not None and torch.any(p.grad != 0)
         for p in layer_none.parameters()
     )
+    assert sum(p.numel() for p in layer_none.parameters()) == nb_params
 
 
 def test_batch_shapes_and_probabilities(quantum_layer_api):

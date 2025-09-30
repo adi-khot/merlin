@@ -1,42 +1,30 @@
 from __future__ import annotations
 
-import importlib.util
 import os
-import sys
 from pathlib import Path
 
 import pytest
 import torch
 
-# Load helper without importing the top-level merlin package
-_HELPERS_PATH = Path(__file__).resolve().parents[1] / "helpers.py"
-_SPEC = importlib.util.spec_from_file_location("_merlin_test_helpers", _HELPERS_PATH)
-_HELPERS_MODULE = importlib.util.module_from_spec(_SPEC)
-sys.modules.setdefault("_merlin_test_helpers", _HELPERS_MODULE)
-assert _SPEC.loader is not None
-_SPEC.loader.exec_module(_HELPERS_MODULE)
-load_merlin_module = _HELPERS_MODULE.load_merlin_module
-
-# Ensure Perceval persistent data is routed to a writable location
 _PCVL_HOME = Path(__file__).resolve().parents[2] / ".pcvl_home"
-(_PCVL_HOME / "Library" / "Application Support").mkdir(parents=True, exist_ok=True)
+(_PCVL_HOME / "Library" / "Application Support" / "perceval-quandela" / "job_group").mkdir(
+    parents=True, exist_ok=True
+)
 os.environ["HOME"] = str(_PCVL_HOME)
 
-# Import perceval after HOME override so persistent data is created inside the project tree
 import perceval as pcvl
-
-circuit_mod = load_merlin_module("merlin.core.circuit")
-components_mod = load_merlin_module("merlin.core.components")
-circuit_builder_mod = load_merlin_module("merlin.builder.circuit_builder")
-
-CircuitBuilder = circuit_builder_mod.CircuitBuilder
-Rotation = components_mod.Rotation
-BeamSplitter = components_mod.BeamSplitter
-EntanglingBlock = components_mod.EntanglingBlock
-ParameterRole = components_mod.ParameterRole
+from merlin import OutputMappingStrategy, QuantumLayer
+from merlin.builder import CircuitBuilder
+from merlin.core.components import BeamSplitter, EntanglingBlock, ParameterRole, Rotation
+from merlin.pcvl_pytorch.locirc_to_tensor import CircuitConverter
 
 _PS_TYPE = type(pcvl.PS(0.0))
 _BS_TYPE = type(pcvl.BS())
+
+
+@pytest.fixture(autouse=True)
+def perceval_home(monkeypatch):
+    monkeypatch.setenv("HOME", str(_PCVL_HOME))
 
 
 def test_rotation_layer_assigns_trainable_names_per_mode():
@@ -137,8 +125,6 @@ def test_to_pcvl_circuit_supports_gradient_backpropagation():
 
     pcvl_circuit = builder.to_pcvl_circuit(pcvl)
 
-    converter_mod = load_merlin_module("merlin.pcvl_pytorch.locirc_to_tensor")
-    CircuitConverter = converter_mod.CircuitConverter
     converter = CircuitConverter(pcvl_circuit, input_specs=["theta", "phi"])
 
     total_params = sum(len(params) for params in converter.spec_mappings.values())
@@ -157,3 +143,29 @@ def test_to_pcvl_circuit_supports_gradient_backpropagation():
     assert torch.all(torch.isfinite(phi_params.grad))
     assert theta_params.grad.norm() > 0
     assert phi_params.grad.norm() > 0
+
+
+def test_builder_integrates_directly_with_quantum_layer():
+    builder = CircuitBuilder(n_modes=3, n_photons=1)
+    builder.add_input_encoding(name="input")
+    builder.add_trainable_layer(name="theta")
+    builder.add_entangling_layer(depth=1)
+
+    layer = QuantumLayer(
+        input_size=3,
+        circuit=builder,
+        n_photons=1,
+        output_size=3,
+        output_mapping_strategy=OutputMappingStrategy.LINEAR,
+        dtype=torch.float32,
+    )
+
+    assert isinstance(layer.computation_process.circuit, pcvl.Circuit)
+
+    x = torch.rand(4, 3)
+    logits = layer(x)
+    loss = logits.sum()
+    loss.backward()
+
+    assert logits.shape == (4, 3)
+    assert any(p.grad is not None for p in layer.parameters() if p.requires_grad)

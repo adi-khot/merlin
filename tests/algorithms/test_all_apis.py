@@ -89,18 +89,15 @@ def test_builder_api_pipeline_on_iris(iris_batch):
     builder.add_trainable_layer(name="theta")
     builder.add_entangling_layer(depth=1)
 
-    pcvl_circuit = builder.to_pcvl_circuit(pcvl)
-
     layer = QuantumLayer(
         input_size=features.shape[1],
-        circuit=pcvl_circuit,
+        circuit=builder,
         n_photons=5,
-        trainable_parameters=["theta"],
-        input_parameters=["input"],
         output_size=3,
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
         dtype=features.dtype,
     )
+    pcvl.pdisplay(layer.computation_process.circuit)
     _check_training_step(layer, features, labels)
     _train_for_classification(layer, features, labels)
 

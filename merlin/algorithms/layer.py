@@ -66,7 +66,7 @@ class QuantumLayer(nn.Module):
         # Ansatz-based construction
         ansatz: Ansatz | None = None,
         # Custom circuit construction (backward compatible)
-        circuit: pcvl.Circuit | None = None,
+        circuit: pcvl.Circuit | "CircuitBuilder" | None = None,
         input_state: list[int] | None = None,
         n_photons: int | None = None,
         trainable_parameters: list[str] = None,
@@ -88,8 +88,23 @@ class QuantumLayer(nn.Module):
         self.input_size = input_size
         self.no_bunching = no_bunching
         self.index_photons = index_photons
-        trainable_parameters = trainable_parameters or []
-        input_parameters = input_parameters or []
+
+        builder_trainable: list[str] = []
+        builder_input: list[str] = []
+
+        if isinstance(circuit, CircuitBuilder):
+            builder_trainable = circuit.trainable_parameter_prefixes
+            builder_input = circuit.input_parameter_prefixes
+            circuit = circuit.to_pcvl_circuit(pcvl)
+        if trainable_parameters is None:
+            trainable_parameters = list(builder_trainable)
+        else:
+            trainable_parameters = list(trainable_parameters)
+
+        if input_parameters is None:
+            input_parameters = list(builder_input)
+        else:
+            input_parameters = list(input_parameters)
 
         # Determine construction mode
         if ansatz is not None:
@@ -650,7 +665,6 @@ class QuantumLayer(nn.Module):
 
         # Allocate trainable rotations to match the requested parameter budget
         remaining = max(int(n_params), 0)
-        trainable_prefixes: list[str] = []
         layer_idx = 0
 
         while remaining > 0:
@@ -662,21 +676,18 @@ class QuantumLayer(nn.Module):
                 modes = list(range(remaining))
                 builder.add_trainable_layer(modes=modes, name=prefix)
                 remaining = 0
-
-            trainable_prefixes.append(prefix)
             layer_idx += 1
 
         # Post-encoding entanglement
         builder.add_entangling_layer(depth=1)
 
-        pcvl_circuit = builder.to_pcvl_circuit(pcvl)
-
         if n_params > 0:
+            pcvl_circuit = builder.to_pcvl_circuit(pcvl)
             param_names = [p.name for p in pcvl_circuit.get_parameters()]
             trainable_count = sum(
                 1
                 for name in param_names
-                if any(name.startswith(prefix) for prefix in trainable_prefixes)
+                if any(name.startswith(prefix) for prefix in builder.trainable_parameter_prefixes)
             )
             if trainable_count != n_params:
                 raise ValueError(
@@ -686,9 +697,9 @@ class QuantumLayer(nn.Module):
         return cls(
             input_size=input_size,
             output_size=output_size,
-            circuit=pcvl_circuit,
+            circuit=builder,
             n_photons=n_photons,
-            trainable_parameters=trainable_prefixes,
+            trainable_parameters=["theta"],
             input_parameters=["input"],
             output_mapping_strategy=output_mapping_strategy,
             shots=shots,

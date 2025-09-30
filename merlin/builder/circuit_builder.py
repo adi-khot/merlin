@@ -47,6 +47,34 @@ class CircuitBuilder:
         # Track components before any sections for "_all_" reference
         self._pre_section_end_idx = 0
 
+        self._trainable_prefixes: List[str] = []
+        self._trainable_prefix_set: set[str] = set()
+        self._input_prefixes: List[str] = []
+        self._input_prefix_set: set[str] = set()
+
+    @staticmethod
+    def _deduce_prefix(name: Optional[str]) -> Optional[str]:
+        # we want to extract the base prefix from a name to automatically fill-in trainable and input parameters
+        if not name:
+            return None
+        # remove digits from the end of the name
+        base = name.rstrip('0123456789')
+        while base.endswith('_'):
+            base = base[:-1]
+        return base or name
+
+    def _register_trainable_prefix(self, name: Optional[str]):
+        prefix = self._deduce_prefix(name)
+        if prefix and prefix not in self._trainable_prefix_set:
+            self._trainable_prefix_set.add(prefix)
+            self._trainable_prefixes.append(prefix)
+
+    def _register_input_prefix(self, name: Optional[str]):
+        prefix = self._deduce_prefix(name)
+        if prefix and prefix not in self._input_prefix_set:
+            self._input_prefix_set.add(prefix)
+            self._input_prefixes.append(prefix)
+
     def add_rotation(
             self,
             target: int,
@@ -69,6 +97,11 @@ class CircuitBuilder:
         )
 
         self.circuit.add(rotation)
+
+        if role == ParameterRole.TRAINABLE:
+            self._register_trainable_prefix(name)
+        elif role == ParameterRole.INPUT:
+            self._register_input_prefix(name)
         return self
 
     def add_rotation_layer(
@@ -146,6 +179,11 @@ class CircuitBuilder:
             )
             self.circuit.add(rotation)
 
+            if final_role == ParameterRole.TRAINABLE:
+                self._register_trainable_prefix(rotation.custom_name or name)
+            elif final_role == ParameterRole.INPUT:
+                self._register_input_prefix(rotation.custom_name or name)
+
         self._layer_counter += 1
         return self
 
@@ -187,6 +225,16 @@ class CircuitBuilder:
         )
 
         self.circuit.add(bs)
+
+        if theta_role == ParameterRole.TRAINABLE:
+            self._register_trainable_prefix(theta_name or "theta")
+        elif theta_role == ParameterRole.INPUT:
+            self._register_input_prefix(theta_name or "theta")
+
+        if phi_role == ParameterRole.TRAINABLE:
+            self._register_trainable_prefix(phi_name or "phi")
+        elif phi_role == ParameterRole.INPUT:
+            self._register_input_prefix(phi_name or "phi")
         return self
 
     def add_entangling_layer(
@@ -342,6 +390,7 @@ class CircuitBuilder:
                     else:
                         new_comp.custom_name = f"theta_copy_{self._copy_counter}"
                     self._copy_counter += 1
+                self._register_trainable_prefix(new_comp.custom_name or comp.custom_name)
             elif comp.role == ParameterRole.INPUT:
                 if not share_input:
                     # Generate new input parameter name
@@ -351,6 +400,7 @@ class CircuitBuilder:
                         base_name = "px"
                     new_comp.custom_name = f"{base_name}{self._input_counter}"
                     self._input_counter += 1
+                self._register_input_prefix(new_comp.custom_name or comp.custom_name)
 
         elif isinstance(comp, BeamSplitter):
             # Handle beam splitter parameter transformation
@@ -360,6 +410,8 @@ class CircuitBuilder:
                 else:
                     new_comp.theta_name = f"theta_bs_copy_{self._copy_counter}"
                 self._copy_counter += 1
+            if comp.theta_role == ParameterRole.TRAINABLE:
+                self._register_trainable_prefix(new_comp.theta_name or comp.theta_name)
             elif comp.theta_role == ParameterRole.INPUT and not share_input:
                 if comp.theta_name:
                     base_name = comp.theta_name.rstrip('0123456789')
@@ -367,6 +419,9 @@ class CircuitBuilder:
                     base_name = "x_bs"
                 new_comp.theta_name = f"{base_name}{self._input_counter}"
                 self._input_counter += 1
+                self._register_input_prefix(new_comp.theta_name)
+            elif comp.theta_role == ParameterRole.INPUT:
+                self._register_input_prefix(comp.theta_name)
 
             # Same for phi
             if comp.phi_role == ParameterRole.TRAINABLE and not share_trainable:
@@ -375,6 +430,8 @@ class CircuitBuilder:
                 else:
                     new_comp.phi_name = f"phi_bs_copy_{self._copy_counter}"
                 self._copy_counter += 1
+            if comp.phi_role == ParameterRole.TRAINABLE:
+                self._register_trainable_prefix(new_comp.phi_name or comp.phi_name)
             elif comp.phi_role == ParameterRole.INPUT and not share_input:
                 if comp.phi_name:
                     base_name = comp.phi_name.rstrip('0123456789')
@@ -382,6 +439,9 @@ class CircuitBuilder:
                     base_name = "x_phi"
                 new_comp.phi_name = f"{base_name}{self._input_counter}"
                 self._input_counter += 1
+                self._register_input_prefix(new_comp.phi_name)
+            elif comp.phi_role == ParameterRole.INPUT:
+                self._register_input_prefix(comp.phi_name)
 
         # EntanglingBlock doesn't need special handling as its parameters
         # are generated during compilation
@@ -498,3 +558,11 @@ class CircuitBuilder:
         builder = cls(circuit.n_modes)
         builder.circuit = circuit
         return builder
+
+    @property
+    def trainable_parameter_prefixes(self) -> List[str]:
+        return list(self._trainable_prefixes)
+
+    @property
+    def input_parameter_prefixes(self) -> List[str]:
+        return list(self._input_prefixes)
