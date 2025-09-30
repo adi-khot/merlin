@@ -154,6 +154,73 @@ def layer_compute_vectorized(
     return result
 
 
+def layer_compute_batch(
+    unitary: torch.Tensor,
+    prev_amplitudes: torch.Tensor,
+    sources: torch.Tensor,
+    destinations: torch.Tensor,
+    modes: torch.Tensor,
+    p: list[int],
+) -> torch.Tensor:
+    """
+    Compute amplitudes for a single layer using vectorized operations for multiple input states.
+
+    Args:
+        unitary: Batch of unitary matrices [batch_size, m, m]
+        prev_amplitudes: Previous layer amplitudes [batch_size, prev_size, num_input_states]
+        sources: Source indices for operations [num_ops]
+        destinations: Destination indices for operations [num_ops]
+        modes: Mode indices for operations [num_ops]
+        p: List of photon indices, one per input state [num_input_states]
+
+    Returns:
+        Next layer amplitudes [batch_size, next_size, num_input_states]
+    """
+
+    batch_size = unitary.shape[0]
+    num_input_states = len(p)
+
+    # Handle empty operations case
+    if sources.shape[0] == 0:
+        return prev_amplitudes
+
+    # Determine output size
+    next_size = int(destinations.max().item()) + 1
+
+    # Convert p to tensor for indexing
+    p_tensor = torch.tensor(p, device=unitary.device, dtype=torch.long)
+
+    # Get unitary elements for all operations and input states
+    # Shape: [batch_size, num_ops, num_input_states]
+    modes_expanded = modes.unsqueeze(-1).expand(-1, num_input_states).to(unitary.device)
+    p_expanded = p_tensor.unsqueeze(0).expand(modes.shape[0], -1)
+    u_elements = unitary[:, modes_expanded, p_expanded]
+
+    # Get source amplitudes for all operations
+    # Shape: [batch_size, num_ops, num_input_states]
+    prev_amps = prev_amplitudes[:, sources.to(prev_amplitudes.device), :]
+
+    # Compute contributions
+    # Shape: [batch_size, num_ops, num_input_states]
+    contributions = u_elements.to(prev_amps.device) * prev_amps
+
+    # Create result tensor with same dtype as input
+    result = torch.zeros(
+        (batch_size, next_size, num_input_states), dtype=prev_amplitudes.dtype, device=destinations.device
+    )
+
+    # Scatter add contributions to result
+    # Need to expand destinations for all input states
+    destinations_expanded = destinations.unsqueeze(0).unsqueeze(-1).expand(batch_size, -1, num_input_states)
+    result.scatter_add_(
+        1,  # dimension to scatter on (1 for the state indices)
+        destinations_expanded.to(destinations.device),
+        contributions.to(destinations.device),
+    )
+
+    return result
+
+
 def layer_compute_backward(
     unitary: torch.Tensor,
     sources: torch.Tensor,
@@ -509,6 +576,100 @@ class SLOSComputeGraph:
 
         amplitudes *= torch.sqrt(self.norm_factor_output.to(amplitudes.device))
         amplitudes /= math.sqrt(self.norm_factor_input)
+        self.prev_amplitudes = amplitudes  # type: ignore[assignment]
+
+        # Apply output mapping if needed
+        if self.output_map_func is not None:
+            keys = self.mapped_keys
+        else:
+            keys = self.final_keys if self.keep_keys else None
+        # Remove batch dimension if input was single unitary
+
+        return keys, amplitudes
+
+    def compute_batch(
+        self, unitary: torch.Tensor, input_states: list[list[int]]
+    ) -> tuple[list[tuple[int, ...]], torch.Tensor]:
+        """
+        Compute the probability distribution using the pre-built graph.
+
+        Args:
+            unitary (torch.Tensor): Single unitary matrix [m x m] or batch of unitaries [b x m x m].\
+                The unitary should be provided in the complex dtype corresponding to the graph's dtype.\
+                For example, for torch.float32, use torch.cfloat; for torch.float64, use torch.cdouble.
+            input_state (list[int]): Input_state of length self.m with self.n_photons in the input state
+
+        Returns:
+            Tuple[List[Tuple[int, ...]], torch.Tensor]:
+                - List of tuples representing output Fock state configurations
+                - Probability distribution tensor
+        """
+        if len(unitary.shape) == 2:
+            unitary = unitary.unsqueeze(0)  # Add batch dimension [1 x m x m]
+        else:
+            pass
+
+        if any(n < 0 for n in input_states[0]) or sum(input_states[0]) == 0:
+            raise ValueError("Photon numbers cannot be negative or all zeros")
+
+        if self.no_bunching and not all(x in [0, 1] for x in input_states[0]):
+            raise ValueError(
+                "Input state must be binary (0s and 1s only) in non-bunching mode"
+            )
+
+        batch_size, m, m2 = unitary.shape
+        if m != m2 or m != self.m:
+            raise ValueError(
+                f"Unitary matrix must be square with dimension {self.m}x{self.m}"
+            )
+
+        # Check dtype - it should match the complex dtype used for the graph building
+        if unitary.dtype != self.complex_dtype:
+            # Raise an error instead of just warning and converting
+            raise ValueError(
+                f"Unitary dtype {unitary.dtype} doesn't match the expected complex dtype {self.complex_dtype} "
+                f"for the graph built with dtype {self.dtype}. Please provide a unitary with the correct dtype "
+                f"or rebuild the graph with a compatible dtype."
+            )
+        idx_n = [[] for _ in range(sum(input_states[0]))]
+        self.norm_factor_input = torch.ones((1, 1, len(input_states)))
+        for j, input_state in enumerate(input_states):
+            k = 0
+            for i, count in enumerate(input_state):
+                for c in range(count):
+                    self.norm_factor_input[0, 0, j] *= c + 1
+                    idx_n[k].append(i)
+                    k += 1
+                    if (i > self.index_photons[len(idx_n) - 1][1]) or (
+                        i < self.index_photons[len(idx_n) - 1][0]
+                    ):
+                        raise ValueError(
+                            f"Input state photons must be bounded by {self.index_photons}"
+                        )
+
+        # Get device from unitary
+        device = unitary.device
+
+        # Initial amplitude (batch of 1s on same device as unitary with appropriate dtype)
+        amplitudes = torch.ones(
+            (batch_size, 1, len(input_states)), dtype=self.complex_dtype, device=device
+        )
+
+        # Apply each layer
+        for layer_idx, _ in enumerate(self.layer_functions):
+            p = idx_n[layer_idx]
+            sources, destinations, modes = self.vectorized_operations[layer_idx]
+            amplitudes = layer_compute_batch(
+                unitary,
+                amplitudes,
+                sources,
+                destinations,
+                modes,
+                p,
+            )
+
+        amplitudes *= torch.sqrt(self.norm_factor_output.to(amplitudes.device).unsqueeze(0).unsqueeze(2))
+        amplitudes /= torch.sqrt(self.norm_factor_input.to(amplitudes.device))
         self.prev_amplitudes = amplitudes  # type: ignore[assignment]
 
         # Apply output mapping if needed

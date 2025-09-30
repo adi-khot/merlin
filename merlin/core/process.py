@@ -97,6 +97,7 @@ class ComputationProcess(AbstractComputationProcess):
     def compute(self, parameters: list[torch.Tensor]) -> torch.Tensor:
         """Compute quantum output distribution."""
         # Generate unitary matrix from parameters
+
         unitary = self.converter.to_tensor(*parameters)
         self.unitary = unitary
         # Compute output distribution using the input state
@@ -188,6 +189,73 @@ class ComputationProcess(AbstractComputationProcess):
 
         final_amplitudes = input_state @ amplitudes
 
+        return final_amplitudes
+
+    def compute_ebs_simultaneously(
+        self, parameters: list[torch.Tensor], simultaneous_processes: int = 1
+    ) -> torch.Tensor:
+        """
+        Compute quantum output distribution for superposition states using batch processing.
+        Args:
+            parameters: List of parameter tensors for the circuit
+            simultaneous_processes: Number of input states to process simultaneously in compute_batch
+        Returns:
+            Final amplitudes tensor after superposition computation
+        """
+
+        unitary = self.converter.to_tensor(*parameters)
+        if type(self.input_state) is torch.Tensor:
+            if len(self.input_state.shape) == 1:
+                self.input_state = self.input_state.unsqueeze(0)
+            if self.input_state.dtype == torch.float32:
+                self.input_state = self.input_state.to(torch.complex64)
+            elif self.input_state.dtype == torch.float64:
+                self.input_state = self.input_state.to(torch.complex128)
+        else:
+            raise TypeError("Input state should be a tensor")
+
+        # Normalize input state
+        sum_input = self.input_state.abs().pow(2).sum(dim=1).sqrt().unsqueeze(1)
+        self.input_state = self.input_state / sum_input
+
+        # Find non-zero input states
+        mask = (self.input_state.real**2 + self.input_state.imag**2 < 1e-13).all(dim=0)
+        masked_input_state = (~mask).int().tolist()
+
+        input_states = [
+            (k, self.simulation_graph.mapped_keys[k])
+            for k, mask in enumerate(masked_input_state)
+            if mask == 1
+        ]
+        # Initialize amplitudes tensor
+        amplitudes = torch.zeros(
+            (self.input_state.shape[-1], len(self.simulation_graph.mapped_keys)),
+            dtype=unitary.dtype,
+            device=self.input_state.device,
+        )
+
+        # Process input states in batches
+        for i in range(0, len(input_states), simultaneous_processes):
+            batch_end = min(i + simultaneous_processes, len(input_states))
+            batch_indices = []
+            batch_fock_states = []
+
+            for j in range(i, batch_end):
+                idx, fock_state = input_states[j]
+                batch_indices.append(idx)
+                batch_fock_states.append(fock_state)
+
+            # Compute batch amplitudes
+            _, batch_amplitudes = self.simulation_graph.compute_batch(unitary, batch_fock_states)
+            # Stack amplitudes for each input state in the batch
+            for k, idx in enumerate(batch_indices):
+                amplitudes[idx, :] = batch_amplitudes[:, :, k]
+
+        # Apply input state coefficients
+
+        input_state = self.input_state.to(amplitudes.dtype)
+
+        final_amplitudes = input_state @ amplitudes
         return final_amplitudes
 
     def compute_with_keys(self, parameters: list[torch.Tensor]):

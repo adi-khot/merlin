@@ -485,13 +485,18 @@ class QuantumLayer(nn.Module):
         apply_sampling: bool | None = None,
         shots: int | None = None,
         return_amplitudes: bool = False,
+        batch=False,
+        simultaneous_processes=1,
     ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
         """Forward pass through the quantum layer."""
         # Prepare parameters
         params = self.prepare_parameters(list(input_parameters))
         # Get quantum output
         if type(self.computation_process.input_state) is torch.Tensor:
-            amplitudes = self.computation_process.compute_superposition_state(params)
+            if batch:
+                amplitudes = self.computation_process.compute_ebs_simultaneously(params, simultaneous_processes=simultaneous_processes)
+            else:
+                amplitudes = self.computation_process.compute_superposition_state(params)
         else:
             amplitudes = self.computation_process.compute(params)
 
