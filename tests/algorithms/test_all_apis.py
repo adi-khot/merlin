@@ -101,7 +101,6 @@ def test_builder_api_pipeline_on_iris(iris_batch):
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
         dtype=features.dtype,
     )
-
     _check_training_step(layer, features, labels)
     _train_for_classification(layer, features, labels)
 
@@ -111,12 +110,11 @@ def test_simple_api_pipeline_on_iris(iris_batch):
 
     layer = QuantumLayer.simple(
         input_size=features.shape[1],
-        n_params=40,
+        n_params=10,
         output_size=3,
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
         dtype=features.dtype,
     )
-
     _check_training_step(layer, features, labels)
     _train_for_classification(layer, features, labels)
 
@@ -144,7 +142,6 @@ def test_manual_pcvl_circuit_pipeline_on_iris(iris_batch):
         )
     
     circuit.add(0, wr)
-
     layer = QuantumLayer(
         input_size=features.shape[1],
         circuit=circuit,
@@ -155,7 +152,6 @@ def test_manual_pcvl_circuit_pipeline_on_iris(iris_batch):
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
         dtype=features.dtype,
     )
-
     _check_training_step(layer, features, labels)
     _train_for_classification(
         layer,
