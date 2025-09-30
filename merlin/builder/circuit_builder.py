@@ -425,6 +425,73 @@ class CircuitBuilder:
 
         return self.circuit
 
+    def to_pcvl_circuit(self, pcvl_module=None):
+        """Convert the constructed circuit into a Perceval circuit.
+
+        Args:
+            pcvl_module: Optional Perceval module. If ``None``, attempts to import ``perceval``.
+
+        Returns:
+            A ``pcvl.Circuit`` instance mirroring the components tracked by this builder.
+
+        Raises:
+            ImportError: If ``perceval`` is not installed and no module is provided.
+        """
+        if pcvl_module is None:
+            try:
+                import perceval as pcvl_module  # type: ignore
+            except ImportError as exc:  # pragma: no cover - exercised when dependency missing
+                raise ImportError(
+                    "perceval is required to convert a circuit to a Perceval representation. "
+                    "Install perceval-quandela or provide a custom module via 'pcvl_module'."
+                ) from exc
+
+        circuit = self.build()
+        pcvl_circuit = pcvl_module.Circuit(circuit.n_modes)
+
+        for idx, component in enumerate(circuit.components):
+            if isinstance(component, Rotation):
+                if component.role == ParameterRole.FIXED:
+                    phi = component.value
+                else:
+                    custom_name = component.custom_name or f"theta_{component.target}_{idx}"
+                    phi = pcvl_module.P(custom_name)
+                pcvl_circuit.add(component.target, pcvl_module.PS(phi))
+
+            elif isinstance(component, BeamSplitter):
+                if component.theta_role == ParameterRole.FIXED:
+                    theta = component.theta_value
+                else:
+                    theta_name = component.theta_name or f"theta_bs_{idx}"
+                    theta = pcvl_module.P(theta_name)
+
+                if component.phi_role == ParameterRole.FIXED:
+                    phi_tr = component.phi_value
+                else:
+                    phi_name = component.phi_name or f"phi_bs_{idx}"
+                    phi_tr = pcvl_module.P(phi_name)
+
+                pcvl_circuit.add(component.targets, pcvl_module.BS(theta=theta, phi_tr=phi_tr))
+
+            elif isinstance(component, EntanglingBlock):
+                if component.targets == "all":
+                    mode_list = list(range(circuit.n_modes))
+                else:
+                    mode_list = list(component.targets)
+
+                if len(mode_list) < 2:
+                    continue
+
+                for _ in range(component.depth):
+                    for left, right in zip(mode_list[:-1], mode_list[1:]):
+                        pcvl_circuit.add((left, right), pcvl_module.BS())
+
+            else:
+                # Components like Measurement are metadata only and do not map to a pcvl operation
+                continue
+
+        return pcvl_circuit
+
     @classmethod
     def from_circuit(cls, circuit: Circuit) -> "CircuitBuilder":
         """Create a builder from an existing circuit."""

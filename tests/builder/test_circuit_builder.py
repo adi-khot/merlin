@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import torch
 
 # Load helper without importing the top-level merlin package
 _HELPERS_PATH = Path(__file__).resolve().parents[1] / "helpers.py"
@@ -122,3 +123,37 @@ def test_complex_builder_pipeline_exports_pcvl_circuit():
 
     entangling_ops = [gate for _, gate in pcvl_circuit._components if isinstance(gate, _BS_TYPE)]
     assert entangling_ops, "Entangling layer should contribute beam splitters"
+
+
+def test_to_pcvl_circuit_supports_gradient_backpropagation():
+    builder = CircuitBuilder(n_modes=2, n_photons=1)
+    builder.add_trainable_layer(name="theta")
+    builder.add_beam_splitter(
+        targets=(0, 1),
+        trainable_theta=True,
+        trainable_phi=True,
+    )
+    builder.add_entangling_layer(depth=1)
+
+    pcvl_circuit = builder.to_pcvl_circuit(pcvl)
+
+    converter_mod = load_merlin_module("merlin.pcvl_pytorch.locirc_to_tensor")
+    CircuitConverter = converter_mod.CircuitConverter
+    converter = CircuitConverter(pcvl_circuit, input_specs=["theta", "phi"])
+
+    total_params = sum(len(params) for params in converter.spec_mappings.values())
+    assert total_params == 4
+
+    theta_params = torch.tensor([0.1, -0.2, 0.3], dtype=torch.float32, requires_grad=True)
+    phi_params = torch.tensor([0.4], dtype=torch.float32, requires_grad=True)
+
+    unitary = converter.to_tensor(theta_params, phi_params)
+    loss = (unitary.real.pow(2) + unitary.imag.pow(2)).sum()
+    loss.backward()
+
+    assert theta_params.grad is not None
+    assert phi_params.grad is not None
+    assert torch.all(torch.isfinite(theta_params.grad))
+    assert torch.all(torch.isfinite(phi_params.grad))
+    assert theta_params.grad.norm() > 0
+    assert phi_params.grad.norm() > 0
