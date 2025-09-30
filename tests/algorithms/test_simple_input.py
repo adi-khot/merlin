@@ -138,15 +138,16 @@ def test_trainable_parameter_budget_matches_request(quantum_layer_api):
 
 def test_gradient_flow_for_strategies(quantum_layer_api):
     QuantumLayer, OutputMappingStrategy = quantum_layer_api
+    nb_params = 40
 
     layer_linear = QuantumLayer.simple(
         input_size=3,
-        n_params=60,
+        n_params=nb_params,
         output_size=4,
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
     )
 
-    x = torch.rand(8, 3, requires_grad=True)
+    x = torch.rand(8, 3, requires_grad=False)
     loss = layer_linear(x).sum()
     loss.backward()
     assert any(
@@ -156,18 +157,34 @@ def test_gradient_flow_for_strategies(quantum_layer_api):
 
     layer_none = QuantumLayer.simple(
         input_size=3,
-        n_params=60,
+        n_params=nb_params,
         output_mapping_strategy=OutputMappingStrategy.NONE,
     )
 
-    x = torch.rand(8, 3, requires_grad=True)
+    x = torch.rand(8, 3, requires_grad=False)
     loss = layer_none(x).sum()
     loss.backward()
+    assert sum(p.numel() for p in layer_none.parameters()) == nb_params
     assert any(
         p.grad is not None and torch.any(p.grad != 0)
         for p in layer_none.parameters()
     )
 
+    layer_grouping = QuantumLayer.simple(
+        input_size=3,
+        n_params=nb_params,
+        output_size = 4,
+        output_mapping_strategy=OutputMappingStrategy.GROUPING,
+    )
+
+    x = torch.rand(8, 3, requires_grad=False)
+    loss = layer_grouping(x).sum()
+    loss.backward()
+    assert sum(p.numel() for p in layer_grouping.parameters()) == nb_params
+    assert any(
+        p.grad is not None and torch.any(p.grad != 0)
+        for p in layer_grouping.parameters()
+    )
 
 def test_batch_shapes_and_probabilities(quantum_layer_api):
     QuantumLayer, OutputMappingStrategy = quantum_layer_api
