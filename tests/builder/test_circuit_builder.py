@@ -57,7 +57,7 @@ def test_section_reference_copies_components_without_sharing_trainables():
     builder.add_rotation_layer(trainable=True, name="theta")
 
     builder.begin_section("first")
-    builder.add_beam_splitter(
+    builder.add_superposition(
         targets=(0, 1),
         theta=0.25,
         trainable_theta=True,
@@ -97,7 +97,7 @@ def test_build_closes_open_sections_and_sets_metadata():
 
 def test_complex_builder_pipeline_exports_pcvl_circuit():
     builder = CircuitBuilder(n_modes=3, n_photons=1)
-    builder.add_input_encoding(name="input")
+    builder.add_input_layer(name="input")
     builder.add_entangling_layer(depth=1, name="ent")
     builder.add_rotation(target=1, angle=0.25)
 
@@ -115,8 +115,8 @@ def test_complex_builder_pipeline_exports_pcvl_circuit():
 
 def test_to_pcvl_circuit_supports_gradient_backpropagation():
     builder = CircuitBuilder(n_modes=2, n_photons=1)
-    builder.add_trainable_layer(name="theta")
-    builder.add_beam_splitter(
+    builder.add_rotation_layer(trainable=True, name="theta")
+    builder.add_superposition(
         targets=(0, 1),
         trainable_theta=True,
         trainable_phi=True,
@@ -147,8 +147,8 @@ def test_to_pcvl_circuit_supports_gradient_backpropagation():
 
 def test_builder_integrates_directly_with_quantum_layer():
     builder = CircuitBuilder(n_modes=3, n_photons=1)
-    builder.add_input_encoding(name="input")
-    builder.add_trainable_layer(name="theta")
+    builder.add_input_layer(name="input")
+    builder.add_rotation_layer(trainable=True, name="theta")
     builder.add_entangling_layer(depth=1)
 
     layer = QuantumLayer(

@@ -187,18 +187,13 @@ class CircuitBuilder:
         self._layer_counter += 1
         return self
 
-    def add_input_encoding(self, modes: Optional[List[int]] = None, name: Optional[str] = None) -> "CircuitBuilder":
+    def add_input_layer(self, modes: Optional[List[int]] = None, name: Optional[str] = None) -> "CircuitBuilder":
         """Convenience method for input encoding."""
-        # Use 'px' as default name to match backend expectations
         if name is None:
             name = "px"
         return self.add_rotation_layer(modes=modes, role=ParameterRole.INPUT, name=name)
 
-    def add_trainable_layer(self, modes: Optional[List[int]] = None, name: Optional[str] = None) -> "CircuitBuilder":
-        """Convenience method for trainable rotation layer."""
-        return self.add_rotation_layer(modes=modes, trainable=True, name=name)
-
-    def add_beam_splitter(
+    def add_superposition(
             self,
             targets: Tuple[int, int],
             theta: float = 0.785398,
@@ -207,7 +202,7 @@ class CircuitBuilder:
             trainable_phi: bool = False,
             name: Optional[str] = None
     ) -> "CircuitBuilder":
-        """Add a beam splitter."""
+        """Add a beam splitter (superposition component)."""
         theta_role = ParameterRole.TRAINABLE if trainable_theta else ParameterRole.FIXED
         phi_role = ParameterRole.TRAINABLE if trainable_phi else ParameterRole.FIXED
 

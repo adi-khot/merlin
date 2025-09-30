@@ -661,7 +661,7 @@ class QuantumLayer(nn.Module):
 
         # Input encoding across all modes (prefix ``input``)
         input_modes = list(range(min(input_size, n_modes)))
-        builder.add_input_encoding(modes=input_modes, name="input")
+        builder.add_input_layer(modes=input_modes, name="input")
 
         # Allocate trainable rotations to match the requested parameter budget
         remaining = max(int(n_params), 0)
@@ -670,11 +670,11 @@ class QuantumLayer(nn.Module):
         while remaining > 0:
             prefix = f"theta_layer{layer_idx}"
             if remaining >= n_modes:
-                builder.add_trainable_layer(name=prefix)
+                builder.add_rotation_layer(trainable=True, name=prefix)
                 remaining -= n_modes
             else:
                 modes = list(range(remaining))
-                builder.add_trainable_layer(modes=modes, name=prefix)
+                builder.add_rotation_layer(modes=modes, trainable=True, name=prefix)
                 remaining = 0
             layer_idx += 1
 
@@ -699,8 +699,6 @@ class QuantumLayer(nn.Module):
             output_size=output_size,
             circuit=builder,
             n_photons=n_photons,
-            trainable_parameters=["theta"],
-            input_parameters=["input"],
             output_mapping_strategy=output_mapping_strategy,
             shots=shots,
             no_bunching=no_bunching,

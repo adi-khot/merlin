@@ -85,8 +85,8 @@ def test_builder_api_pipeline_on_iris(iris_batch):
 
     builder = CircuitBuilder(n_modes=10, n_photons=5)
     builder.add_entangling_layer(depth=1)
-    builder.add_input_encoding(modes=list(range(features.shape[1])), name="input")
-    builder.add_trainable_layer(name="theta")
+    builder.add_input_layer(modes=list(range(features.shape[1])), name="input")
+    builder.add_rotation_layer(trainable=True, name="theta")
     builder.add_entangling_layer(depth=1)
 
     layer = QuantumLayer(
