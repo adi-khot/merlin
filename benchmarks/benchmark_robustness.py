@@ -80,7 +80,8 @@ def test_large_batch_robustness_benchmark(benchmark, config: Dict, batch_size: i
     """Benchmark robustness with large batch sizes."""
     experiment = ML.PhotonicBackend(
         circuit_type=ML.CircuitType.PARALLEL_COLUMNS, 
-        n_modes=config["n_modes"]
+        n_modes=config["n_modes"], 
+        n_photons=config["n_photons"]
     )
 
     ansatz = ML.AnsatzFactory.create(
@@ -111,7 +112,8 @@ def test_extreme_values_robustness_benchmark(benchmark, config: Dict, device: st
     """Benchmark robustness with extreme input values."""
     experiment = ML.PhotonicBackend(
         circuit_type=ML.CircuitType.SERIES, 
-        n_modes=config["n_modes"]
+        n_modes=config["n_modes"], 
+        n_photons=config["n_photons"]
     )
 
     ansatz = ML.AnsatzFactory.create(
@@ -158,7 +160,8 @@ def test_numerical_stability_benchmark(benchmark, config: Dict, device: str):
     """Benchmark numerical stability over multiple iterations."""
     experiment = ML.PhotonicBackend(
         circuit_type=ML.CircuitType.PARALLEL, 
-        n_modes=config["n_modes"]
+        n_modes=config["n_modes"], 
+        n_photons=config["n_photons"]
     )
 
     ansatz = ML.AnsatzFactory.create(
@@ -203,7 +206,8 @@ def test_memory_efficiency_benchmark(benchmark, config: Dict, device: str):
     """Benchmark memory efficiency over many iterations."""
     experiment = ML.PhotonicBackend(
         circuit_type=ML.CircuitType.PARALLEL_COLUMNS, 
-        n_modes=config["n_modes"]
+        n_modes=config["n_modes"], 
+        n_photons=config["n_photons"]
     )
 
     ansatz = ML.AnsatzFactory.create(
@@ -365,10 +369,6 @@ class TestRobustnessPerformanceRegression:
 
         layer = ML.QuantumLayer(input_size=4, ansatz=ansatz)
         
-        # Test extreme values
-        extreme_inputs = [
-            torch.full((16, 4), 100.0),   # Very large values
-            torch.full((16, 4), -100.0),  # Very large negative values
         # Test extreme values
         extreme_inputs = [
             torch.full((16, 4), 100.0),   # Very large values
