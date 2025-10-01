@@ -7,22 +7,11 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-# Route Perceval persistent data into the repository tree before importing merlin
-_PCVL_HOME = Path(__file__).resolve().parents[2] / ".pcvl_home"
-(_PCVL_HOME / "Library" / "Application Support" / "perceval-quandela" / "job_group").mkdir(
-    parents=True, exist_ok=True
-)
-os.environ["HOME"] = str(_PCVL_HOME)
-
 import perceval as pcvl
 from merlin import OutputMappingStrategy, QuantumLayer
 from merlin.builder import CircuitBuilder
 from merlin.datasets import iris as iris_dataset
 
-
-@pytest.fixture(autouse=True)
-def perceval_home(monkeypatch):
-    monkeypatch.setenv("HOME", str(_PCVL_HOME))
 
 
 @pytest.fixture
