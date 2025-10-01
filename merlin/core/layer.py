@@ -448,6 +448,10 @@ class QuantumLayer(nn.Module):
             # For custom circuits, apply 2π scaling directly
             return x * torch.pi
 
+    def set_input_state(self, input_state):
+        self.input_state = input_state
+        self.computation_process.input_state = input_state
+
     def prepare_parameters(
         self, input_parameters: list[torch.Tensor]
     ) -> list[torch.Tensor]:
