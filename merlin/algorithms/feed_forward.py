@@ -467,6 +467,93 @@ class FeedForwardBlock(torch.nn.Module):
         print(f"New input size: {self.input_size}")
 
 
+class PoolingFeedForward(torch.nn.Module):
+    def __init__(
+        self,
+        n_modes: int,
+        n_photons: int,
+        n_output_modes: int,
+        pooling_modes: list[list[int]] = None,
+        no_bunching=True,
+    ):
+        super().__init__()
+        keys_in = QuantumLayer(
+            0,
+            10,
+            circuit=pcvl.Circuit(n_modes),
+            n_photons=n_photons,
+            no_bunching=no_bunching,
+        ).computation_process.simulation_graph.mapped_keys
+        keys_out = QuantumLayer(
+            0,
+            10,
+            circuit=pcvl.Circuit(n_output_modes),
+            n_photons=n_photons,
+            no_bunching=no_bunching,
+        ).computation_process.simulation_graph.mapped_keys
+        if pooling_modes is None:
+            num_skips = n_modes // n_output_modes
+            first_skips = n_modes % n_output_modes
+            index_num_skips = list(range(0, n_modes + 1, num_skips))
+            index_first_skips = (
+                [0]
+                + list(range(1, first_skips + 1))
+                + [first_skips] * (n_output_modes - first_skips)
+            )
+            index_skips = [
+                index_first_skip + index_num_skip
+                for (index_first_skip, index_num_skip) in zip(
+                    index_first_skips, index_num_skips, strict=False
+                )
+            ]
+            pooling_modes = [
+                list(range(index_skips[k], index_skips[k + 1]))
+                for k in range(n_output_modes)
+            ]
+        match_indices, exclude_indices = self.match_tuples(
+            keys_in, keys_out, pooling_modes
+        )
+        self.match_indices = torch.tensor(match_indices)
+        self.exclude_indices = torch.tensor(exclude_indices)
+        self.keys_out = keys_out
+        self.n_modes = n_modes
+
+    def forward(self, amplitudes):
+        batch_size = amplitudes.shape[0]
+        output = torch.zeros(
+            batch_size,
+            len(self.keys_out),
+            dtype=amplitudes.dtype,
+            device=amplitudes.device,
+        )
+        # Create a mask to exclude certain indices
+        mask = torch.ones(amplitudes.shape[1], dtype=torch.bool)
+        if self.exclude_indices.numel() != 0:
+            mask[self.exclude_indices] = False
+        filtered_amplitudes = amplitudes[:, mask]
+        output.scatter_add_(
+            1,
+            self.match_indices.unsqueeze(0).repeat(batch_size, 1),
+            filtered_amplitudes,
+        )
+        return output
+
+    def match_tuples(self, keys_in, keys_out, pooling_modes):
+        indices = []
+        exclude_indices = []
+        for i, key_in in enumerate(keys_in):
+            key_out = tuple(
+                sum(key_in[i] for i in indices) for indices in pooling_modes
+            )
+            index = keys_out.index(key_out) if key_out in keys_out else None
+            if index is not None:
+                indices.append(index)
+            else:
+                exclude_indices.append(i)
+
+        return indices, exclude_indices
+
+
 if __name__ == "__main__":
     from itertools import chain
 
@@ -493,5 +580,20 @@ if __name__ == "__main__":
         result = feed_forward(L(x)).pow(2).sum()
         print(result)
         result.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+    print("testing pff")
+    pff = PoolingFeedForward(16, 2, 8)
+    pre_layer = define_layer_no_input(16, 2)
+    post_layer = define_layer_no_input(8, 2)
+    params = chain(pre_layer.parameters(), post_layer.parameters())
+    optimizer = torch.optim.Adam(params)
+    for _ in range(10):
+        _, amplitudes = pre_layer(return_amplitudes=True)
+        amplitudes = pff(amplitudes)
+        post_layer.set_input_state(amplitudes)
+        res = post_layer().pow(2).sum()
+        print(res)
+        res.backward()
         optimizer.step()
         optimizer.zero_grad()
