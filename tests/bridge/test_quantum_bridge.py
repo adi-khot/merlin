@@ -1,3 +1,5 @@
+import math
+
 import torch
 import perceval as pcvl
 import pytest
@@ -105,6 +107,51 @@ def test_superposition_and_normalization():
         assert torch.isclose(
             out[b].sum(), torch.tensor(1.0, dtype=out.dtype), atol=1e-6
         )
+
+
+def test_bridge_with_pennylane_qnode():
+    qml = pytest.importorskip("pennylane")
+
+    groups = [1]
+    layer = make_identity_layer(m=2, n_photons=len(groups))
+
+    dev = qml.device("default.qubit", wires=sum(groups), shots=None)
+
+    @qml.qnode(dev, interface="torch", diff_method="backprop")
+    def pl_state(theta):
+        qml.RY(theta, wires=0)
+        return qml.state()
+
+    def pl_state_fn(x: torch.Tensor) -> torch.Tensor:
+        theta = x.squeeze().to(torch.get_default_dtype())
+        psi = pl_state(theta)
+        return psi.to(torch.complex64)
+
+    bridge = QuantumBridge(
+        qubit_groups=groups,
+        merlin_layer=layer,
+        pl_state_fn=pl_state_fn,
+        wires_order="little",
+        normalize=True,
+    )
+
+    angle = math.pi / 3
+    inputs = torch.tensor([[angle]], dtype=torch.get_default_dtype())
+    out = bridge(inputs)
+
+    idx_0 = find_key_index(layer, to_fock_state("0", groups))
+    idx_1 = find_key_index(layer, to_fock_state("1", groups))
+
+    expected_zero = math.cos(angle / 2) ** 2
+    expected_one = math.sin(angle / 2) ** 2
+
+    assert torch.isclose(
+        out[0, idx_0], torch.tensor(expected_zero, dtype=out.dtype), atol=1e-6
+    )
+    assert torch.isclose(
+        out[0, idx_1], torch.tensor(expected_one, dtype=out.dtype), atol=1e-6
+    )
+    assert torch.isclose(out[0].sum(), torch.tensor(1.0, dtype=out.dtype), atol=1e-6)
 
 
 def test_wires_order_big_endian_changes_mapping():
