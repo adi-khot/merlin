@@ -717,7 +717,7 @@ class QuantumLayer(nn.Module):
         n_modes = 10
         n_photons = 5
 
-        builder = CircuitBuilder(n_modes=n_modes, n_photons=n_photons)
+        builder = CircuitBuilder(n_modes=n_modes)
 
         # Pre-encoding entanglement
         builder.add_entangling_layer(depth=1)

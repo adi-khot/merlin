@@ -76,13 +76,12 @@ def test_section_reference_copies_components_without_sharing_trainables():
 
 
 def test_build_closes_open_sections_and_sets_metadata():
-    builder = CircuitBuilder(n_modes=1, n_photons=2)
+    builder = CircuitBuilder(n_modes=1)
     builder.begin_section("encoder", compute_adjoint=True)
     builder.add_rotation(target=0)
 
     with pytest.warns(UserWarning):
         circuit = builder.build()
-
     sections = circuit.metadata["sections"]
     assert len(sections) == 1
     section = sections[0]
@@ -91,11 +90,9 @@ def test_build_closes_open_sections_and_sets_metadata():
     assert section["start_idx"] == 0
     assert section["end_idx"] == len(circuit.components)
 
-    assert circuit.metadata["n_photons"] == 2
-
 
 def test_complex_builder_pipeline_exports_pcvl_circuit():
-    builder = CircuitBuilder(n_modes=3, n_photons=1)
+    builder = CircuitBuilder(n_modes=3)
     builder.add_angle_encoding(name="input")
     builder.add_entangling_layer(depth=1, name="ent")
     builder.add_rotation(target=1, angle=0.25)
@@ -113,7 +110,7 @@ def test_complex_builder_pipeline_exports_pcvl_circuit():
 
 
 def test_to_pcvl_circuit_supports_gradient_backpropagation():
-    builder = CircuitBuilder(n_modes=2, n_photons=1)
+    builder = CircuitBuilder(n_modes=2)
     builder.add_rotation_layer(trainable=True, name="theta")
     builder.add_superposition(
         targets=(0, 1),
@@ -145,7 +142,7 @@ def test_to_pcvl_circuit_supports_gradient_backpropagation():
 
 
 def test_builder_integrates_directly_with_quantum_layer():
-    builder = CircuitBuilder(n_modes=3, n_photons=1)
+    builder = CircuitBuilder(n_modes=3)
     builder.add_angle_encoding(name="input")
     builder.add_rotation_layer(trainable=True, name="theta")
     builder.add_entangling_layer(depth=1)
@@ -171,7 +168,7 @@ def test_builder_integrates_directly_with_quantum_layer():
 
 
 def test_angle_encoding_metadata_and_scaling():
-    builder = CircuitBuilder(n_modes=4, n_photons=1)
+    builder = CircuitBuilder(n_modes=4)
     builder.add_angle_encoding(
         modes=[0, 1, 2],
         name="input",
@@ -198,7 +195,7 @@ def test_angle_encoding_metadata_and_scaling():
 
 
 def test_angle_encoding_applies_scaling_in_quantum_layer():
-    builder = CircuitBuilder(n_modes=4, n_photons=1)
+    builder = CircuitBuilder(n_modes=4)
     builder.add_angle_encoding(
         modes=[0, 1, 2],
         name="input",
@@ -227,14 +224,14 @@ def test_angle_encoding_applies_scaling_in_quantum_layer():
 
 
 def test_angle_encoding_raises_when_modes_exceeded():
-    builder = CircuitBuilder(n_modes=3, n_photons=1)
+    builder = CircuitBuilder(n_modes=3)
 
     with pytest.raises(ValueError, match="You cannot encore more features than mode with Builder"):
         builder.add_angle_encoding(modes=[0, 1, 2, 3])
 
 
 def test_angle_encoding_tracks_logical_indices_for_sparse_modes():
-    builder = CircuitBuilder(n_modes=6, n_photons=1)
+    builder = CircuitBuilder(n_modes=6)
 
     builder.add_angle_encoding(modes=[0, 2, 4], name="input")
 
@@ -245,7 +242,7 @@ def test_angle_encoding_tracks_logical_indices_for_sparse_modes():
 
 
 def test_trainable_name_deduplication_for_rotation_layer():
-    builder = CircuitBuilder(n_modes=2, n_photons=1)
+    builder = CircuitBuilder(n_modes=2)
 
     builder.add_rotation_layer(modes=[0,1], trainable=True, name="theta")
     builder.add_rotation_layer(modes=[0,1], trainable=True, name="theta")
@@ -268,7 +265,7 @@ def test_trainable_name_deduplication_for_single_rotation():
 
 
 def test_generic_interferometer_defaults():
-    builder = CircuitBuilder(n_modes=4, n_photons=1)
+    builder = CircuitBuilder(n_modes=4)
     builder.add_generic_interferometer()
 
     component = builder.circuit.components[-1]
@@ -280,7 +277,7 @@ def test_generic_interferometer_defaults():
 
 
 def test_generic_interferometer_mode_range_and_non_trainable():
-    builder = CircuitBuilder(n_modes=5, n_photons=1)
+    builder = CircuitBuilder(n_modes=5)
     builder.add_generic_interferometer(modes=[2], trainable=False)
 
     component = builder.circuit.components[-1]
@@ -320,7 +317,7 @@ def test_generic_interferometer_to_pcvl_registers_parameters():
 
 
 def test_generic_interferometer_layer_trains():
-    builder = CircuitBuilder(n_modes=4, n_photons=1)
+    builder = CircuitBuilder(n_modes=4)
     builder.add_angle_encoding(modes=[0, 1, 2, 3], name="input")
     builder.add_generic_interferometer(trainable=True, name="gi")
 
@@ -343,7 +340,7 @@ def test_generic_interferometer_layer_trains():
 
 
 def test_generic_interferometer_with_additional_components_trains():
-    builder = CircuitBuilder(n_modes=5, n_photons=1)
+    builder = CircuitBuilder(n_modes=5)
     builder.add_angle_encoding(modes=[0, 1, 2, 3, 4], name="input")
     builder.add_generic_interferometer(trainable=True, name="core", modes = [2])
     builder.add_rotation_layer(trainable=True, name="theta")

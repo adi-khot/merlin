@@ -319,7 +319,7 @@ class FeatureMap:
         if input_size > n_modes:
             raise ValueError(ANGLE_ENCODING_MODE_ERROR)
 
-        builder = CircuitBuilder(n_modes=n_modes, n_photons=n_photons)
+        builder = CircuitBuilder(n_modes=n_modes)
 
         builder.add_entangling_layer(depth=1)
         input_modes = list(range(input_size))
@@ -438,7 +438,7 @@ class KernelCircuitBuilder:
         else:
             trainable_params = None
 
-        builder = CircuitBuilder(n_modes=n_modes, n_photons=n_photons)
+        builder = CircuitBuilder(n_modes=n_modes)
         builder.add_entangling_layer(depth=1)
 
         if self._input_size > n_modes:

@@ -72,7 +72,7 @@ def _train_for_classification(
 def test_builder_api_pipeline_on_iris(iris_batch):
     features, labels = iris_batch
 
-    builder = CircuitBuilder(n_modes=10, n_photons=5)
+    builder = CircuitBuilder(n_modes=10)
     builder.add_entangling_layer(depth=1)
     builder.add_angle_encoding(modes=list(range(features.shape[1])), name="input")
     builder.add_rotation_layer(trainable=True, name="theta")

@@ -36,9 +36,8 @@ class CircuitBuilder:
     Builder for quantum circuits using a declarative API.
     """
 
-    def __init__(self, n_modes: int, n_photons: Optional[int] = None):
+    def __init__(self, n_modes: int):
         self.n_modes = n_modes
-        self.n_photons = n_photons
         self.circuit = Circuit(n_modes)
 
         # Track component counts for naming - these should NEVER reset
@@ -638,13 +637,15 @@ class CircuitBuilder:
             warnings.warn(f"Section '{self._current_section['name']}' was not closed. Closing it now.")
             self.end_section()
 
-        # Add section markers to metadata if present
-        if self._section_markers:
-            self.circuit.metadata['sections'] = self._section_markers
+        # Debugging: Log the contents of _section_markers
+        print("DEBUG: _section_markers:", self._section_markers)
 
-        # Set photon number if specified
-        if self.n_photons is not None:
-            self.circuit.metadata['n_photons'] = self.n_photons
+        # Finalize the circuit to ensure metadata is complete
+        return self.finalize_circuit()
+
+    def finalize_circuit(self):
+        # Ensure 'sections' key is always added to metadata
+        self.circuit.metadata["sections"] = self._section_markers or []
 
         return self.circuit
 

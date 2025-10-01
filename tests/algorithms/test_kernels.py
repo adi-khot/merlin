@@ -296,7 +296,7 @@ class TestFeatureMapFactoryMethods:
 
     def test_from_circuit_builder_basic(self):
         """FeatureMap can be constructed directly from CircuitBuilder."""
-        builder = CircuitBuilder(n_modes=4, n_photons=2)
+        builder = CircuitBuilder(n_modes=4)
         builder.add_entangling_layer(depth=1)
         builder.add_angle_encoding(modes=[0, 1], name="input")
         builder.add_entangling_layer(depth=1)
@@ -312,7 +312,7 @@ class TestFeatureMapFactoryMethods:
 
     def test_from_circuit_builder_with_trainable_params(self):
         """FeatureMap inherits trainable parameters defined in CircuitBuilder."""
-        builder = CircuitBuilder(n_modes=4, n_photons=2)
+        builder = CircuitBuilder(n_modes=4)
         builder.add_entangling_layer(depth=1)
         builder.add_angle_encoding(modes=[0, 1], name="input")
         builder.add_rotation_layer(trainable=True, name="phi_")
@@ -329,7 +329,7 @@ class TestFeatureMapFactoryMethods:
         assert "phi" in feature_map.trainable_parameters
 
     def test_angle_encoding_respects_scale_in_feature_map(self):
-        builder = CircuitBuilder(n_modes=4, n_photons=2)
+        builder = CircuitBuilder(n_modes=4)
         builder.add_angle_encoding(
             modes=[0, 1, 2],
             name="input",
@@ -399,7 +399,7 @@ class TestFidelityKernelFactoryMethods:
 
     def test_from_feature_map_builder(self):
         """FidelityKernel can wrap a FeatureMap created from CircuitBuilder."""
-        builder = CircuitBuilder(n_modes=4, n_photons=2)
+        builder = CircuitBuilder(n_modes=4)
         builder.add_entangling_layer(depth=1)
         builder.add_angle_encoding(modes=[0, 1], name="input")
         builder.add_entangling_layer(depth=1)
@@ -472,7 +472,7 @@ class TestKernelCircuitBuilder:
     def test_builder_basic_usage(self):
         """Test basic KernelCircuitBuilder usage."""
         builder = KernelCircuitBuilder()
-        feature_map = builder.input_size(2).n_modes(4).n_photons(2).build_feature_map()
+        feature_map = builder.input_size(2).n_modes(4).build_feature_map()
 
         assert feature_map.input_size == 2
         assert feature_map.circuit.m == 4
@@ -518,7 +518,7 @@ class TestKernelCircuitBuilder:
     def test_builder_build_fidelity_kernel(self):
         """Test building a FidelityKernel directly."""
         builder = KernelCircuitBuilder()
-        kernel = builder.input_size(2).n_modes(4).n_photons(2).build_fidelity_kernel()
+        kernel = builder.input_size(2).n_modes(4).build_fidelity_kernel()
 
         assert kernel.input_size == 2
         assert kernel.feature_map.circuit.m == 4
@@ -579,7 +579,7 @@ class TestKernelCircuitBuilder:
         assert torch.allclose(encoded.detach(), expected, atol=1e-6)
 
     def test_kernel_supports_generic_interferometer(self):
-        builder = CircuitBuilder(n_modes=4, n_photons=2)
+        builder = CircuitBuilder(n_modes=4)
         builder.add_generic_interferometer(name="gi")
         builder.add_angle_encoding(modes=[0, 1, 2, 3], name="input")
 
@@ -644,7 +644,7 @@ class TestKernelConstructionConsistency:
         # Method 3: KernelCircuitBuilder
         builder = KernelCircuitBuilder()
         fm_builder = (
-            builder.input_size(2).n_modes(3).n_photons(2).build_feature_map()
+            builder.input_size(2).n_modes(3).build_feature_map()
         )
         print("Builder API circuit:")
         pcvl.pdisplay(fm_builder.circuit)
@@ -655,7 +655,7 @@ class TestKernelConstructionConsistency:
     def test_kernel_computation_consistency(self):
         """Supported constructors yield kernels with matching structure."""
         # Manual builder-based kernel
-        builder = CircuitBuilder(n_modes=4, n_photons=2)
+        builder = CircuitBuilder(n_modes=4)
         builder.add_entangling_layer(depth=1, name = "phi_1_")
         builder.add_angle_encoding(modes=[0, 1], name="input")
         builder.add_entangling_layer(depth=1, name = "phi_2_")
@@ -682,7 +682,6 @@ class TestKernelConstructionConsistency:
         k_builder = (
             builder_api.input_size(2)
             .n_modes(4)
-            .n_photons(2)
             .trainable(False)
             .build_fidelity_kernel()
         )
@@ -1114,7 +1113,6 @@ def test_iris_with_supported_constructors():
             kernel_builder = (
                 builder.input_size(4)
                 .n_modes(4)
-                .n_photons(2)
                 .trainable(trainable_flag)
                 .build_fidelity_kernel()
             )
@@ -1260,7 +1258,7 @@ def test_kernel_constructor_performance_comparison():
     # Time Method 1: Simple factory
     start = time.time()
     kernel1 = FidelityKernel.simple(
-        input_size=3, n_modes=4, n_photons=2, trainable=False
+        input_size=3, n_modes=4, trainable=False
     )
     time1 = time.time() - start
     methods.append("FidelityKernel.simple()")
@@ -1293,7 +1291,6 @@ def test_kernel_constructor_performance_comparison():
     kernel3 = (
         builder.input_size(3)
         .n_modes(4)
-        .n_photons(2)
         .trainable(False)
         .build_fidelity_kernel()
     )
@@ -1369,7 +1366,6 @@ def test_fidelity_kernel_gpu_execution_all_constructors(cuda_device, constructor
         kernel = (
             builder.input_size(4)
             .n_modes(4)
-            .n_photons(2)
             .trainable(False)
             .build_fidelity_kernel()
         )
