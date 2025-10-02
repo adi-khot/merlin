@@ -796,9 +796,6 @@ class CircuitBuilder:
             warnings.warn(f"Section '{self._current_section['name']}' was not closed. Closing it now.")
             self.end_section()
 
-        # Debugging: Log the contents of _section_markers
-        print("DEBUG: _section_markers:", self._section_markers)
-
         # Finalize the circuit to ensure metadata is complete
         return self.finalize_circuit()
 

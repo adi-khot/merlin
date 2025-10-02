@@ -752,7 +752,7 @@ class QuantumLayer(nn.Module):
         builder.add_angle_encoding(
             modes=input_modes,
             name="input",
-            subset_combinations=True,
+            subset_combinations=False,
         )
 
         builder.add_entangling_layer(depth=1)
