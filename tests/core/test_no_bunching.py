@@ -28,12 +28,15 @@ import math
 
 import torch
 
-import merlin as ML
-from merlin.sampling.strategies import OutputMappingStrategy
 from merlin.algorithms.layer import QuantumLayer
-from merlin.core.generators import CircuitGenerator, StateGenerator
+from merlin.core.generators import (
+    CircuitGenerator,
+    CircuitType,
+    StateGenerator,
+    StatePattern,
+)
 from merlin.core.process import ComputationProcessFactory
-from merlin.core.generators import CircuitType, StatePattern
+from merlin.sampling.strategies import OutputMappingStrategy
 
 
 def calculate_fock_space_size(n_modes: int, n_photons: int) -> int:

@@ -7,7 +7,7 @@ import perceval as pcvl
 import torch
 from torch import Tensor
 
-from ..builder.circuit_builder import CircuitBuilder, ANGLE_ENCODING_MODE_ERROR
+from ..builder.circuit_builder import ANGLE_ENCODING_MODE_ERROR, CircuitBuilder
 from ..pcvl_pytorch.locirc_to_tensor import CircuitConverter
 from ..pcvl_pytorch.slos_torchscript import (
     build_slos_distribution_computegraph as build_slos_graph,
@@ -471,7 +471,6 @@ class KernelCircuitBuilder:
             raise ValueError("Input size must be specified")
 
         n_modes = self._n_modes or max(self._input_size + 1, 4)
-        n_photons = self._n_photons or self._input_size
 
         trainable_params: list[str] | None
         if self._trainable:

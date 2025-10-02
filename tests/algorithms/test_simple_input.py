@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-import os
 import inspect
+import os
 from pathlib import Path
 
 import pytest
 import torch
 import torch.nn as nn
 
+from merlin import OutputMappingStrategy, QuantumLayer
+
 _PCVL_HOME = Path(__file__).resolve().parents[2] / ".pcvl_home"
 (_PCVL_HOME / "Library" / "Application Support" / "perceval-quandela" / "job_group").mkdir(
     parents=True, exist_ok=True
 )
 os.environ["HOME"] = str(_PCVL_HOME)
-
-from merlin import OutputMappingStrategy, QuantumLayer
 
 
 @pytest.fixture(autouse=True)

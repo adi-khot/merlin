@@ -4,31 +4,31 @@ Circuit builder for constructing quantum circuits declaratively.
 
 import math
 import numbers
-from itertools import combinations
-from typing import List, Optional, Union, Tuple, Dict, Any
-
-ANGLE_ENCODING_MODE_ERROR = (
-    "You cannot encore more features than mode with Builder, try making your own circuit by building your Circuit with Perceval"
-)
 import warnings
 from copy import deepcopy
+from itertools import combinations
+from typing import Any
+
 from ..core.circuit import Circuit
 from ..core.components import (
-    Component,
-    Rotation,
     BeamSplitter,
     EntanglingBlock,
     GenericInterferometer,
     Measurement,
-    ParameterRole
+    ParameterRole,
+    Rotation,
 )
 from ..core.observables import parse_observable
+
+ANGLE_ENCODING_MODE_ERROR = (
+    "You cannot encore more features than mode with Builder, try making your own circuit by building your Circuit with Perceval"
+)
 
 
 class ModuleGroup:
     """Helper class for grouping modules."""
 
-    def __init__(self, modes: List[int]):
+    def __init__(self, modes: list[int]):
         """Store the list of modes spanned by the grouped module."""
         self.modes = modes
 
@@ -62,19 +62,19 @@ class CircuitBuilder:
         # Track components before any sections for "_all_" reference
         self._pre_section_end_idx = 0
 
-        self._trainable_prefixes: List[str] = []
+        self._trainable_prefixes: list[str] = []
         self._trainable_prefix_set: set[str] = set()
-        self._input_prefixes: List[str] = []
+        self._input_prefixes: list[str] = []
         self._input_prefix_set: set[str] = set()
-        self._angle_encoding_specs: Dict[str, List[Tuple[int, ...]]] = {}
-        self._angle_encoding_scales: Dict[str, Dict[int, float]] = {}
-        self._angle_encoding_counts: Dict[str, int] = {}
+        self._angle_encoding_specs: dict[str, list[tuple[int, ...]]] = {}
+        self._angle_encoding_scales: dict[str, dict[int, float]] = {}
+        self._angle_encoding_counts: dict[str, int] = {}
 
-        self._trainable_name_counts: Dict[str, int] = {}
+        self._trainable_name_counts: dict[str, int] = {}
         self._used_trainable_names: set[str] = set()
 
     @staticmethod
-    def _deduce_prefix(name: Optional[str]) -> Optional[str]:
+    def _deduce_prefix(name: str | None) -> str | None:
         """Strip numeric suffixes so we can reuse the textual stem as a prefix.
 
         Args:
@@ -88,15 +88,15 @@ class CircuitBuilder:
 
         base = name
         while True:
-            trimmed = base.rstrip('0123456789')
-            trimmed = trimmed.rstrip('_')
+            trimmed = base.rstrip("0123456789")
+            trimmed = trimmed.rstrip("_")
             if trimmed == base:
                 break
             base = trimmed
 
         return base or name
 
-    def _register_trainable_prefix(self, name: Optional[str]):
+    def _register_trainable_prefix(self, name: str | None):
         """Record the stem of a trainable parameter for later discovery calls.
 
         Args:
@@ -107,7 +107,7 @@ class CircuitBuilder:
             self._trainable_prefix_set.add(prefix)
             self._trainable_prefixes.append(prefix)
 
-    def _register_input_prefix(self, name: Optional[str]):
+    def _register_input_prefix(self, name: str | None):
         """Track stems used for data-driven parameters (angle encodings).
 
         Args:
@@ -145,7 +145,7 @@ class CircuitBuilder:
             target: int,
             angle: float = 0.0,
             trainable: bool = False,
-            name: Optional[str] = None
+            name: str | None = None
     ) -> "CircuitBuilder":
         """Add a single rotation.
 
@@ -195,14 +195,14 @@ class CircuitBuilder:
 
     def add_rotation_layer(
             self,
-            modes: Optional[Union[List[int], ModuleGroup]] = None,
+            modes: list[int] | ModuleGroup | None = None,
             *,
             axis: str = "z",
             trainable: bool = False,
             as_input: bool = False,
-            value: Optional[float] = None,
-            name: Optional[str] = None,
-            role: Optional[Union[str, ParameterRole]] = None,
+            value: float | None = None,
+            name: str | None = None,
+            role: str | ParameterRole | None = None,
     ) -> "CircuitBuilder":
         """Add a rotation layer across a set of modes.
 
@@ -246,7 +246,7 @@ class CircuitBuilder:
         # Determine value
         final_value = value if value is not None else 0.0
 
-        for idx, mode in enumerate(target_modes):
+        for _idx, mode in enumerate(target_modes):
             if mode >= self.n_modes:
                 continue
 
@@ -293,12 +293,12 @@ class CircuitBuilder:
 
     def add_angle_encoding(
             self,
-            modes: Optional[List[int]] = None,
-            name: Optional[str] = None,
+            modes: list[int] | None = None,
+            name: str | None = None,
             *,
             scale: float = 1.0,
             subset_combinations: bool = False,
-            max_order: Optional[int] = None,
+            max_order: int | None = None,
     ) -> "CircuitBuilder":
         """Convenience method for angle-based input encoding.
 
@@ -339,7 +339,7 @@ class CircuitBuilder:
 
         scale_map = self._normalize_angle_scale(scale, feature_indices)
 
-        combos: List[Tuple[int, ...]] = []
+        combos: list[tuple[int, ...]] = []
         if subset_combinations and feature_indices:
             max_subset_order = len(feature_indices) if max_order is None else max_order
             max_subset_order = max(1, min(max_subset_order, len(feature_indices)))
@@ -379,7 +379,7 @@ class CircuitBuilder:
         return self
 
     @staticmethod
-    def _normalize_angle_scale(scale: float, feature_indices: List[int]) -> Dict[int, float]:
+    def _normalize_angle_scale(scale: float, feature_indices: list[int]) -> dict[int, float]:
         """Normalize scale specification to a per-feature mapping.
 
         Args:
@@ -393,14 +393,14 @@ class CircuitBuilder:
             raise TypeError("scale must be a real number")
 
         factor = float(scale)
-        return {idx: factor for idx in feature_indices}
+        return dict.fromkeys(feature_indices, factor)
 
     def add_generic_interferometer(
             self,
-            modes: Optional[List[int]] = None,
+            modes: list[int] | None = None,
             *,
             trainable: bool = True,
-            name: Optional[str] = None,
+            name: str | None = None,
     ) -> "CircuitBuilder":
         """Add a generic interferometer spanning a range of modes.
 
@@ -466,12 +466,12 @@ class CircuitBuilder:
 
     def add_superposition(
             self,
-            targets: Tuple[int, int],
+            targets: tuple[int, int],
             theta: float = 0.785398,
             phi: float = 0.0,
             trainable_theta: bool = False,
             trainable_phi: bool = False,
-            name: Optional[str] = None
+            name: str | None = None
     ) -> "CircuitBuilder":
         """Add a beam splitter (superposition component).
 
@@ -519,7 +519,7 @@ class CircuitBuilder:
             self,
             depth: int = 1,
             trainable: bool = False,
-            name: Optional[str] = None
+            name: str | None = None
     ) -> "CircuitBuilder":
         """Add entangling layer(s).
 
@@ -553,8 +553,8 @@ class CircuitBuilder:
 
     def add_measurement(
             self,
-            observable: Union[str, Any],
-            name: Optional[str] = None
+            observable: str | Any,
+            name: str | None = None
     ) -> "CircuitBuilder":
         """Add a measurement to the circuit.
 
@@ -573,12 +573,12 @@ class CircuitBuilder:
         self.circuit.add(measurement)
 
         # Store in metadata
-        if 'measurements' not in self.circuit.metadata:
-            self.circuit.metadata['measurements'] = []
+        if "measurements" not in self.circuit.metadata:
+            self.circuit.metadata["measurements"] = []
 
-        self.circuit.metadata['measurements'].append({
-            'observable': observable,
-            'name': name
+        self.circuit.metadata["measurements"].append({
+            "observable": observable,
+            "name": name
         })
 
         return self
@@ -587,7 +587,7 @@ class CircuitBuilder:
             self,
             name: str,
             compute_adjoint: bool = False,
-            reference: Optional[str] = None,
+            reference: str | None = None,
             share_trainable: bool = True,
             share_input: bool = False
     ) -> "CircuitBuilder":
@@ -605,7 +605,7 @@ class CircuitBuilder:
             CircuitBuilder: ``self`` so builder calls can be chained.
         """
         if self._current_section is not None:
-            warnings.warn(f"Section '{self._current_section['name']}' was not closed. Closing it now.")
+            warnings.warn(f"Section '{self._current_section['name']}' was not closed. Closing it now.", stacklevel=2)
             self.end_section()
 
         # Update pre-section end index if this is the first section
@@ -613,19 +613,19 @@ class CircuitBuilder:
             self._pre_section_end_idx = len(self.circuit.components)
 
         self._current_section = {
-            'name': name,
-            'compute_adjoint': compute_adjoint,
-            'reference': reference,
-            'share_trainable': share_trainable,
-            'share_input': share_input,
-            'start_idx': len(self.circuit.components)
+            "name": name,
+            "compute_adjoint": compute_adjoint,
+            "reference": reference,
+            "share_trainable": share_trainable,
+            "share_input": share_input,
+            "start_idx": len(self.circuit.components)
         }
 
         # If referencing, copy components now
         if reference:
             self._copy_from_reference(reference)
             # End section immediately after copying
-            self._current_section['end_idx'] = len(self.circuit.components)
+            self._current_section["end_idx"] = len(self.circuit.components)
             self._section_markers.append(self._current_section)
             self._current_section = None
 
@@ -671,23 +671,23 @@ class CircuitBuilder:
             # Find the referenced section
             ref_section = None
             for section in self._section_markers:
-                if section['name'] == ref_name:
+                if section["name"] == ref_name:
                     ref_section = section
                     break
 
             if not ref_section:
                 raise ValueError(f"Section '{ref_name}' not found")
 
-            start_idx = ref_section['start_idx']
-            end_idx = ref_section['end_idx']
+            start_idx = ref_section["start_idx"]
+            end_idx = ref_section["end_idx"]
 
         # Copy components with parameter transformation
         for idx in range(start_idx, end_idx):
             comp = self.circuit.components[idx]
             new_comp = self._transform_component(
                 comp,
-                self._current_section['share_trainable'],
-                self._current_section['share_input']
+                self._current_section["share_trainable"],
+                self._current_section["share_input"]
             )
             self.circuit.add(new_comp)
 
@@ -718,7 +718,7 @@ class CircuitBuilder:
                 if not share_input:
                     # Generate new input parameter name
                     if comp.custom_name:
-                        base_name = comp.custom_name.rstrip('0123456789')
+                        base_name = comp.custom_name.rstrip("0123456789")
                     else:
                         base_name = "px"
                     new_comp.custom_name = f"{base_name}{self._input_counter}"
@@ -737,7 +737,7 @@ class CircuitBuilder:
                 self._register_trainable_prefix(new_comp.theta_name or comp.theta_name)
             elif comp.theta_role == ParameterRole.INPUT and not share_input:
                 if comp.theta_name:
-                    base_name = comp.theta_name.rstrip('0123456789')
+                    base_name = comp.theta_name.rstrip("0123456789")
                 else:
                     base_name = "x_bs"
                 new_comp.theta_name = f"{base_name}{self._input_counter}"
@@ -757,7 +757,7 @@ class CircuitBuilder:
                 self._register_trainable_prefix(new_comp.phi_name or comp.phi_name)
             elif comp.phi_role == ParameterRole.INPUT and not share_input:
                 if comp.phi_name:
-                    base_name = comp.phi_name.rstrip('0123456789')
+                    base_name = comp.phi_name.rstrip("0123456789")
                 else:
                     base_name = "x_phi"
                 new_comp.phi_name = f"{base_name}{self._input_counter}"
@@ -778,11 +778,11 @@ class CircuitBuilder:
             CircuitBuilder: ``self`` so builder calls can be chained.
         """
         if self._current_section:
-            self._current_section['end_idx'] = len(self.circuit.components)
+            self._current_section["end_idx"] = len(self.circuit.components)
             self._section_markers.append(self._current_section)
             self._current_section = None
         else:
-            warnings.warn("No section to end")
+            warnings.warn("No section to end", stacklevel=2)
         return self
 
     def build(self) -> Circuit:
@@ -793,7 +793,7 @@ class CircuitBuilder:
         """
         # Close any open section
         if self._current_section is not None:
-            warnings.warn(f"Section '{self._current_section['name']}' was not closed. Closing it now.")
+            warnings.warn(f"Section '{self._current_section['name']}' was not closed. Closing it now.", stacklevel=2)
             self.end_section()
 
         # Finalize the circuit to ensure metadata is complete
@@ -871,7 +871,7 @@ class CircuitBuilder:
                 pair_index = 0
 
                 for _ in range(component.depth):
-                    for left, right in zip(mode_list[:-1], mode_list[1:]):
+                    for left, right in zip(mode_list[:-1], mode_list[1:], strict=False):
                         if component.trainable:
                             theta_name = f"{prefix}_theta_{pair_index}"
                             phi_name = f"{prefix}_phi_{pair_index}"
@@ -933,7 +933,7 @@ class CircuitBuilder:
         return builder
 
     @property
-    def trainable_parameter_prefixes(self) -> List[str]:
+    def trainable_parameter_prefixes(self) -> list[str]:
         """Expose the unique set of trainable prefixes in insertion order.
 
         Returns:
@@ -942,7 +942,7 @@ class CircuitBuilder:
         return list(self._trainable_prefixes)
 
     @property
-    def input_parameter_prefixes(self) -> List[str]:
+    def input_parameter_prefixes(self) -> list[str]:
         """Expose the order-preserving set of input prefixes.
 
         Returns:
@@ -951,7 +951,7 @@ class CircuitBuilder:
         return list(self._input_prefixes)
 
     @property
-    def angle_encoding_specs(self) -> Dict[str, Dict[str, Any]]:
+    def angle_encoding_specs(self) -> dict[str, dict[str, Any]]:
         """Return metadata describing configured angle encodings.
 
         Returns:

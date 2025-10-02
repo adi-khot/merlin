@@ -656,9 +656,9 @@ class TestKernelConstructionConsistency:
         """Supported constructors yield kernels with matching structure."""
         # Manual builder-based kernel
         builder = CircuitBuilder(n_modes=4)
-        builder.add_entangling_layer(depth=1, name = "phi_1_")
+        builder.add_entangling_layer(depth=1, name="phi_1_")
         builder.add_angle_encoding(modes=[0, 1], name="input")
-        builder.add_entangling_layer(depth=1, name = "phi_2_")
+        builder.add_entangling_layer(depth=1, name="phi_2_")
         fm_manual = FeatureMap(
             circuit=builder,
             input_size=2,
@@ -1063,7 +1063,7 @@ def test_iris_with_supported_constructors():
         # Method 2: Manual pcvl.Circuit construction
         print(f"\n2. Manual pcvl.Circuit() - {config['name']}:")
         try:
-            params = [pcvl.P(f"x{i+1}") for i in range(4)]
+            params = [pcvl.P(f"x{i + 1}") for i in range(4)]
             circuit = pcvl.Circuit(4)
             for mode, param in enumerate(params):
                 circuit.add(mode, pcvl.PS(param))
@@ -1266,7 +1266,7 @@ def test_kernel_constructor_performance_comparison():
 
     # Time Method 2: Manual pcvl.Circuit construction
     start = time.time()
-    params = [pcvl.P(f"x{i+1}") for i in range(3)]
+    params = [pcvl.P(f"x{i + 1}") for i in range(3)]
     circuit = pcvl.Circuit(4)
     for mode, param in enumerate(params):
         circuit.add(mode, pcvl.PS(param))
@@ -1346,7 +1346,7 @@ def test_fidelity_kernel_gpu_execution_all_constructors(cuda_device, constructor
             trainable=False,
         )
     elif constructor == "manual":
-        params = [pcvl.P(f"x{i+1}") for i in range(4)]
+        params = [pcvl.P(f"x{i + 1}") for i in range(4)]
         circuit = pcvl.Circuit(4)
         for mode, param in enumerate(params):
             circuit.add(mode, pcvl.PS(param))

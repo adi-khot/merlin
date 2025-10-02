@@ -4,7 +4,6 @@ Backend-agnostic description of what to measure.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Union
 from enum import Enum
 
 
@@ -13,7 +12,7 @@ class PauliBasis(Enum):
     X = "X"
     Y = "Y"
     Z = "Z"
-    I = "I"
+    I = "I"  # noqa: E741
 
 
 @dataclass
@@ -29,7 +28,7 @@ class PauliObservable:
 
     def __post_init__(self):
         """Validate that only Pauli symbols are used in the string representation."""
-        if not all(c in 'IXYZ' for c in self.pauli_string):
+        if not all(c in "IXYZ" for c in self.pauli_string):
             raise ValueError(f"Invalid Pauli string: {self.pauli_string}")
 
     def __repr__(self):
@@ -62,7 +61,7 @@ class NumberOperator:
 @dataclass
 class CompositeObservable:
     """Sum of observables (e.g., for Hamiltonians)."""
-    terms: List[Union[PauliObservable, NumberOperator]]
+    terms: list[PauliObservable | NumberOperator]
 
     def __iter__(self):
         """Yield individual observable terms when iterating over the composite."""
@@ -77,7 +76,7 @@ class CompositeObservable:
         return f"CompositeObservable({terms_str})"
 
 
-def parse_observable(expr: str, n_modes: Optional[int] = None) -> Union[PauliObservable, CompositeObservable, NumberOperator]:
+def parse_observable(expr: str, n_modes: int | None = None) -> PauliObservable | CompositeObservable | NumberOperator:
     """Convert a string specification into the corresponding observable object.
 
     Args:
@@ -90,17 +89,17 @@ def parse_observable(expr: str, n_modes: Optional[int] = None) -> Union[PauliObs
     expr = expr.strip()
 
     # Check for number operator syntax
-    if expr.startswith('n_'):
+    if expr.startswith("n_"):
         try:
-            mode_idx = int(expr.split('_')[1])
+            mode_idx = int(expr.split("_")[1])
             return NumberOperator(mode_index=mode_idx)
         except (IndexError, ValueError):
             pass  # Fall through to regular parsing
 
     # Handle composite (sum of terms)
-    if '+' in expr:
+    if "+" in expr:
         terms = []
-        for term in expr.split('+'):
+        for term in expr.split("+"):
             term = term.strip()
             obs = _parse_single_term(term, n_modes)
             terms.append(obs)
@@ -109,7 +108,7 @@ def parse_observable(expr: str, n_modes: Optional[int] = None) -> Union[PauliObs
     return _parse_single_term(expr, n_modes)
 
 
-def _parse_single_term(term: str, n_modes: Optional[int] = None) -> Union[PauliObservable, NumberOperator]:
+def _parse_single_term(term: str, n_modes: int | None = None) -> PauliObservable | NumberOperator:
     """Parse one summand appearing in a composite observable expression.
 
     Args:
@@ -122,8 +121,8 @@ def _parse_single_term(term: str, n_modes: Optional[int] = None) -> Union[PauliO
     term = term.strip()
 
     # Check for number operator in term
-    if 'n_' in term:
-        parts = term.split('*')
+    if "n_" in term:
+        parts = term.split("*")
         coefficient = 1.0
         if len(parts) == 2:
             coefficient = float(parts[0].strip())
@@ -131,17 +130,17 @@ def _parse_single_term(term: str, n_modes: Optional[int] = None) -> Union[PauliO
         else:
             n_part = term
 
-        if n_part.startswith('n_'):
+        if n_part.startswith("n_"):
             try:
-                mode_idx = int(n_part.split('_')[1])
+                mode_idx = int(n_part.split("_")[1])
                 return NumberOperator(mode_index=mode_idx, coefficient=coefficient)
             except (IndexError, ValueError):
                 pass
 
     # Handle regular Pauli term
     coefficient = 1.0
-    if '*' in term:
-        parts = term.split('*')
+    if "*" in term:
+        parts = term.split("*")
         coefficient = float(parts[0].strip())
         pauli_str = parts[1].strip()
     else:

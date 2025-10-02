@@ -3,8 +3,10 @@
 # Add shared logic here that is used by both builder/ansatz.py and core/__init__.py
 
 import torch
-from merlin.pcvl_pytorch.locirc_to_tensor import CircuitConverter
+
 from merlin.core.generators import CircuitGenerator
+from merlin.pcvl_pytorch.locirc_to_tensor import CircuitConverter
+
 
 class Ansatz:
     """Complete configuration for a quantum neural network layer."""
@@ -42,6 +44,7 @@ class Ansatz:
         )
         return self.computation_process
 
+
 class AnsatzFactory:
     """Factory for creating quantum layer ansatzes."""
     @staticmethod
@@ -59,6 +62,7 @@ class AnsatzFactory:
             output_mapping_strategy=output_mapping_strategy,
             dtype=dtype,
         )
+
 
 class ComputationProcessFactory:
     """Factory for creating computation processes."""
@@ -87,6 +91,7 @@ class ComputationProcessFactory:
                 device=device,
                 **kwargs
             )
+
 
 class ReservoirComputationProcess:
     """Implementation for reservoir computation process."""

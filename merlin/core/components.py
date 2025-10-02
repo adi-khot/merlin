@@ -4,8 +4,8 @@ Components are platform-agnostic and focus on intent rather than implementation.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Union, List, Any, Dict
 from enum import Enum
+from typing import Any
 
 
 class ParameterRole(Enum):
@@ -28,9 +28,9 @@ class Rotation:
     axis: str = "z"
 
     # Optional: let user specify custom name if they want
-    custom_name: Optional[str] = None
+    custom_name: str | None = None
 
-    def get_params(self) -> Dict[str, Any]:
+    def get_params(self) -> dict[str, Any]:
         """Return declared parameter placeholders for the rotation.
 
         Non-fixed rotations expose either their custom name or the automatically
@@ -55,10 +55,10 @@ class BeamSplitter:
     phi_value: float = 0.0
 
     # Optional custom names
-    theta_name: Optional[str] = None
-    phi_name: Optional[str] = None
+    theta_name: str | None = None
+    phi_name: str | None = None
 
-    def get_params(self) -> Dict[str, Any]:
+    def get_params(self) -> dict[str, Any]:
         """Describe which phase shifter angles should be exposed as parameters.
 
         Returns:
@@ -75,13 +75,13 @@ class BeamSplitter:
 @dataclass
 class EntanglingBlock:
     """Entangling block description."""
-    targets: Union[str, List[int]] = "all"
+    targets: str | list[int] = "all"
     pattern: str = "nearest_neighbor"
     depth: int = 1
     trainable: bool = True
-    name_prefix: Optional[str] = None
+    name_prefix: str | None = None
 
-    def get_params(self) -> Dict[str, Any]:
+    def get_params(self) -> dict[str, Any]:
         """Entangling blocks themselves carry no direct parameters.
 
         Returns:
@@ -97,9 +97,9 @@ class GenericInterferometer:
     start_mode: int
     span: int
     trainable: bool = True
-    name_prefix: Optional[str] = None
+    name_prefix: str | None = None
 
-    def get_params(self) -> Dict[str, Any]:
+    def get_params(self) -> dict[str, Any]:
         """Return placeholder names for every internal interferometer parameter.
 
         Returns:
@@ -110,7 +110,7 @@ class GenericInterferometer:
 
         prefix = self.name_prefix or "gi"
         count = self.span * (self.span - 1) // 2
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
         for idx in range(count):
             params[f"{prefix}_li{idx}"] = None
             params[f"{prefix}_lo{idx}"] = None
@@ -120,10 +120,10 @@ class GenericInterferometer:
 @dataclass
 class Measurement:
     """Measurement description."""
-    targets: List[int]
+    targets: list[int]
     basis: str = "computational"
 
-    def get_params(self) -> Dict[str, Any]:
+    def get_params(self) -> dict[str, Any]:
         """Measurements are descriptive only and expose no tunable parameters.
 
         Returns:
@@ -141,11 +141,11 @@ class Component:
 # Adapter for old-style components
 def adapt_old_rotation(
         target: int,
-        angle: Union[float, str, None] = None,
+        angle: float | str | None = None,
         axis: str = "z",
-        trainable: Optional[bool] = False,
-        as_input: Optional[bool] = False,
-        value: Optional[float] = None,
+        trainable: bool | None = False,
+        as_input: bool | None = False,
+        value: float | None = None,
 ) -> Rotation:
     """Translate legacy rotation arguments into the structured :class:`Rotation`.
 

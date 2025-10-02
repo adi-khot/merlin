@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
+import perceval as pcvl
 import pytest
 import torch
 import torch.nn.functional as F
 
-import perceval as pcvl
 from merlin import OutputMappingStrategy, QuantumLayer
 from merlin.builder import CircuitBuilder
 from merlin.datasets import iris as iris_dataset
+
 
 @pytest.fixture
 def iris_batch():
@@ -121,14 +119,13 @@ def test_manual_pcvl_circuit_pipeline_on_iris(iris_batch):
     for mode in range(4):
         circuit.add(mode, pcvl.PS(pcvl.P(f"input{mode}")))
 
-
     wr = pcvl.GenericInterferometer(
             4,
             lambda i: pcvl.BS() // pcvl.PS(pcvl.P(f"theta_ri{i}")) //
                     pcvl.BS() // pcvl.PS(pcvl.P(f"theta_ro{i}")),
             shape=pcvl.InterferometerShape.RECTANGLE
         )
-    
+
     circuit.add(0, wr)
     layer = QuantumLayer(
         input_size=features.shape[1],

@@ -35,18 +35,16 @@ import perceval as pcvl
 import torch
 import torch.nn as nn
 
-from ..core.generators import CircuitType, StatePattern
+from ..builder.ansatz import Ansatz
+from ..builder.circuit_builder import (
+    ANGLE_ENCODING_MODE_ERROR,
+    CircuitBuilder,
+)
 from ..core.components import GenericInterferometer
-from ..core.photonicbackend import PhotonicBackend as Experiment
 from ..core.process import ComputationProcessFactory
 from ..sampling.autodiff import AutoDiffProcess
-from ..torch_utils.torch_codes import OutputMapper
 from ..sampling.strategies import OutputMappingStrategy
-from ..builder.ansatz import Ansatz, AnsatzFactory
-from ..builder.circuit_builder import (
-    CircuitBuilder,
-    ANGLE_ENCODING_MODE_ERROR,
-)
+from ..torch_utils.torch_codes import OutputMapper
 
 
 class QuantumLayer(nn.Module):
@@ -71,7 +69,7 @@ class QuantumLayer(nn.Module):
         # Ansatz-based construction
         ansatz: Ansatz | None = None,
         # Custom circuit construction (backward compatible)
-        circuit: pcvl.Circuit | "CircuitBuilder" | None = None,
+        circuit: pcvl.Circuit | CircuitBuilder | None = None,
         input_state: list[int] | None = None,
         n_photons: int | None = None,
         trainable_parameters: list[str] = None,
@@ -582,7 +580,7 @@ class QuantumLayer(nn.Module):
             and torch.is_grad_enabled()
             and any(p.requires_grad for p in self.parameters())
         )
-        #TODO/CAUTION: if needs_gradient is True and shots>0, the code raises a warning and casts apply_sampling = False and shots = 0
+        # TODO/CAUTION: if needs_gradient is True and shots>0, the code raises a warning and casts apply_sampling = False and shots = 0
         apply_sampling, shots = self.autodiff_process.autodiff_backend(
             needs_gradient, apply_sampling or False, shots or self.shots
         )
@@ -742,7 +740,7 @@ class QuantumLayer(nn.Module):
                 f"{generic_params} trainable parameters, exceeding the requested "
                 f"budget of {requested_params}. The simple layer will expose "
                 f"{generic_params} trainable parameters.",
-                RuntimeWarning,
+                RuntimeWarning, stacklevel=2
             )
 
         if input_size > n_modes:

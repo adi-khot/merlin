@@ -2,16 +2,16 @@
 Circuit is a simple container of components with metadata.
 """
 
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
 class Circuit:
     """Simple circuit container."""
     n_modes: int
-    components: List[Any] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    components: list[Any] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def add(self, component: Any) -> "Circuit":
         """Append a component and return the circuit for chained calls.
@@ -40,13 +40,13 @@ class Circuit:
         """Estimate logical depth by summing component depths when available."""
         depth = 0
         for comp in self.components:
-            if hasattr(comp, 'depth'):
+            if hasattr(comp, "depth"):
                 depth += comp.depth
             else:
                 depth += 1
         return depth
 
-    def get_parameters(self) -> Dict[str, Any]:
+    def get_parameters(self) -> dict[str, Any]:
         """Collect parameter placeholders exposed by each component.
 
         Returns:
@@ -54,7 +54,7 @@ class Circuit:
         """
         params = {}
         for comp in self.components:
-            if hasattr(comp, 'get_params'):
+            if hasattr(comp, "get_params"):
                 params.update(comp.get_params())
         return params
 

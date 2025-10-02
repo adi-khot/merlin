@@ -8,7 +8,6 @@ from ..algorithms.layer import QuantumLayer
 from ..sampling.strategies import OutputMappingStrategy
 
 
-
 def create_circuit(M, input_size):
     """Create a quantum photonic circuit with beam splitters and phase shifters.
 

@@ -3,22 +3,29 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import perceval as pcvl
 import pytest
 import torch
+
+from merlin import OutputMappingStrategy, QuantumLayer
+from merlin.builder import CircuitBuilder
+from merlin.core.components import (
+    BeamSplitter,
+    GenericInterferometer,
+    ParameterRole,
+    Rotation,
+)
+from merlin.pcvl_pytorch.locirc_to_tensor import CircuitConverter
+
+_PS_TYPE = type(pcvl.PS(0.0))
+_BS_TYPE = type(pcvl.BS())
+
 
 _PCVL_HOME = Path(__file__).resolve().parents[2] / ".pcvl_home"
 (_PCVL_HOME / "Library" / "Application Support" / "perceval-quandela" / "job_group").mkdir(
     parents=True, exist_ok=True
 )
 os.environ["HOME"] = str(_PCVL_HOME)
-
-import perceval as pcvl
-from merlin import OutputMappingStrategy, QuantumLayer
-from merlin.builder import CircuitBuilder
-from merlin.core.components import GenericInterferometer, BeamSplitter, EntanglingBlock, ParameterRole, Rotation
-from merlin.pcvl_pytorch.locirc_to_tensor import CircuitConverter
-_PS_TYPE = type(pcvl.PS(0.0))
-_BS_TYPE = type(pcvl.BS())
 
 
 @pytest.fixture(autouse=True)
@@ -312,8 +319,8 @@ def test_angle_encoding_tracks_logical_indices_for_sparse_modes():
 def test_trainable_name_deduplication_for_rotation_layer():
     builder = CircuitBuilder(n_modes=2)
 
-    builder.add_rotation_layer(modes=[0,1], trainable=True, name="theta")
-    builder.add_rotation_layer(modes=[0,1], trainable=True, name="theta")
+    builder.add_rotation_layer(modes=[0, 1], trainable=True, name="theta")
+    builder.add_rotation_layer(modes=[0, 1], trainable=True, name="theta")
     pcvl.pdisplay(builder.to_pcvl_circuit(pcvl))
     rotations = [comp for comp in builder.circuit.components if isinstance(comp, Rotation)]
     assert [rot.custom_name for rot in rotations] == ["theta_0", "theta_1", "theta_0_1", "theta_1_1"]
@@ -410,7 +417,7 @@ def test_generic_interferometer_layer_trains():
 def test_generic_interferometer_with_additional_components_trains():
     builder = CircuitBuilder(n_modes=5)
     builder.add_angle_encoding(modes=[0, 1, 2, 3, 4], name="input")
-    builder.add_generic_interferometer(trainable=True, name="core", modes = [2])
+    builder.add_generic_interferometer(trainable=True, name="core", modes=[2])
     builder.add_rotation_layer(trainable=True, name="theta")
     builder.add_entangling_layer(depth=1)
 
