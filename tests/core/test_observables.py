@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 import pytest
+
 import merlin.core.observables as observables_mod
 
 PauliObservable = observables_mod.PauliObservable

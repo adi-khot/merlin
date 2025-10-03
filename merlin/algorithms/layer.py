@@ -103,7 +103,6 @@ class QuantumLayer(nn.Module):
             builder_input = circuit.input_parameter_prefixes
             self.angle_encoding_specs = circuit.angle_encoding_specs
             circuit = circuit.to_pcvl_circuit(pcvl)
-        
 
         # Fix trainable and input parameters from builder or circuit, can also be empty lists
         if trainable_parameters is None:
@@ -116,7 +115,7 @@ class QuantumLayer(nn.Module):
         else:
             input_parameters = list(input_parameters)
 
-        # Determine construction mode 
+        # Determine construction mode
         # TODO: can be deprectated once Builder is fully supported
         if ansatz is not None:
             self._init_from_ansatz(ansatz, output_size, output_mapping_strategy)

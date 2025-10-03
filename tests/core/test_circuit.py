@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 from merlin.core.circuit import Circuit
+
 
 class DummyComponent:
     def __init__(self, depth: int | None = None, params: dict | None = None):

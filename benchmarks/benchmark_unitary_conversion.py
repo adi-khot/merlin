@@ -20,9 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import os
 import random
-from typing import Dict
 
 import perceval as pcvl
 import pytest
@@ -37,7 +35,9 @@ class UnitaryConversionBenchmarkRunner:
     def __init__(self):
         self.results = []
 
-    def validate_converter(self, converter: CircuitConverter, expect_list_rct: int | None = None) -> bool:
+    def validate_converter(
+        self, converter: CircuitConverter, expect_list_rct: int | None = None
+    ) -> bool:
         if expect_list_rct is not None:
             assert len(converter.list_rct) == expect_list_rct
         return True
@@ -93,7 +93,9 @@ def prep_noparameterized_inteferometer(circuit_size: int) -> pcvl.Circuit:
     return circ
 
 
-def build_torchunitary(converter: CircuitConverter, nparams: int) -> torch.Tensor | None:
+def build_torchunitary(
+    converter: CircuitConverter, nparams: int
+) -> torch.Tensor | None:
     if nparams == 0:
         return converter.to_tensor([])
     else:
@@ -110,7 +112,7 @@ DEVICE_CONFIGS = ["cpu"]
 def test_fullparameter_benchmark(benchmark, nmode: int, device: str):
     circ = prep_fullparameterized_inteferometer(nmode)
     converter = CircuitConverter(circ, [""], dtype=torch.float)
-    res = benchmark(build_torchunitary, converter, nparams=len(circ.get_parameters()))
+    _res = benchmark(build_torchunitary, converter, nparams=len(circ.get_parameters()))
     assert runner.validate_converter(converter)
 
 
@@ -119,7 +121,7 @@ def test_fullparameter_benchmark(benchmark, nmode: int, device: str):
 def test_quantumreservoir_benchmark(benchmark, nmode: int, device: str):
     circ = prep_quantumreservoir_inteferometer(nmode)
     converter = CircuitConverter(circ, [""], dtype=torch.float)
-    res = benchmark(build_torchunitary, converter, nparams=len(circ.get_parameters()))
+    _res = benchmark(build_torchunitary, converter, nparams=len(circ.get_parameters()))
     assert runner.validate_converter(converter)
 
 
@@ -130,11 +132,12 @@ def test_noparameter_benchmark(benchmark, nmode: int, device: str):
     converter = CircuitConverter(circ, [], dtype=torch.float)
     # when there is no parameter, we should have a single precomputed unitary
     assert runner.validate_converter(converter, expect_list_rct=1)
-    res = benchmark(build_torchunitary, converter, nparams=len(circ.get_parameters()))
+    _res = benchmark(build_torchunitary, converter, nparams=len(circ.get_parameters()))
 
 
 if __name__ == "__main__":
     import pytest as _pytest
+
     print("Running unitary conversion benchmarks...")
     code = _pytest.main([__file__, "-v", "--benchmark-only"])  # quick local run
     raise SystemExit(code)
