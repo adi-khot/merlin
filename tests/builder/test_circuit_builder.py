@@ -464,3 +464,33 @@ def test_generic_interferometer_with_additional_components_trains():
     assert logits.shape == (3, 5)
     grads = [p.grad for p in layer.parameters() if p.requires_grad]
     assert any(g is not None and torch.any(g != 0) for g in grads)
+
+
+def test_builder_functionality_on_gpu():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available, skipping GPU test.")
+
+    device = torch.device("cuda")
+
+    builder = CircuitBuilder(n_modes=3)
+    builder.add_angle_encoding(name="input")
+    builder.add_rotation_layer(trainable=True, name="theta")
+    builder.add_entangling_layer(depth=1)
+
+    layer = QuantumLayer(
+        input_size=3,
+        circuit=builder,
+        n_photons=1,
+        output_size=3,
+        output_mapping_strategy=OutputMappingStrategy.LINEAR,
+        dtype=torch.float32,
+    ).to(device)
+
+    x = torch.rand(4, 3, device=device)
+    logits = layer(x)
+    loss = logits.sum()
+    loss.backward()
+
+    assert logits.device.type == device.type and logits.device.type == x.device.type
+    assert logits.shape == (4, 3)
+    assert any(p.grad is not None for p in layer.parameters() if p.requires_grad)
