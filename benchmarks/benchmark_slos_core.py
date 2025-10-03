@@ -138,7 +138,7 @@ def test_build_graph_benchmark(benchmark, config: Dict, device: str, dtype_pair:
     if device == "cpu":
         assert graph.device is None or graph.device == "cpu" or graph.device == torch.device("cpu")
     else:
-        assert graph.device == torch.device(device)
+        assert torch.device(graph.device) == torch.device(device)
     assert graph.dtype == float_dtype
 
 
