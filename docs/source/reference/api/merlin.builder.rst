@@ -13,3 +13,6 @@ Submodules
    :maxdepth: 4
 
    merlin.builder.ansatz
+   merlin.builder.circuit_builder
+
+# TODO: Add diagrams and code examples for builder usage and best practices.

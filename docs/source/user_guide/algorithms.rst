@@ -101,7 +101,7 @@ Notes
 - Set ``trainable=False`` for a fixed, non-trainable kernel; keep it ``True`` (default) to optimise phase parameters with learning algorithms such as ``NKernelAlignment``.
 
 
-Advanced: Custom Circuit (as in tests)
+Advanced: Custom Circuit
 --------------------------------------
 
 You can also build a custom Perceval circuit, then wrapping it in a FeatureMap and FidelityKernel. Below is a compact version of the pattern used in the test suite.
