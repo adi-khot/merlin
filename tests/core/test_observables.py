@@ -5,16 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
-_HELPERS_PATH = Path(__file__).resolve().parents[1] / "helpers.py"
-_SPEC = importlib.util.spec_from_file_location("_merlin_test_helpers", _HELPERS_PATH)
-_HELPERS_MODULE = importlib.util.module_from_spec(_SPEC)
-sys.modules.setdefault("_merlin_test_helpers", _HELPERS_MODULE)
-assert _SPEC.loader is not None
-_SPEC.loader.exec_module(_HELPERS_MODULE)
-load_merlin_module = _HELPERS_MODULE.load_merlin_module
-
-observables_mod = load_merlin_module("merlin.core.observables")
+import merlin.core.observables as observables_mod
 
 PauliObservable = observables_mod.PauliObservable
 NumberOperator = observables_mod.NumberOperator

@@ -3,16 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-
-_HELPERS_PATH = Path(__file__).resolve().parents[1] / "helpers.py"
-_SPEC = importlib.util.spec_from_file_location("_merlin_test_helpers", _HELPERS_PATH)
-_HELPERS_MODULE = importlib.util.module_from_spec(_SPEC)
-sys.modules.setdefault("_merlin_test_helpers", _HELPERS_MODULE)
-assert _SPEC.loader is not None
-_SPEC.loader.exec_module(_HELPERS_MODULE)
-load_merlin_module = _HELPERS_MODULE.load_merlin_module
-
-components_mod = load_merlin_module("merlin.core.components")
+import merlin.core.components as components_mod
 
 Rotation = components_mod.Rotation
 BeamSplitter = components_mod.BeamSplitter
