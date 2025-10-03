@@ -26,7 +26,7 @@ Below are the components available in the `CircuitBuilder` class:
 
 .. image:: ../../_static/img/builder_layer/rotation_comp.png
    :alt: A Rotation component built with CircuitBuilder
-   :width: 600px
+   :width: 200px
    :align: center
 
 2. **add_rotation_layer**:
@@ -43,7 +43,7 @@ Below are the components available in the `CircuitBuilder` class:
 
 .. image:: ../../_static/img/builder_layer/rotation_layer.png
    :alt: A Rotation layer built with CircuitBuilder
-   :width: 600px
+   :width: 200px
    :align: center
 
 3. **add_angle_encoding**:
@@ -72,7 +72,7 @@ This will show as a rotation layer as data is encoded in phase shifters.
 
 .. image:: ../../_static/img/builder_layer/generic.png
    :alt: A Generic Interferometer built with CircuitBuilder
-   :width: 600px
+   :width: 200px
    :align: center
 
 And to span it on different modes
@@ -82,7 +82,7 @@ And to span it on different modes
 
 .. image:: ../../_static/img/builder_layer/generic_0_3.png
    :alt: A Generic Interferometer built with CircuitBuilder
-   :width: 600px
+   :width: 200px
    :align: center
 
 5. **add_superposition**:
@@ -100,7 +100,7 @@ And to span it on different modes
 
 .. image:: ../../_static/img/builder_layer/supp_012.png
    :alt: A Superposition component (beam splitter)
-   :width: 600px
+   :width: 200px
    :align: center
 
 
@@ -117,7 +117,7 @@ And to span it on different modes
 
 .. image:: ../../_static/img/builder_layer/entangling_layer.png
    :alt: A Entangling layer of depth 1
-   :width: 600px
+   :width: 200px
    :align: center
 
 .. code-block:: python
@@ -126,7 +126,7 @@ And to span it on different modes
 
 .. image:: ../../_static/img/builder_layer/entangling_layer_depth2.png
    :alt: A Entangling layer of depth 1
-   :width: 600px
+   :width: 200px
    :align: center
 
 7. **begin_section**:
@@ -149,7 +149,7 @@ And to span it on different modes
 
 .. image:: ../../_static/img/builder_layer/with_1_section.png
    :alt: A Section with an encoding layer
-   :width: 600px
+   :width: 200px
    :align: center
 
 9. **add_adjoint_section**:
@@ -169,7 +169,7 @@ And to span it on different modes
 
 .. image:: ../../_static/img/builder_layer/with_adjoint_sections.png
    :alt: A Section with an adjoint section
-   :width: 600px
+   :width: 200px
    :align: center
 
 
