@@ -47,6 +47,7 @@ Key responsibilities:
 
 - **State Evolution**: Computing how quantum states change through the circuit
 - **Parameter Management**: Tracking which components are configurable vs. fixed
+- **Measurement Simulation**: Converting quantum states to probability distributions
 
 
 

@@ -6,7 +6,8 @@ merlin.algorithms.layer module
    :undoc-members:
    :show-inheritance:
 
-# Example: Quickstart QuantumLayer
+Example: Quickstart QuantumLayer
+--------------------------------
 
 .. code-block:: python
 
@@ -29,7 +30,8 @@ The simple quantum layer above implements a circuit of 10 modes and 5 photons wi
 - Angle encoding on the first N modes (for N input parameters with `input_size <= n_modes`)
 - Add rotations to match the correct number of trainable parameters
 
-# Example: Declarative builder API
+Example: Declarative builder API
+--------------------------------
 
 .. code-block:: python
 
@@ -70,7 +72,8 @@ Other building blocks in the CircuitBuilder include:
 - **add_entangling_layer**: Add one or more layers of entangling blocks (nearest-neighbor beam splitters), optionally trainable, to increase circuit expressivity.
 - **begin_section / end_section / add_adjoint_section**: Define modular circuit sections, optionally with adjoint (inverse) structure and parameter sharing for advanced workflows.
 
-# Example: Manual Perceval circuit (more control)
+Example: Manual Perceval circuit (more control)
+-----------------------------------------------
 
 .. code-block:: python
 
@@ -105,9 +108,9 @@ Other building blocks in the CircuitBuilder include:
     )
     # Train and evaluate as a standard torch.nn.Module
 
-# See the User guide and Notebooks for more advanced usage and training routines !
-
 .. image:: ../../_static/img/Circ_manual.png
    :alt: A Perceval Circuit built with the Perceval API
    :width: 600px
    :align: center
+
+See the User guide and Notebooks for more advanced usage and training routines !
