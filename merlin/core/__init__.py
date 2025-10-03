@@ -28,6 +28,7 @@ from .components import BeamSplitter, Component, EntanglingBlock, Rotation
 from .generators import CircuitGenerator, CircuitType, StateGenerator, StatePattern
 from .photonicbackend import PhotonicBackend
 from .process import ComputationProcess, ComputationProcessFactory
+from ..builder.ansatz import Ansatz, AnsatzFactory
 
 __all__ = [
     "PhotonicBackend",
@@ -43,4 +44,6 @@ __all__ = [
     "BeamSplitter",
     "EntanglingBlock",
     "Circuit",
+    "Ansatz",
+    "AnsatzFactory"
 ]
