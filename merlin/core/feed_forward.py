@@ -469,7 +469,48 @@ class FeedForwardBlock(torch.nn.Module):
         print(f"New input size: {self.input_size}")
 
 
+import torch
+import perceval as pcvl  # Assuming 'pcvl' refers to Perceval quantum photonic framework
+
 class PoolingFeedForward(torch.nn.Module):
+    """
+    A quantum-inspired pooling module that aggregates amplitude information
+    from an input quantum state representation into a lower-dimensional output space.
+
+    This module computes mappings between input and output Fock states (defined
+    by `keys_in` and `keys_out`) based on a specified pooling scheme. It then
+    aggregates the amplitudes according to these mappings, normalizing the result
+    to preserve probabilistic consistency.
+
+    Parameters
+    ----------
+    n_modes : int
+        Number of input modes in the quantum circuit.
+    n_photons : int
+        Number of photons used in the quantum simulation.
+    n_output_modes : int
+        Number of output modes after pooling.
+    pooling_modes : list of list of int, optional
+        Specifies how input modes are grouped (pooled) into output modes.
+        Each sublist contains the indices of input modes to pool together
+        for one output mode. If None, an even pooling scheme is automatically generated.
+    no_bunching : bool, default=True
+        Whether to restrict to Fock states without photon bunching
+        (i.e., no two photons occupy the same mode).
+
+    Attributes
+    ----------
+    match_indices : torch.Tensor
+        Tensor containing the indices mapping input states to output states.
+    exclude_indices : torch.Tensor
+        Tensor containing indices of input states that have no valid mapping
+        to an output state.
+    keys_out : list
+        List of output Fock state keys (from Perceval simulation graph).
+    n_modes : int
+        Number of input modes.
+    """
+
     def __init__(
         self,
         n_modes: int,
@@ -493,6 +534,8 @@ class PoolingFeedForward(torch.nn.Module):
             n_photons=n_photons,
             no_bunching=no_bunching,
         ).computation_process.simulation_graph.mapped_keys
+
+        # If no pooling structure is provided, construct a balanced one
         if pooling_modes is None:
             num_skips = n_modes // n_output_modes
             first_skips = n_modes % n_output_modes
@@ -512,6 +555,7 @@ class PoolingFeedForward(torch.nn.Module):
                 list(range(index_skips[k], index_skips[k + 1]))
                 for k in range(n_output_modes)
             ]
+
         match_indices, exclude_indices = self.match_tuples(
             keys_in, keys_out, pooling_modes
         )
@@ -520,7 +564,21 @@ class PoolingFeedForward(torch.nn.Module):
         self.keys_out = keys_out
         self.n_modes = n_modes
 
-    def forward(self, amplitudes):
+    def forward(self, amplitudes: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass that pools input quantum amplitudes into output modes.
+
+        Parameters
+        ----------
+        amplitudes : torch.Tensor
+            Input tensor of shape `(batch_size, n_input_states)` containing
+            the complex amplitudes (or real/imag parts) of quantum states.
+
+        Returns
+        -------
+        torch.Tensor
+            Normalized pooled amplitudes of shape `(batch_size, n_output_states)`.
+        """
         batch_size = amplitudes.shape[0]
         output = torch.zeros(
             batch_size,
@@ -528,19 +586,50 @@ class PoolingFeedForward(torch.nn.Module):
             dtype=amplitudes.dtype,
             device=amplitudes.device,
         )
+
         # Create a mask to exclude certain indices
         mask = torch.ones(amplitudes.shape[1], dtype=torch.bool)
         if self.exclude_indices.numel() != 0:
             mask[self.exclude_indices] = False
+
         filtered_amplitudes = amplitudes[:, mask]
+
+        # Aggregate amplitudes based on mapping
         output.scatter_add_(
             1,
             self.match_indices.unsqueeze(0).repeat(batch_size, 1),
             filtered_amplitudes,
         )
-        return output
 
-    def match_tuples(self, keys_in, keys_out, pooling_modes):
+        # Normalize to preserve total probability
+        sum_probs = output.abs().pow(2).sum(-1).sqrt()
+        return output / sum_probs
+
+    def match_tuples(self, keys_in: list, keys_out: list, pooling_modes: list[list[int]]):
+        """
+        Matches input and output Fock state tuples based on pooling configuration.
+
+        For each input Fock state (`key_in`), the corresponding pooled output
+        state (`key_out`) is computed by summing the photon counts over each
+        pooling group. Input states that do not correspond to a valid output
+        state are marked for exclusion.
+
+        Parameters
+        ----------
+        keys_in : list
+            List of Fock state tuples representing input configurations.
+        keys_out : list
+            List of Fock state tuples representing output configurations.
+        pooling_modes : list of list of int
+            Grouping of input modes into output modes.
+
+        Returns
+        -------
+        tuple[list[int], list[int]]
+            A pair `(indices, exclude_indices)` where:
+            - `indices` are the matched indices from input to output keys.
+            - `exclude_indices` are input indices with no valid match.
+        """
         indices = []
         exclude_indices = []
         for i, key_in in enumerate(keys_in):
@@ -593,6 +682,7 @@ if __name__ == "__main__":
     for _ in range(10):
         _, amplitudes = pre_layer(return_amplitudes=True)
         amplitudes = pff(amplitudes)
+        print(amplitudes.abs().pow(2).sum())
         post_layer.set_input_state(amplitudes)
         res = post_layer().pow(2).sum()
         print(res)
