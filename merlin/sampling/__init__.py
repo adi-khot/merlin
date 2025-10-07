@@ -23,15 +23,19 @@
 """Sampling and autodiff utilities."""
 
 from .autodiff import AutoDiffProcess
-from .mappers import LexGroupingMapper, ModGroupingMapper, OutputMapper
+from .mappers import OutputMapper, FockDistribution, FockGrouping, ModeExpectation, StateVector
 from .process import SamplingProcess
-from .strategies import OutputMappingStrategy
+from .strategies import OutputMappingStrategy, MeasurementStrategy, GroupingPolicy
 
 __all__ = [
     "OutputMappingStrategy",
+    "MeasurementStrategy",
+    "GroupingPolicy",
     "OutputMapper",
-    "LexGroupingMapper",
-    "ModGroupingMapper",
+    "FockDistribution",
+    "FockGrouping",
+    "ModeExpectation",
+    "StateVector",
     "SamplingProcess",
     "AutoDiffProcess",
 ]

@@ -51,3 +51,10 @@ class MeasurementStrategy(Enum):
     ModeExpectation = "modeexpectation"
     StateVector = "statevector"
     CustomObservable = "customobservable"
+
+
+class GroupingPolicy(Enum):
+    """Policy for the grouping of quantum probability distributions to classical outputs."""
+
+    ModGrouping = "modgrouping"
+    LexGrouping = "lexgrouping"
