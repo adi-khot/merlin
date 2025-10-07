@@ -297,9 +297,9 @@ class TestFeatureMapFactoryMethods:
     def test_from_circuit_builder_basic(self):
         """FeatureMap can be constructed directly from CircuitBuilder."""
         builder = CircuitBuilder(n_modes=4)
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
         builder.add_angle_encoding(modes=[0, 1], name="input")
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
 
         feature_map = FeatureMap(
             circuit=builder,
@@ -313,10 +313,10 @@ class TestFeatureMapFactoryMethods:
     def test_from_circuit_builder_with_trainable_params(self):
         """FeatureMap inherits trainable parameters defined in CircuitBuilder."""
         builder = CircuitBuilder(n_modes=4)
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
         builder.add_angle_encoding(modes=[0, 1], name="input")
-        builder.add_rotation_layer(trainable=True, name="phi_")
-        builder.add_entangling_layer(depth=1)
+        builder.add_rotations(trainable=True, name="phi_")
+        builder.add_superpositions(depth=1)
 
         feature_map = FeatureMap(
             circuit=builder,
@@ -402,9 +402,9 @@ class TestFidelityKernelFactoryMethods:
     def test_from_feature_map_builder(self):
         """FidelityKernel can wrap a FeatureMap created from CircuitBuilder."""
         builder = CircuitBuilder(n_modes=4)
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
         builder.add_angle_encoding(modes=[0, 1], name="input")
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
 
         feature_map = FeatureMap(
             circuit=builder,
@@ -655,9 +655,9 @@ class TestKernelConstructionConsistency:
         """Supported constructors yield kernels with matching structure."""
         # Manual builder-based kernel
         builder = CircuitBuilder(n_modes=4)
-        builder.add_entangling_layer(depth=1, name="phi_1_")
+        builder.add_superpositions(depth=1, name="phi_1_")
         builder.add_angle_encoding(modes=[0, 1], name="input")
-        builder.add_entangling_layer(depth=1, name="phi_2_")
+        builder.add_superpositions(depth=1, name="phi_2_")
         fm_manual = FeatureMap(
             circuit=builder,
             input_size=2,

@@ -39,8 +39,8 @@ Example: Declarative builder API
     builder = CircuitBuilder(n_modes=6)
     builder.add_generic_interferometer(trainable=True, name="U1")
     builder.add_angle_encoding(modes=list(range(4)), name="input")
-    builder.add_rotation_layer(trainable=True, name="theta")
-    builder.add_entangling_layer(depth=1)
+    builder.add_rotations(trainable=True, name="theta")
+    builder.add_superpositions(depth=1)
 
     builder_layer = QuantumLayer(
         input_size=4,
@@ -65,11 +65,10 @@ This circuit is made of:
 
 Other building blocks in the CircuitBuilder include:
 
-- **add_rotation / add_rotation_layer**: Add single or multiple phase shifters (rotations) to specific modes. Rotations can be fixed, trainable, or data-driven (input-encoded).
+- **add_rotations**: Add single or multiple phase shifters (rotations) to specific modes. Rotations can be fixed, trainable, or data-driven (input-encoded).
 - **add_angle_encoding**: Encode classical data as quantum rotation angles, supporting higher-order feature combinations for expressive input encoding.
 - **add_generic_interferometer**: Insert a generic, multi-mode interferometer block, optionally trainable, for universal linear mixing.
-- **add_superposition**: Add a beam splitter (superposition) between two modes, with configurable mixing and phase parameters (fixed or trainable).
-- **add_entangling_layer**: Add one or more layers of entangling blocks (nearest-neighbor beam splitters), optionally trainable, to increase circuit expressivity.
+- **add_superpositions**: Add one or more beam splitters (superposition layers) with configurable targets, depth, and trainability.
 - **begin_section / end_section / add_adjoint_section**: Define modular circuit sections, optionally with adjoint (inverse) structure and parameter sharing for advanced workflows.
 
 Example: Manual Perceval circuit (more control)

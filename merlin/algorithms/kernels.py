@@ -366,7 +366,7 @@ class FeatureMap:
 
         builder = CircuitBuilder(n_modes=n_modes)
 
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
         input_modes = list(range(input_size))
 
         builder.add_angle_encoding(
@@ -377,12 +377,12 @@ class FeatureMap:
 
         trainable_parameters: list[str] | None
         if trainable:
-            builder.add_rotation_layer(trainable=True, name=trainable_prefix)
+            builder.add_rotations(trainable=True, name=trainable_prefix)
             trainable_parameters = [trainable_prefix]
         else:
             trainable_parameters = None
 
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
 
         return cls(
             circuit=builder,
@@ -483,7 +483,7 @@ class KernelCircuitBuilder:
             trainable_params = None
 
         builder = CircuitBuilder(n_modes=n_modes)
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
 
         if self._input_size > n_modes:
             raise ValueError(ANGLE_ENCODING_MODE_ERROR)
@@ -497,9 +497,9 @@ class KernelCircuitBuilder:
         )
 
         if self._trainable:
-            builder.add_rotation_layer(trainable=True, name=self._trainable_prefix)
+            builder.add_rotations(trainable=True, name=self._trainable_prefix)
 
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
 
         return FeatureMap(
             circuit=builder,

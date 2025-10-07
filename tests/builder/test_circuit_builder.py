@@ -33,9 +33,9 @@ def perceval_home(monkeypatch):
     monkeypatch.setenv("HOME", str(_PCVL_HOME))
 
 
-def test_rotation_layer_assigns_trainable_names_per_mode():
+def test_add_rotations_assigns_trainable_names_per_mode():
     builder = CircuitBuilder(n_modes=3)
-    builder.add_rotation_layer(trainable=True)
+    builder.add_rotations(trainable=True)
 
     rotations = builder.circuit.components
     assert len(rotations) == 3
@@ -48,9 +48,9 @@ def test_rotation_layer_assigns_trainable_names_per_mode():
         assert rotation.axis == "z"
 
 
-def test_rotation_layer_input_custom_prefix_uses_global_counter():
+def test_add_rotations_input_custom_prefix_uses_global_counter():
     builder = CircuitBuilder(n_modes=4)
-    builder.add_rotation_layer(modes=[1, 3], role=ParameterRole.INPUT, name="feature")
+    builder.add_rotations(modes=[1, 3], role=ParameterRole.INPUT, name="feature")
 
     rotations = builder.circuit.components
     assert [rotation.target for rotation in rotations] == [1, 3]
@@ -60,10 +60,10 @@ def test_rotation_layer_input_custom_prefix_uses_global_counter():
 
 def test_section_reference_copies_components_without_sharing_trainables():
     builder = CircuitBuilder(n_modes=2)
-    builder.add_rotation_layer(trainable=True, name="theta")
+    builder.add_rotations(trainable=True, name="theta")
 
     builder.begin_section("first")
-    builder.add_superposition(
+    builder.add_superpositions(
         targets=(0, 1),
         theta=0.25,
         trainable_theta=True,
@@ -85,7 +85,7 @@ def test_section_reference_copies_components_without_sharing_trainables():
 def test_build_closes_open_sections_and_sets_metadata():
     builder = CircuitBuilder(n_modes=1)
     builder.begin_section("encoder", compute_adjoint=True)
-    builder.add_rotation(target=0)
+    builder.add_rotations(modes=0)
 
     with pytest.warns(UserWarning):
         circuit = builder.build()
@@ -101,8 +101,8 @@ def test_build_closes_open_sections_and_sets_metadata():
 def test_complex_builder_pipeline_exports_pcvl_circuit():
     builder = CircuitBuilder(n_modes=3)
     builder.add_angle_encoding(name="input")
-    builder.add_entangling_layer(depth=1, name="ent")
-    builder.add_rotation(target=1, angle=0.25)
+    builder.add_superpositions(depth=1, name="ent")
+    builder.add_rotations(modes=1, angle=0.25)
 
     pcvl_circuit = builder.to_pcvl_circuit(pcvl)
     assert isinstance(pcvl_circuit, pcvl.Circuit)
@@ -126,7 +126,7 @@ def test_complex_builder_pipeline_exports_pcvl_circuit():
 
 def test_trainable_entangling_layer_generates_parameterised_mixers():
     builder = CircuitBuilder(n_modes=4)
-    builder.add_entangling_layer(depth=1, trainable=True, name="mix")
+    builder.add_superpositions(depth=1, trainable=True, name="mix")
 
     circuit = builder.to_pcvl_circuit(pcvl)
     param_names = {param.name for param in circuit.get_parameters()}
@@ -138,13 +138,13 @@ def test_trainable_entangling_layer_generates_parameterised_mixers():
 
 def test_to_pcvl_circuit_supports_gradient_backpropagation():
     builder = CircuitBuilder(n_modes=2)
-    builder.add_rotation_layer(trainable=True, name="theta")
-    builder.add_superposition(
+    builder.add_rotations(trainable=True, name="theta")
+    builder.add_superpositions(
         targets=(0, 1),
         trainable_theta=True,
         trainable_phi=True,
     )
-    builder.add_entangling_layer(depth=1)
+    builder.add_superpositions(depth=1)
 
     pcvl_circuit = builder.to_pcvl_circuit(pcvl)
 
@@ -173,8 +173,8 @@ def test_to_pcvl_circuit_supports_gradient_backpropagation():
 def test_builder_integrates_directly_with_quantum_layer():
     builder = CircuitBuilder(n_modes=3)
     builder.add_angle_encoding(name="input")
-    builder.add_rotation_layer(trainable=True, name="theta")
-    builder.add_entangling_layer(depth=1)
+    builder.add_rotations(trainable=True, name="theta")
+    builder.add_superpositions(depth=1)
 
     layer = QuantumLayer(
         input_size=3,
@@ -331,8 +331,8 @@ def test_angle_encoding_tracks_logical_indices_for_sparse_modes():
 def test_trainable_name_deduplication_for_rotation_layer():
     builder = CircuitBuilder(n_modes=2)
 
-    builder.add_rotation_layer(modes=[0, 1], trainable=True, name="theta")
-    builder.add_rotation_layer(modes=[0, 1], trainable=True, name="theta")
+    builder.add_rotations(modes=[0, 1], trainable=True, name="theta")
+    builder.add_rotations(modes=[0, 1], trainable=True, name="theta")
     pcvl.pdisplay(builder.to_pcvl_circuit(pcvl))
     rotations = [
         comp for comp in builder.circuit.components if isinstance(comp, Rotation)
@@ -350,8 +350,8 @@ def test_trainable_name_deduplication_for_rotation_layer():
 def test_trainable_name_deduplication_for_single_rotation():
     builder = CircuitBuilder(n_modes=2)
 
-    builder.add_rotation(target=0, trainable=True, name="phi")
-    builder.add_rotation(target=1, trainable=True, name="phi")
+    builder.add_rotations(modes=0, trainable=True, name="phi")
+    builder.add_rotations(modes=1, trainable=True, name="phi")
 
     rotations = [
         comp for comp in builder.circuit.components if isinstance(comp, Rotation)
@@ -443,8 +443,8 @@ def test_generic_interferometer_with_additional_components_trains():
     builder = CircuitBuilder(n_modes=5)
     builder.add_angle_encoding(modes=[0, 1, 2, 3, 4], name="input")
     builder.add_generic_interferometer(trainable=True, name="core", modes=[2])
-    builder.add_rotation_layer(trainable=True, name="theta")
-    builder.add_entangling_layer(depth=1)
+    builder.add_rotations(trainable=True, name="theta")
+    builder.add_superpositions(depth=1)
 
     layer = QuantumLayer(
         input_size=5,
@@ -474,8 +474,8 @@ def test_builder_functionality_on_gpu():
 
     builder = CircuitBuilder(n_modes=3)
     builder.add_angle_encoding(name="input")
-    builder.add_rotation_layer(trainable=True, name="theta")
-    builder.add_entangling_layer(depth=1)
+    builder.add_rotations(trainable=True, name="theta")
+    builder.add_superpositions(depth=1)
 
     layer = QuantumLayer(
         input_size=3,

@@ -49,6 +49,7 @@ class CircuitBuilder:
         self._input_counter = 0
         self._copy_counter = 0
         self._generic_counter = 0
+        self._superposition_counter = 0
         self._entangling_counter = 0
 
         # Section tracking for adjoint support
@@ -136,89 +137,46 @@ class CircuitBuilder:
         self._used_trainable_names.add(candidate)
         return candidate
 
-    def add_rotation(
+    def add_rotations(
         self,
-        target: int,
-        angle: float = 0.0,
-        trainable: bool = False,
-        name: str | None = None,
-    ) -> "CircuitBuilder":
-        """Add a single rotation.
-
-        The builder keeps rotations in an abstract form by appending a
-        :class:`~merlin.core.components.Rotation` entry to its internal
-        :class:`~merlin.core.circuit.Circuit`. The actual photonic primitive is
-        created later in :meth:`to_pcvl_circuit`, where each rotation is
-        materialised as a Perceval phase shifter ``pcvl.PS``. Fixed rotations use
-        the numeric ``angle`` provided here, while trainable ones are assigned a
-        symbolic ``pcvl.P`` that Perceval treats as an optimisable parameter.
-
-        Args:
-            target: Circuit mode index receiving the phase shifter.
-            angle: Initial numeric value used when the rotation is fixed.
-            trainable: Whether to expose the rotation angle as a learnable parameter.
-            name: Optional custom stem for the underlying parameter name.
-
-        Returns:
-            CircuitBuilder: ``self`` to allow method chaining.
-        """
-        role = ParameterRole.TRAINABLE if trainable else ParameterRole.FIXED
-
-        if role == ParameterRole.TRAINABLE:
-            if name is None:
-                base_name = f"theta_{self._trainable_counter}"
-                self._trainable_counter += 1
-            else:
-                base_name = name
-            custom_name = self._unique_trainable_name(base_name)
-        else:
-            custom_name = name
-
-        rotation = Rotation(
-            target=target, role=role, value=angle, custom_name=custom_name
-        )
-
-        self.circuit.add(rotation)
-
-        if role == ParameterRole.TRAINABLE:
-            self._register_trainable_prefix(custom_name)
-        elif role == ParameterRole.INPUT:
-            self._register_input_prefix(custom_name or name)
-        return self
-
-    def add_rotation_layer(
-        self,
-        modes: list[int] | ModuleGroup | None = None,
+        modes: int | list[int] | ModuleGroup | None = None,
         *,
         axis: str = "z",
         trainable: bool = False,
         as_input: bool = False,
+        angle: float | None = None,
         value: float | None = None,
         name: str | None = None,
         role: str | ParameterRole | None = None,
     ) -> "CircuitBuilder":
-        """Add a rotation layer across a set of modes.
+        """Add one or multiple rotations across the provided modes.
 
         Args:
-            modes: Modes (or module group) receiving the rotations; defaults to all modes.
-            axis: Axis of rotation to apply on each mode.
-            trainable: Promote every rotation in the layer to trainable parameters.
-            as_input: Mark the rotations as data-driven inputs (legacy convenience flag).
-            value: Default fixed value assigned when the layer is not trainable/input.
-            name: Optional stem used when generating parameter names per mode.
+            modes: Single mode, list of modes, module group or ``None`` (all modes).
+            axis: Axis of rotation for each inserted phase shifter.
+            trainable: Promote the rotations to trainable parameters (legacy flag).
+            as_input: Mark the rotations as input-driven parameters (legacy flag).
+            angle: Optional fixed value for the rotations (alias of ``value``).
+            value: Optional fixed value for the rotations (alias of ``angle``).
+            name: Optional stem used for generated parameter names.
             role: Explicit :class:`ParameterRole` taking precedence over other flags.
 
         Returns:
-            CircuitBuilder: ``self`` to facilitate fluent chaining.
+            CircuitBuilder: ``self`` for fluent chaining.
         """
-        if modes is None:
+        if isinstance(modes, ModuleGroup):
+            target_modes = list(modes.modes)
+        elif modes is None:
             target_modes = list(range(self.n_modes))
-        elif isinstance(modes, ModuleGroup):
-            target_modes = modes.modes
+        elif isinstance(modes, int):
+            target_modes = [modes]
         else:
-            target_modes = modes
+            target_modes = list(modes)
 
-        # Determine role (new interface takes precedence)
+        if not target_modes:
+            return self
+
+        resolved_role: ParameterRole
         if role is not None:
             if isinstance(role, str):
                 role_map = {
@@ -226,59 +184,53 @@ class CircuitBuilder:
                     "input": ParameterRole.INPUT,
                     "trainable": ParameterRole.TRAINABLE,
                 }
-                final_role = role_map.get(role, ParameterRole.FIXED)
+                resolved_role = role_map.get(role.lower(), ParameterRole.FIXED)
             else:
-                final_role = role
+                resolved_role = role
         elif as_input:
-            final_role = ParameterRole.INPUT
+            resolved_role = ParameterRole.INPUT
         elif trainable:
-            final_role = ParameterRole.TRAINABLE
+            resolved_role = ParameterRole.TRAINABLE
         else:
-            final_role = ParameterRole.FIXED
+            resolved_role = ParameterRole.FIXED
 
-        # Determine value
-        final_value = value if value is not None else 0.0
+        final_value = angle if angle is not None else (value if value is not None else 0.0)
 
-        for _idx, mode in enumerate(target_modes):
-            if mode >= self.n_modes:
+        for current_mode in target_modes:
+            if current_mode < 0 or current_mode >= self.n_modes:
                 continue
 
-            # Generate appropriate name based on role
             if name is not None:
-                # For input parameters with custom name, create simple indexed names
-                if final_role == ParameterRole.INPUT:
-                    # Use global input counter for unique naming
+                if resolved_role == ParameterRole.INPUT:
                     custom_name = f"{name}{self._input_counter + 1}"
                     self._input_counter += 1
-                elif final_role == ParameterRole.TRAINABLE:
-                    base_name = f"{name}_{mode}" if len(target_modes) > 1 else name
+                elif resolved_role == ParameterRole.TRAINABLE:
+                    base_name = f"{name}_{current_mode}" if len(target_modes) > 1 else name
                     custom_name = self._unique_trainable_name(base_name)
                 else:
-                    # Keep existing naming for non-input params
-                    custom_name = f"{name}_{mode}" if len(target_modes) > 1 else name
-            elif final_role == ParameterRole.INPUT:
-                # Default input naming: px1, px2, etc. - using global counter
+                    custom_name = f"{name}_{current_mode}" if len(target_modes) > 1 else name
+            elif resolved_role == ParameterRole.INPUT:
                 custom_name = f"px{self._input_counter + 1}"
                 self._input_counter += 1
-            elif final_role == ParameterRole.TRAINABLE:
-                base_name = f"theta_{self._trainable_counter}_{mode}"
+            elif resolved_role == ParameterRole.TRAINABLE:
+                base_name = f"theta_{self._trainable_counter}_{current_mode}"
                 self._trainable_counter += 1
                 custom_name = self._unique_trainable_name(base_name)
             else:
                 custom_name = None
 
             rotation = Rotation(
-                target=mode,
-                role=final_role,
+                target=current_mode,
+                role=resolved_role,
                 value=final_value,
                 axis=axis,
                 custom_name=custom_name,
             )
             self.circuit.add(rotation)
 
-            if final_role == ParameterRole.TRAINABLE:
+            if resolved_role == ParameterRole.TRAINABLE:
                 self._register_trainable_prefix(rotation.custom_name or name)
-            elif final_role == ParameterRole.INPUT:
+            elif resolved_role == ParameterRole.INPUT:
                 self._register_input_prefix(rotation.custom_name or name)
 
         self._layer_counter += 1
@@ -356,7 +308,7 @@ class CircuitBuilder:
                 target_modes[(emitted + offset) % len(target_modes)]
                 for offset in range(span)
             ]
-            self.add_rotation_layer(
+            self.add_rotations(
                 modes=chunk_modes, role=ParameterRole.INPUT, name=name
             )
             emitted += span
@@ -465,77 +417,146 @@ class CircuitBuilder:
         self._layer_counter += 1
         return self
 
-    def add_superposition(
+    def add_superpositions(
         self,
-        targets: tuple[int, int],
+        targets: tuple[int, int] | list[tuple[int, int]] | None = None,
+        *,
+        depth: int = 1,
         theta: float = 0.785398,
         phi: float = 0.0,
-        trainable_theta: bool = False,
-        trainable_phi: bool = False,
+        trainable: bool | None = None,
+        trainable_theta: bool | None = None,
+        trainable_phi: bool | None = None,
+        modes: list[int] | ModuleGroup | None = None,
         name: str | None = None,
     ) -> "CircuitBuilder":
-        """Add a beam splitter (superposition component).
+        """Add one or more superposition (beam splitter) components.
 
         Args:
-            targets: Pair of mode indices connected by the beam splitter.
-            theta: Fixed mixing angle used when ``trainable_theta`` is ``False``.
-            phi: Fixed relative phase applied when ``trainable_phi`` is ``False``.
-            trainable_theta: Promote the mixing angle to a trainable parameter.
-            trainable_phi: Promote the relative phase to a trainable parameter.
-            name: Optional stem used to generate parameter names for this component.
+            targets: Tuple or list of tuples describing explicit mode pairs. When
+                omitted, nearest neighbours over ``modes`` (or all modes) are used.
+            depth: Number of sequential passes to apply (``>=1``).
+            theta: Baseline mixing angle for fixed beam splitters.
+            phi: Baseline relative phase for fixed beam splitters.
+            trainable: Convenience flag to mark both ``theta`` and ``phi`` trainable.
+            trainable_theta: Whether the mixing angle should be trainable.
+            trainable_phi: Whether the relative phase should be trainable.
+            modes: Optional mode list/module group used when ``targets`` is omitted.
+            name: Optional stem used for generated parameter names.
 
         Returns:
-            CircuitBuilder: ``self`` to allow chaining additional builder calls.
+            CircuitBuilder: ``self`` for fluent chaining.
         """
-        theta_role = ParameterRole.TRAINABLE if trainable_theta else ParameterRole.FIXED
-        phi_role = ParameterRole.TRAINABLE if trainable_phi else ParameterRole.FIXED
+        if depth < 1:
+            raise ValueError("depth must be at least 1")
 
-        theta_name = f"{name}_theta" if name else None
-        phi_name = f"{name}_phi" if name else None
+        if targets is not None:
+            if isinstance(targets, tuple):
+                pair_list = [targets]
+            else:
+                pair_list = list(targets)
 
-        bs = BeamSplitter(
-            targets=targets,
-            theta_value=theta,
-            phi_value=phi,
-            theta_role=theta_role,
-            phi_role=phi_role,
-            theta_name=theta_name,
-            phi_name=phi_name,
+            resolved_pairs: list[tuple[int, int]] = []
+            for pair in pair_list:
+                if len(pair) != 2:
+                    raise ValueError("Each target must be a pair of mode indices")
+                left, right = pair
+                if left == right:
+                    continue
+                if (
+                    left < 0
+                    or right < 0
+                    or left >= self.n_modes
+                    or right >= self.n_modes
+                ):
+                    raise ValueError("Beam splitter targets must refer to valid modes")
+                resolved_pairs.append((left, right))
+
+            if not resolved_pairs:
+                return self
+
+            theta_flag = trainable if trainable is not None else False
+            phi_flag = trainable if trainable is not None else False
+
+            if trainable_theta is not None:
+                theta_flag = trainable_theta
+            if trainable_phi is not None:
+                phi_flag = trainable_phi
+
+            theta_role = (
+                ParameterRole.TRAINABLE if theta_flag else ParameterRole.FIXED
+            )
+            phi_role = ParameterRole.TRAINABLE if phi_flag else ParameterRole.FIXED
+
+            total_components = depth * len(resolved_pairs)
+            single_component = total_components == 1
+
+            if name is None:
+                # Keep legacy-friendly prefixes so downstream tooling can match "theta"/"phi".
+                theta_base = "theta_bs"
+                phi_base = "phi_bs"
+                self._superposition_counter += 1
+            else:
+                theta_base = f"{name}_theta"
+                phi_base = f"{name}_phi"
+
+            component_index = 0
+            for depth_idx in range(depth):
+                for pair_idx, pair in enumerate(resolved_pairs):
+                    suffix = "" if single_component else f"_{component_index}"
+                    theta_name = None
+                    phi_name = None
+
+                    if theta_role == ParameterRole.TRAINABLE:
+                        base_name = theta_base if not suffix else f"{theta_base}{suffix}"
+                        theta_name = self._unique_trainable_name(base_name)
+                        self._register_trainable_prefix(theta_name)
+
+                    if phi_role == ParameterRole.TRAINABLE:
+                        base_name = phi_base if not suffix else f"{phi_base}{suffix}"
+                        phi_name = self._unique_trainable_name(base_name)
+                        self._register_trainable_prefix(phi_name)
+
+                    bs = BeamSplitter(
+                        targets=pair,
+                        theta_value=theta,
+                        phi_value=phi,
+                        theta_role=theta_role,
+                        phi_role=phi_role,
+                        theta_name=theta_name,
+                        phi_name=phi_name,
+                    )
+                    self.circuit.add(bs)
+
+                    component_index += 1
+
+            return self
+
+        # Fallback: behave like an entangling block across a span of modes
+        if isinstance(modes, ModuleGroup):
+            mode_list = list(modes.modes)
+        elif modes is None:
+            mode_list = list(range(self.n_modes))
+        else:
+            mode_list = list(modes)
+
+        if len(mode_list) < 2:
+            return self
+
+        ent_trainable = (
+            trainable
+            if trainable is not None
+            else bool(trainable_theta or trainable_phi)
         )
 
-        self.circuit.add(bs)
+        block = EntanglingBlock(
+            targets=mode_list if modes is not None else "all",
+            depth=depth,
+            trainable=ent_trainable,
+            name_prefix=name,
+        )
 
-        if theta_role == ParameterRole.TRAINABLE:
-            self._register_trainable_prefix(theta_name or "theta")
-        elif theta_role == ParameterRole.INPUT:
-            self._register_input_prefix(theta_name or "theta")
-
-        if phi_role == ParameterRole.TRAINABLE:
-            self._register_trainable_prefix(phi_name or "phi")
-        elif phi_role == ParameterRole.INPUT:
-            self._register_input_prefix(phi_name or "phi")
-        return self
-
-    def add_entangling_layer(
-        self, depth: int = 1, trainable: bool = False, name: str | None = None
-    ) -> "CircuitBuilder":
-        """Add entangling layer(s).
-
-        When ``trainable`` is ``True`` the block is converted into parameterized beam
-        splitters during ``to_pcvl_circuit`` so that interferometric mixing can be
-        optimised. Generated parameters share a common prefix derived from ``name``.
-
-        Args:
-            depth: Number of successive nearest-neighbour passes to add.
-            trainable: Whether to expose the internal beam splitters as parameters.
-            name: Optional stem used for generated parameter names when trainable.
-
-        Returns:
-            CircuitBuilder: ``self`` for chaining additional builder calls.
-        """
-        block = EntanglingBlock(depth=depth, trainable=trainable, name_prefix=name)
-
-        if trainable:
+        if ent_trainable:
             base = name or f"eb{self._entangling_counter}"
             self._entangling_counter += 1
             prefix = self._unique_trainable_name(base)
@@ -814,7 +835,7 @@ class CircuitBuilder:
                     phi = component.value
                 else:
                     custom_name = (
-                        component.custom_name or f"theta_{component.target}_{idx}"
+                        component.custom_name or f"phi_{component.target}_{idx}"
                     )
                     phi = pcvl_module.P(custom_name)
                 pcvl_circuit.add(component.target, pcvl_module.PS(phi))
@@ -829,7 +850,7 @@ class CircuitBuilder:
                 if component.phi_role == ParameterRole.FIXED:
                     phi_tr = component.phi_value
                 else:
-                    phi_name = component.phi_name or f"phi_bs_{idx}"
+                    phi_name = component.phi_name or f"theta_bs_{idx}"
                     phi_tr = pcvl_module.P(phi_name)
 
                 pcvl_circuit.add(

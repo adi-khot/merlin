@@ -767,7 +767,7 @@ class QuantumLayer(nn.Module):
             subset_combinations=False,
         )
 
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
 
         # Allocate additional trainable rotations only if the budget exceeds the interferometer
         remaining = max(requested_params - generic_params, 0)
@@ -777,18 +777,18 @@ class QuantumLayer(nn.Module):
         while remaining > 0:
             prefix = f"theta_layer{layer_idx}"
             if remaining >= n_modes:
-                builder.add_rotation_layer(trainable=True, name=prefix)
+                builder.add_rotations(trainable=True, name=prefix)
                 remaining -= n_modes
                 added_rotation_params += n_modes
             else:
                 modes = list(range(remaining))
-                builder.add_rotation_layer(modes=modes, trainable=True, name=prefix)
+                builder.add_rotations(modes=modes, trainable=True, name=prefix)
                 added_rotation_params += remaining
                 remaining = 0
             layer_idx += 1
 
         # Post-rotation entanglement
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
 
         total_trainable = generic_params + added_rotation_params
         expected_trainable = max(requested_params, generic_params)
