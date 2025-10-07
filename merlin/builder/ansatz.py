@@ -27,10 +27,10 @@ Ansatz configuration and factory for quantum layers.
 import torch
 
 from ..core.generators import CircuitGenerator, StateGenerator
+from ..core.photonicbackend import PhotonicBackend
 from ..core.process import ComputationProcessFactory
 from ..sampling.strategies import OutputMappingStrategy
 from ..torch_utils.torch_codes import FeatureEncoder
-from .photonicbackend import PhotonicBackend
 
 
 class Ansatz:

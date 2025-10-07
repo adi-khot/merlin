@@ -28,10 +28,15 @@ import math
 
 import torch
 
-import merlin as ML
-from merlin import OutputMappingStrategy, QuantumLayer
-from merlin.core.generators import CircuitGenerator, StateGenerator
+from merlin.algorithms.layer import QuantumLayer
+from merlin.core.generators import (
+    CircuitGenerator,
+    CircuitType,
+    StateGenerator,
+    StatePattern,
+)
 from merlin.core.process import ComputationProcessFactory
+from merlin.sampling.strategies import OutputMappingStrategy
 
 
 def calculate_fock_space_size(n_modes: int, n_photons: int) -> int:
@@ -85,10 +90,10 @@ class TestNoBunchingFunctionality:
 
         # Create circuit and state
         circuit, _ = CircuitGenerator.generate_circuit(
-            ML.CircuitType.PARALLEL_COLUMNS, n_modes, 2
+            CircuitType.PARALLEL_COLUMNS, n_modes, 2
         )
         input_state = StateGenerator.generate_state(
-            n_modes, n_photons, ML.StatePattern.SEQUENTIAL
+            n_modes, n_photons, StatePattern.SEQUENTIAL
         )
 
         # Create computation process with no_bunching=False
@@ -128,10 +133,10 @@ class TestNoBunchingFunctionality:
 
         # Create circuit and state
         circuit, _ = CircuitGenerator.generate_circuit(
-            ML.CircuitType.PARALLEL_COLUMNS, n_modes, 2
+            CircuitType.PARALLEL_COLUMNS, n_modes, 2
         )
         input_state = StateGenerator.generate_state(
-            n_modes, n_photons, ML.StatePattern.SEQUENTIAL
+            n_modes, n_photons, StatePattern.SEQUENTIAL
         )
 
         # Create computation process with no_bunching=True
@@ -173,10 +178,10 @@ class TestNoBunchingFunctionality:
         # Test both cases
         for no_bunching in [False, True]:
             circuit, _ = CircuitGenerator.generate_circuit(
-                ML.CircuitType.SERIES, n_modes, 2
+                CircuitType.SERIES, n_modes, 2
             )
             input_state = StateGenerator.generate_state(
-                n_modes, n_photons, ML.StatePattern.PERIODIC
+                n_modes, n_photons, StatePattern.PERIODIC
             )
 
             q_layer = QuantumLayer(
@@ -214,10 +219,10 @@ class TestNoBunchingFunctionality:
             print(f"\nTesting {n_photons} photons in {n_modes} modes:")
 
             circuit, _ = CircuitGenerator.generate_circuit(
-                ML.CircuitType.PARALLEL, n_modes, 2
+                CircuitType.PARALLEL, n_modes, 2
             )
             input_state = StateGenerator.generate_state(
-                n_modes, n_photons, ML.StatePattern.SPACED
+                n_modes, n_photons, StatePattern.SPACED
             )
 
             # Test with no_bunching=True
@@ -273,9 +278,7 @@ class TestNoBunchingFunctionality:
         n_modes = 3
         n_photons = 4  # More photons than modes
 
-        circuit, _ = CircuitGenerator.generate_circuit(
-            ML.CircuitType.SERIES, n_modes, 2
-        )
+        circuit, _ = CircuitGenerator.generate_circuit(CircuitType.SERIES, n_modes, 2)
         input_state = [1, 1, 1, 1][:n_modes] + [0] * max(0, n_modes - 4)
 
         # This should work but result in empty or minimal space
@@ -317,10 +320,10 @@ class TestNoBunchingFunctionality:
         n_photons = 1
 
         circuit, _ = CircuitGenerator.generate_circuit(
-            ML.CircuitType.PARALLEL_COLUMNS, n_modes, 2
+            CircuitType.PARALLEL_COLUMNS, n_modes, 2
         )
         input_state = StateGenerator.generate_state(
-            n_modes, n_photons, ML.StatePattern.SEQUENTIAL
+            n_modes, n_photons, StatePattern.SEQUENTIAL
         )
 
         for no_bunching in [False, True]:
@@ -374,10 +377,10 @@ class TestNoBunchingFunctionality:
                 f"\nTesting compute_with_keys {n_photons} photons in {n_modes} modes:"
             )
             circuit, _ = CircuitGenerator.generate_circuit(
-                ML.CircuitType.SERIES, n_modes, 2
+                CircuitType.SERIES, n_modes, 2
             )
             input_state = StateGenerator.generate_state(
-                n_modes, n_photons, ML.StatePattern.PERIODIC
+                n_modes, n_photons, StatePattern.PERIODIC
             )
 
             # Process with no_bunching

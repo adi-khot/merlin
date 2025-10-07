@@ -14,11 +14,11 @@ The main difference is in the physical implementation:
 
 Feedforward circuits are thus essential in photonic platforms for enabling adaptive quantum protocols.
 
-----------------------------
-FeedforwardBlock in MerLin
-----------------------------
+--------------------------
+FeedForwardBlock in MerLin
+--------------------------
 
-In MerLin, feedforward circuits are modeled by the :class:`FeedforwardBlock` object.  
+In MerLin, feedforward circuits are modeled by the :class:`~merlin.algorithms.feed_forward.FeedForwardBlock` object.  
 It provides a structured way to define a sequence of layers that adapt dynamically based on measurement outcomes.
 
 **Key properties:**
@@ -40,13 +40,13 @@ It provides a structured way to define a sequence of layers that adapt dynamical
 - **State injection option:** when enabled, a new photon is injected into the measured mode whenever a measurement occurs.
 
 - **Input parameters:** all circuits within the same feedforward layer must use the same number of input parameters.
-  - The total number of input parameters of the :class:`FeedforwardBlock` is the sum of the input parameters across all layers.
+  - The total number of input parameters of the :class:`~merlin.algorithms.feed_forward.FeedForwardBlock` is the sum of the input parameters across all layers.
 
 ----------------------------
 API Reference
 ----------------------------
 
-.. autoclass:: merlin.FeedforwardBlock
+.. autoclass:: merlin.algorithms.feed_forward.FeedForwardBlock
    :members:
    :undoc-members:
    :show-inheritance:
@@ -57,11 +57,11 @@ Example
 
 .. code-block:: python
 
-   from MerLin import QuantumLayer, FeedforwardBlock
+   from merlin.algorithms import FeedForwardBlock, QuantumLayer
    import torch
 
    # Initialize feedforward block
-   ffb = FeedforwardBlock(input_size=20, n=2, m=6, depth=3)
+   ffb = FeedForwardBlock(input_size=20, n=2, m=6, depth=3)
 
    # You can define the mode to measure (conditional_mode)
    # By default, the input_size is divided into the first layers of the ff block,
@@ -86,7 +86,7 @@ Example
    # Forward pass
    o = ffb(t)
 
-   ffb = FeedforwardBlock(input_size=20, n=2, m=6, depth=3)
+   ffb = FeedForwardBlock(input_size=20, n=2, m=6, depth=3)
 
    # Inspect output size
    print(ffb.get_output_size())   # 6
@@ -100,7 +100,7 @@ Example
 
 
    # Feedforward block with state injection
-   ffb = FeedforwardBlock(input_size=20, n=2, m=6, depth=3, state_injection=True)
+   ffb = FeedForwardBlock(input_size=20, n=2, m=6, depth=3, state_injection=True)
    # Default state_injection mode is False
 
    # New output size
