@@ -125,6 +125,65 @@ class TestFeedForwardBlock:
         assert isinstance(keys, list)
         assert len(keys) > 0
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available for GPU tests")
+class TestFeedForwardBlockGPU:
+    """GPU-only tests for FeedForwardBlock forward/backward behavior."""
 
+    def test_forward_on_gpu(self):
+        """Ensure forward pass works on GPU and outputs valid probabilities."""
+        device = torch.device("cuda")
+        ff = FeedForwardBlock(input_size=4, n=2, m=4, depth=2, conditional_modes=[0]).to(device)
+        x = torch.rand(8, 4, device=device)
+        output = ff(x)
+        assert output.device.type == "cuda"
+        assert torch.allclose(output.sum(dim=1), torch.ones(8, device=device), atol=1e-3)
+
+    def test_backward_on_gpu(self):
+        """Ensure gradients flow correctly on GPU."""
+        device = torch.device("cuda")
+        ff = FeedForwardBlock(input_size=4, n=2, m=4, depth=2, conditional_modes=[0]).to(device)
+        x = torch.rand(4, 4, device=device, requires_grad=True)
+        output = ff(x)
+        loss = output.sum()
+        loss.backward()
+
+        # Verify gradients computed and reside on GPU
+        assert x.grad is not None
+        assert x.grad.device.type == "cuda"
+        assert not torch.isnan(x.grad).any()
+
+    def test_forward_backward_multi_mode_gpu(self):
+        """Test feedforward & gradient with multiple conditional modes on GPU."""
+        device = torch.device("cuda")
+        ff = FeedForwardBlock(input_size=6, n=3, m=6, depth=2, conditional_modes=[0, 1]).to(device)
+        x = torch.rand(2, 6, device=device, requires_grad=True)
+
+        output = ff(x)
+        assert output.device.type == "cuda"
+        assert output.shape[0] == 2
+        assert torch.allclose(output.sum(dim=1), torch.ones(2, device=device), atol=1e-3)
+
+        loss = output.mean()
+        loss.backward()
+        assert x.grad is not None
+        assert x.grad.device.type == "cuda"
+
+    def test_gpu_optimizer_step(self):
+        """Ensure GPU-based optimization loop runs correctly."""
+        device = torch.device("cuda")
+        ff = FeedForwardBlock(input_size=4, n=2, m=4, depth=2, conditional_modes=[0]).to(device)
+        x = torch.rand(2, 4, device=device)
+        optimizer = torch.optim.Adam(ff.parameters(), lr=1e-3)
+
+        # Forward, backward, and optimizer step
+        output = ff(x)
+        loss = output.pow(2).sum()
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        # Ensure no NaNs or device mismatch
+        assert not torch.isnan(loss).any()
+        assert all(p.device.type == "cuda" for p in ff.parameters())
 if __name__ == "__main__":
     pytest.main([__file__])
