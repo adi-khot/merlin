@@ -577,6 +577,9 @@ class PoolingFeedForward(torch.nn.Module):
             Normalized pooled amplitudes of shape `(batch_size, n_output_states)`.
         """
         batch_size = amplitudes.shape[0]
+        device = amplitudes.device
+        if device != amplitudes.device:
+            self.match_indices = self.match_indices.to(device)
         output = torch.zeros(
             batch_size,
             len(self.keys_out),
@@ -585,7 +588,7 @@ class PoolingFeedForward(torch.nn.Module):
         )
 
         # Create a mask to exclude certain indices
-        mask = torch.ones(amplitudes.shape[1], dtype=torch.bool)
+        mask = torch.ones(amplitudes.shape[1], dtype=torch.bool, device=amplitudes.device)
         if self.exclude_indices.numel() != 0:
             mask[self.exclude_indices] = False
 
