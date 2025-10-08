@@ -60,6 +60,8 @@ This will show as a rotation layer as data is encoded in phase shifters.
      - `trainable` (bool): Whether the entangling layer is trainable.
      - `model` (str): Choose `"mzi"` (default) or `"bell"` to select the interferometer template.
      - `name` (str): Optional prefix for parameter names.
+     - `trainable_inner` (bool | None): Override to control whether the internal phases of the MZIs remain trainable.
+     - `trainable_outer` (bool | None): Override to control the output phases at the end of the interferometer.
 
 .. code-block:: python
    builder = CircuitBuilder(n_modes=6)

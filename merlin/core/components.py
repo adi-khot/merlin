@@ -107,6 +107,8 @@ class GenericInterferometer:
     trainable: bool = True
     name_prefix: str | None = None
     model: str = "mzi"
+    trainable_inner: bool | None = None
+    trainable_outer: bool | None = None
 
     def __post_init__(self):
         """Validate and normalise the interferometer model."""
@@ -118,6 +120,15 @@ class GenericInterferometer:
                 "GenericInterferometer model must be either 'mzi' or 'bell'"
             )
         self.model = normalized
+        if self.trainable_inner is None:
+            self.trainable_inner = self.trainable
+        if self.trainable_outer is None:
+            self.trainable_outer = self.trainable
+        if not self.trainable:
+            self.trainable_inner = False
+            self.trainable_outer = False
+        # Normalise the aggregate flag so downstream logic can rely on it
+        self.trainable = bool(self.trainable_inner or self.trainable_outer)
 
     def get_params(self) -> dict[str, Any]:
         """Return placeholder names for every internal interferometer parameter.
@@ -125,15 +136,17 @@ class GenericInterferometer:
         Returns:
             Dict[str, Any]: Mapping of generated parameter names to ``None`` placeholders.
         """
-        if not self.trainable or self.span < 2:
+        if self.span < 2 or not self.trainable:
             return {}
 
         prefix = self.name_prefix or "gi"
         count = self.span * (self.span - 1) // 2
         params: dict[str, Any] = {}
         for idx in range(count):
-            params[f"{prefix}_li{idx}"] = None
-            params[f"{prefix}_lo{idx}"] = None
+            if self.trainable_inner:
+                params[f"{prefix}_li{idx}"] = None
+            if self.trainable_outer:
+                params[f"{prefix}_lo{idx}"] = None
         return params
 
 

@@ -349,6 +349,8 @@ class CircuitBuilder:
         trainable: bool = True,
         model: str = "mzi",
         name: str | None = None,
+        trainable_inner: bool | None = None,
+        trainable_outer: bool | None = None,
     ) -> "CircuitBuilder":
         """Add an entangling layer spanning a range of modes.
 
@@ -359,6 +361,8 @@ class CircuitBuilder:
             trainable: Whether internal phase shifters should be trainable.
             model: ``\"mzi\"`` or ``\"bell\"`` to select the internal interferometer template.
             name: Optional prefix used for generated parameter names.
+            trainable_inner: Override for the internal (between-beam splitter) phase shifters.
+            trainable_outer: Override for the output phase shifters at the exit of the interferometer.
 
         Raises:
             ValueError: If the provided modes are invalid or span fewer than two modes.
@@ -408,11 +412,13 @@ class CircuitBuilder:
             trainable=trainable,
             name_prefix=prefix,
             model=normalized_model,
+            trainable_inner=trainable_inner,
+            trainable_outer=trainable_outer,
         )
 
         self.circuit.add(component)
 
-        if trainable:
+        if component.trainable:
             self._register_trainable_prefix(prefix)
 
         self._entangling_layer_counter += 1
@@ -669,15 +675,22 @@ class CircuitBuilder:
                     def _mzi_factory(
                         i: int,
                         *,
-                        trainable: bool = component.trainable,
+                        inner_trainable: bool = getattr(
+                            component, "trainable_inner", component.trainable
+                        ),
+                        outer_trainable: bool = getattr(
+                            component, "trainable_outer", component.trainable
+                        ),
                         base: str = prefix,
                     ):
                         """Build a Mach-Zehnder interferometer optionally parameterised per index."""
-                        if trainable:
+                        if inner_trainable:
                             phi_inner = pcvl_module.P(f"{base}_li{i}")
-                            phi_outer = pcvl_module.P(f"{base}_lo{i}")
                         else:
                             phi_inner = 0.0
+                        if outer_trainable:
+                            phi_outer = pcvl_module.P(f"{base}_lo{i}")
+                        else:
                             phi_outer = 0.0
                         return (
                             pcvl_module.BS()
@@ -698,15 +711,22 @@ class CircuitBuilder:
                     def _bell_factory(
                         i: int,
                         *,
-                        trainable: bool = component.trainable,
+                        inner_trainable: bool = getattr(
+                            component, "trainable_inner", component.trainable
+                        ),
+                        outer_trainable: bool = getattr(
+                            component, "trainable_outer", component.trainable
+                        ),
                         base: str = prefix,
                     ):
                         """Build a Mach-Zehnder interferometer optionally parameterised per index."""
-                        if trainable:
+                        if inner_trainable:
                             phi_inner = pcvl_module.P(f"{base}_li{i}")
-                            phi_outer = pcvl_module.P(f"{base}_lo{i}")
                         else:
                             phi_inner = 0.0
+                        if outer_trainable:
+                            phi_outer = pcvl_module.P(f"{base}_lo{i}")
+                        else:
                             phi_outer = 0.0
 
                         circuit = pcvl_module.Circuit(2)

@@ -28,7 +28,9 @@ Example: Quickstart QuantumLayer
 The simple quantum layer above implements a circuit of 10 modes and 5 photons with at least 90 trainable parameters. This circuit is made of:
 - A first entangling layer (trainable)
 - Angle encoding on the first N modes (for N input parameters with `input_size <= n_modes`)
-- Add rotations to match the correct number of trainable parameters
+- Add MZI blocks (two trainable parameters each) to match the requested number of trainable parameters
+
+Additional trainable budget must therefore increase in multiples of two beyond the base interferometer (90 parameters).
 
 Example: Declarative builder API
 --------------------------------

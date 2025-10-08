@@ -708,12 +708,14 @@ class QuantumLayer(nn.Module):
         1. A fully trainable entangling layer acting on all modes;
         2. A full input encoding layer spanning all encoded features;
         3. A non-trainable entangling layer that redistributes encoded information;
-        4. Optional trainable rotation layers to reach the requested ``n_params`` budget;
+        4. Optional trainable Mach-Zehnder blocks (two parameters each) to reach the requested ``n_params`` budget;
         5. A final entangling layer prior to measurement.
 
         Args:
             input_size: Size of the classical input vector.
-            n_params: Number of trainable parameters to allocate across rotation layers.
+            n_params: Number of trainable parameters to allocate across the additional MZI blocks. Values
+                below the default entangling budget trigger a warning; values above it must differ by an even
+                amount because each added MZI exposes two parameters.
             shots: Number of sampling shots for stochastic evaluation.
             output_size: Optional classical output width.
             output_mapping_strategy: Strategy used to post-process the quantum distribution.
@@ -754,29 +756,39 @@ class QuantumLayer(nn.Module):
             subset_combinations=False,
         )
 
-        # Allocate additional trainable rotations only if the budget exceeds the entangling layer
+        # Allocate additional trainable MZIs only if the budget exceeds the entangling layer
         remaining = max(requested_params - entangling_params, 0)
+        if remaining % 2 != 0:
+            raise ValueError(
+                "Additional parameter budget must be even: each extra MZI exposes "
+                "two trainable parameters."
+            )
 
-        layer_idx = 0
-        added_rotation_params = 0
+        mzi_idx = 0
+        added_mzi_params = 0
 
         while remaining > 0:
-            prefix = f"theta_layer{layer_idx}"
-            if remaining >= n_modes:
-                builder.add_rotations(trainable=True, name=prefix)
-                remaining -= n_modes
-                added_rotation_params += n_modes
-            else:
-                modes = list(range(remaining))
-                builder.add_rotations(modes=modes, trainable=True, name=prefix)
-                added_rotation_params += remaining
-                remaining = 0
-            layer_idx += 1
+            if n_modes < 2:
+                raise ValueError("At least two modes are required to place an MZI.")
 
-        # Post-rotation entanglement
+            start_mode = mzi_idx % (n_modes - 1)
+            span_modes = [start_mode, start_mode + 1]
+            prefix = f"mzi_extra{mzi_idx}"
+
+            builder.add_entangling_layer(
+                modes=span_modes,
+                trainable=True,
+                name=prefix,
+            )
+
+            remaining -= 2
+            added_mzi_params += 2
+            mzi_idx += 1
+
+        # Post-MZI entanglement
         builder.add_superpositions()
 
-        total_trainable = entangling_params + added_rotation_params
+        total_trainable = entangling_params + added_mzi_params
         expected_trainable = max(requested_params, entangling_params)
         if total_trainable != expected_trainable:
             raise ValueError(
