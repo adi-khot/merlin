@@ -1,10 +1,8 @@
 import perceval as pcvl
 import torch
 
-from merlin import (  # Replace with actual import path
-    OutputMappingStrategy,
-    QuantumLayer,
-)
+from merlin.algorithms.layer import QuantumLayer
+from merlin.sampling.strategies import OutputMappingStrategy
 
 
 def classical_method(layer, input_state):

@@ -46,7 +46,7 @@ MerLin provides a quantum kernel implementation that measures similarity between
 You can construct kernels in multiple ways:
 
 - Quickstart factory: FidelityKernel.simple(...)
-- From a PhotonicBackend: FidelityKernel.from_photonic_backend(...)
+- Direct pcvl circuit: build a FeatureMap from a perceval Circuit and wrap it in FidelityKernel
 - Fluent builder: KernelCircuitBuilder(...).build_fidelity_kernel()
 
 
@@ -80,8 +80,7 @@ This example mirrors the tests using scikit-learn’s Iris dataset. We build a q
         input_size=4,      # number of input features
         n_modes=6,         # photonic modes in the circuit
         n_photons=2,       # number of photons
-        circuit_type="series",
-        reservoir_mode=False  # set True for a non-trainable, stable reservoir
+        trainable=True     # set False for a fixed, non-trainable kernel
     )
 
     # Compute precomputed kernel matrices
@@ -99,10 +98,10 @@ Notes
 
 - K_train is symmetric and approximately positive semi-definite; diagonal entries are ≈ 1. Use force_psd=True if you want an explicit PSD projection.
 - Values typically lie in [0, 1] (allowing for small numerical tolerances).
-- Set reservoir_mode=True for a fixed, non-trainable kernel. Leave it False and specify trainable parameters for learning.
+- Set ``trainable=False`` for a fixed, non-trainable kernel; keep it ``True`` (default) to optimise phase parameters with learning algorithms such as ``NKernelAlignment``.
 
 
-Advanced: Custom Circuit (as in tests)
+Advanced: Custom Circuit
 --------------------------------------
 
 You can also build a custom Perceval circuit, then wrapping it in a FeatureMap and FidelityKernel. Below is a compact version of the pattern used in the test suite.
@@ -232,24 +231,30 @@ FidelityKernel supports training of selected parameters via the NKernelAlignment
 Other Construction Methods
 --------------------------
 
-For more control, you can create kernels from a configured backend or use a builder:
+For more control, you can create kernels from a custom perceval circuit or use the fluent builder:
 
 .. code-block:: python
 
+    import perceval as pcvl
     from merlin.core.generators import CircuitType
-    from merlin.core.photonicbackend import PhotonicBackend
-    from merlin.algorithms.kernels import FidelityKernel, KernelCircuitBuilder
+    from merlin.algorithms.kernels import FeatureMap, FidelityKernel, KernelCircuitBuilder
 
-    # From PhotonicBackend
-    backend = PhotonicBackend(
-        circuit_type=CircuitType.SERIES,
-        n_modes=6,
-        n_photons=2,
-        reservoir_mode=True,
-    )
-    kernel_backend = FidelityKernel.from_photonic_backend(
+    # From a custom pcvl circuit
+    params = [pcvl.P(f"x{i+1}") for i in range(4)]
+    circuit = pcvl.Circuit(4)
+    for mode, param in enumerate(params):
+        circuit.add(mode, pcvl.PS(param))
+    circuit.add(0, pcvl.BS())
+    circuit.add(2, pcvl.BS())
+
+    feature_map = FeatureMap(
+        circuit=circuit,
         input_size=4,
-        photonic_backend=backend,
+        input_parameters="x",
+    )
+    kernel_manual = FidelityKernel(
+        feature_map=feature_map,
+        input_state=[1, 1, 0, 0],
     )
 
     # Builder pattern
@@ -257,7 +262,7 @@ For more control, you can create kernels from a configured backend or use a buil
     kernel_builder = (
         builder
         .input_size(4)
-        .n_modes(6)
+        .n_modes(4)
         .n_photons(2)
         .circuit_type(CircuitType.SERIES)
         .reservoir_mode(True)
@@ -271,4 +276,4 @@ API Pointers
 - merlin.algorithms.kernels.FeatureMap: create encoders for datapoints.
 - merlin.algorithms.kernels.FidelityKernel: compute and train quantum kernels.
 - merlin.algorithms.kernels.KernelCircuitBuilder: fluent construction of feature maps and kernels.
-- merlin.core.photonicbackend.PhotonicBackend and merlin.core.generators.CircuitType: backend configuration.
+- perceval.Circuit / perceval components: build fully custom photonic circuits.

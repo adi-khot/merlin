@@ -27,6 +27,7 @@ Main QuantumLayer implementation with bug fixes and index_photons support.
 from __future__ import annotations
 
 import math
+import warnings
 from typing import Any
 
 import numpy as np
@@ -34,13 +35,16 @@ import perceval as pcvl
 import torch
 import torch.nn as nn
 
-from ..core.generators import CircuitType, StatePattern
-from ..core.photonicbackend import PhotonicBackend as Experiment
+from ..builder.ansatz import Ansatz
+from ..builder.circuit_builder import (
+    ANGLE_ENCODING_MODE_ERROR,
+    CircuitBuilder,
+)
+from ..core.components import GenericInterferometer
 from ..core.process import ComputationProcessFactory
 from ..sampling.autodiff import AutoDiffProcess
-from ..sampling.mappers import OutputMapper
 from ..sampling.strategies import OutputMappingStrategy
-from .ansatz import Ansatz, AnsatzFactory
+from ..torch_utils.torch_codes import OutputMapper
 
 
 class QuantumLayer(nn.Module):
@@ -65,7 +69,7 @@ class QuantumLayer(nn.Module):
         # Ansatz-based construction
         ansatz: Ansatz | None = None,
         # Custom circuit construction (backward compatible)
-        circuit: pcvl.Circuit | None = None,
+        circuit: pcvl.Circuit | CircuitBuilder | None = None,
         input_state: list[int] | None = None,
         n_photons: int | None = None,
         trainable_parameters: list[str] = None,
@@ -87,14 +91,37 @@ class QuantumLayer(nn.Module):
         self.input_size = input_size
         self.no_bunching = no_bunching
         self.index_photons = index_photons
-        trainable_parameters = trainable_parameters or []
-        input_parameters = input_parameters or []
+
+        builder_trainable: list[str] = []
+        builder_input: list[str] = []
+
+        self.angle_encoding_specs: dict[str, dict[str, Any]] = {}
+
+        # convert CircuitBuilder to pcvl.Circuit if needed, otherwise use Circuit
+        if isinstance(circuit, CircuitBuilder):
+            builder_trainable = circuit.trainable_parameter_prefixes
+            builder_input = circuit.input_parameter_prefixes
+            self.angle_encoding_specs = circuit.angle_encoding_specs
+            circuit = circuit.to_pcvl_circuit(pcvl)
+
+        # Fix trainable and input parameters from builder or circuit, can also be empty lists
+        if trainable_parameters is None:
+            trainable_parameters = list(builder_trainable)
+        else:
+            trainable_parameters = list(trainable_parameters)
+
+        if input_parameters is None:
+            input_parameters = list(builder_input)
+        else:
+            input_parameters = list(input_parameters)
 
         # Determine construction mode
+        # TODO: can be deprectated once Builder is fully supported
         if ansatz is not None:
             self._init_from_ansatz(ansatz, output_size, output_mapping_strategy)
 
         elif circuit is not None:
+            self.circuit = circuit
             self._init_from_custom_circuit(
                 circuit,
                 input_state,
@@ -432,7 +459,9 @@ class QuantumLayer(nn.Module):
 
         return params  # type: ignore[return-value]
 
-    def _prepare_input_encoding(self, x: torch.Tensor) -> torch.Tensor:
+    def _prepare_input_encoding(
+        self, x: torch.Tensor, prefix: str | None = None
+    ) -> torch.Tensor:
         """Prepare input encoding based on mode."""
         if self.auto_generation_mode:
             # Use FeatureEncoder for auto-generated circuits
@@ -444,9 +473,66 @@ class QuantumLayer(nn.Module):
                 self.ansatz.experiment.n_modes,
                 self.bandwidth_coeffs,  # type: ignore[arg-type]
             )
+
+        spec = None
+        if prefix is not None:
+            spec = self.angle_encoding_specs.get(prefix)
+        elif len(self.angle_encoding_specs) == 1:
+            spec = next(iter(self.angle_encoding_specs.values()))
+
+        if spec:
+            return self._apply_angle_encoding(x, spec)
+
+        # For custom circuits without explicit encoding metadata, apply π scaling
+        return x * torch.pi
+
+    def _apply_angle_encoding(
+        self, x: torch.Tensor, spec: dict[str, Any]
+    ) -> torch.Tensor:
+        """Apply custom angle encoding using stored metadata."""
+        combos: list[tuple[int, ...]] = spec.get("combinations", [])
+        scale_map: dict[int, float] = spec.get("scales", {})
+
+        if x.dim() == 1:
+            x_batch = x.unsqueeze(0)
+            squeeze = True
+        elif x.dim() == 2:
+            x_batch = x
+            squeeze = False
         else:
-            # For custom circuits, apply 2π scaling directly
-            return x * torch.pi
+            raise ValueError(
+                f"Angle encoding expects 1D or 2D tensors, got shape {tuple(x.shape)}"
+            )
+
+        if not combos:
+            encoded = x_batch * torch.pi
+            return encoded.squeeze(0) if squeeze else encoded
+
+        encoded_cols: list[torch.Tensor] = []
+        feature_dim = x_batch.shape[-1]
+
+        for combo in combos:
+            indices = list(combo)
+            if any(idx >= feature_dim for idx in indices):
+                raise ValueError(
+                    f"Input feature dimension {feature_dim} insufficient for angle encoding combination {combo}"
+                )
+
+            selected = x_batch[:, indices]
+            scales = [scale_map.get(idx, 1.0) for idx in indices]
+            scale_tensor = x_batch.new_tensor(scales)
+            value = (selected * scale_tensor).sum(dim=1, keepdim=True)
+            encoded_cols.append(value)
+
+        encoded = (
+            torch.cat(encoded_cols, dim=1)
+            if encoded_cols
+            else x_batch.new_zeros((x_batch.shape[0], 0))
+        )
+
+        if squeeze:
+            return encoded.squeeze(0)
+        return encoded
 
     def prepare_parameters(
         self, input_parameters: list[torch.Tensor]
@@ -460,13 +546,19 @@ class QuantumLayer(nn.Module):
             params = list(self.thetas)
 
         # Apply input encoding
+        prefixes = getattr(self.computation_process, "input_parameters", [])
+
         if self.auto_generation_mode and len(input_parameters) == 1:
-            encoded = self._prepare_input_encoding(input_parameters[0])
+            prefix = prefixes[0] if prefixes else None
+            encoded = self._prepare_input_encoding(input_parameters[0], prefix)
             params.append(encoded)
         else:
             # Custom mode or multiple parameters
-            for x in input_parameters:
-                encoded = self._prepare_input_encoding(x)
+            for idx, x in enumerate(input_parameters):
+                prefix = None
+                if prefixes:
+                    prefix = prefixes[idx] if idx < len(prefixes) else prefixes[-1]
+                encoded = self._prepare_input_encoding(x, prefix)
                 params.append(encoded)
 
         # Add static phi parameters if in reservoir mode
@@ -501,6 +593,7 @@ class QuantumLayer(nn.Module):
             and torch.is_grad_enabled()
             and any(p.requires_grad for p in self.parameters())
         )
+        # TODO/CAUTION: if needs_gradient is True and shots>0, the code raises a warning and casts apply_sampling = False and shots = 0
         apply_sampling, shots = self.autodiff_process.autodiff_backend(
             needs_gradient, apply_sampling or False, shots or self.shots
         )
@@ -610,64 +703,106 @@ class QuantumLayer(nn.Module):
         dtype: torch.dtype | None = None,
         no_bunching: bool = True,
     ):
-        """
-        Simplified interface for creating a QuantumLayer.
+        """Create a ready-to-train layer with a 10-mode, 5-photon architecture.
 
-        Uses SERIES circuit type with PERIODIC state pattern as defaults.
-        Automatically calculates the number of modes based on n_params.
+        The circuit is assembled via :class:`CircuitBuilder` with the following layout:
+
+        1. A fully trainable generic interferometer acting on all modes;
+        2. A full input encoding layer spanning all encoded features;
+        3. A non-trainable entangling layer that redistributes encoded information;
+        4. Optional trainable rotation layers to reach the requested ``n_params`` budget;
+        5. A final entangling layer prior to measurement.
 
         Args:
-            input_size (int): Size of the input vector
-            n_params (int): Total number of parameters desired (default: 100). Formula: n_params = 2 * n_modes^2
-            shots (int): Number of shots for sampling (default: 0)
-            reservoir_mode (bool): Whether to use reservoir mode (default: False)
-            output_size (int, optional): Output dimension. If None, uses distribution size
-            output_mapping_strategy: How to map quantum output to classical output
-            device: PyTorch device
-            dtype: PyTorch dtype
-            no_bunching: Whether to exclude states with multiple photons per mode
+            input_size: Size of the classical input vector.
+            n_params: Number of trainable parameters to allocate across rotation layers.
+            shots: Number of sampling shots for stochastic evaluation.
+            reservoir_mode: Reserved for API compatibility (unused in builder mode).
+            output_size: Optional classical output width.
+            output_mapping_strategy: Strategy used to post-process the quantum distribution.
+            device: Optional target device for tensors.
+            dtype: Optional tensor dtype.
+            no_bunching: Whether to restrict to states without photon bunching.
 
         Returns:
-            QuantumLayer: Configured quantum layer instance
+            QuantumLayer configured with the described architecture.
         """
-        # Calculate minimum modes needed based on n_params
-        # n_params = 2 * n_modes^2, so n_modes = sqrt(n_params / 2)
-        min_modes_from_params = int(math.ceil(math.sqrt(n_params / 2)))
+        _ = reservoir_mode  # Reserved for API compatibility; builder path ignores this flag.
 
-        # Ensure we have at least input_size + 1 modes
-        n_modes = max(min_modes_from_params, input_size + 1)
+        n_modes = 10
+        n_photons = 5
 
-        # Number of photons equals input_size
-        n_photons = input_size
+        builder = CircuitBuilder(n_modes=n_modes)
 
-        # Create experiment configuration
-        experiment = Experiment(
-            circuit_type=CircuitType.SERIES,  # Default to SERIES
-            n_modes=n_modes,
-            n_photons=n_photons,
-            reservoir_mode=reservoir_mode,
-            use_bandwidth_tuning=False,  # Keep simple by default
-            state_pattern=StatePattern.PERIODIC,  # Default to PERIODIC
+        # Trainable generic interferometer before encoding
+        builder.add_generic_interferometer(trainable=True, name="gi_simple")
+        generic_component = builder.circuit.components[-1]
+        generic_params = 0
+        if (
+            isinstance(generic_component, GenericInterferometer)
+            and generic_component.trainable
+            and generic_component.span >= 2
+        ):
+            mzi_count = generic_component.span * (generic_component.span - 1) // 2
+            generic_params = 2 * mzi_count
+
+        requested_params = max(int(n_params), 0)
+        if generic_params > requested_params:
+            warnings.warn(
+                "Generic interferometer introduces "
+                f"{generic_params} trainable parameters, exceeding the requested "
+                f"budget of {requested_params}. The simple layer will expose "
+                f"{generic_params} trainable parameters.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+        if input_size > n_modes:
+            raise ValueError(ANGLE_ENCODING_MODE_ERROR)
+
+        input_modes = list(range(input_size))
+        builder.add_angle_encoding(
+            modes=input_modes,
+            name="input",
+            subset_combinations=False,
         )
 
-        # Create ansatz using AnsatzFactory
-        ansatz = AnsatzFactory.create(
-            PhotonicBackend=experiment,
-            input_size=input_size,
-            output_size=output_size,  # Can be None for automatic calculation
-            output_mapping_strategy=output_mapping_strategy,
-            dtype=dtype,
-        )
+        builder.add_entangling_layer(depth=1)
 
-        # IMPORTANT: Override the ansatz's output_mapping_strategy to ensure our parameter is used
-        # This is necessary because _init_from_ansatz uses ansatz.output_mapping_strategy
-        ansatz.output_mapping_strategy = output_mapping_strategy
+        # Allocate additional trainable rotations only if the budget exceeds the interferometer
+        remaining = max(requested_params - generic_params, 0)
+        layer_idx = 0
+        added_rotation_params = 0
 
-        # Create and return the QuantumLayer instance
+        while remaining > 0:
+            prefix = f"theta_layer{layer_idx}"
+            if remaining >= n_modes:
+                builder.add_rotation_layer(trainable=True, name=prefix)
+                remaining -= n_modes
+                added_rotation_params += n_modes
+            else:
+                modes = list(range(remaining))
+                builder.add_rotation_layer(modes=modes, trainable=True, name=prefix)
+                added_rotation_params += remaining
+                remaining = 0
+            layer_idx += 1
+
+        # Post-rotation entanglement
+        builder.add_entangling_layer(depth=1)
+
+        total_trainable = generic_params + added_rotation_params
+        expected_trainable = max(requested_params, generic_params)
+        if total_trainable != expected_trainable:
+            raise ValueError(
+                "Constructed circuit exposes "
+                f"{total_trainable} trainable parameters but {expected_trainable} were expected."
+            )
+
         return cls(
             input_size=input_size,
             output_size=output_size,
-            ansatz=ansatz,
+            circuit=builder,
+            n_photons=n_photons,
             output_mapping_strategy=output_mapping_strategy,
             shots=shots,
             no_bunching=no_bunching,

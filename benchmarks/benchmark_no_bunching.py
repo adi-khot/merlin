@@ -25,13 +25,14 @@ Comprehensive benchmark suite for no bunching functionality.
 Tests performance of photon bunching prevention algorithms.
 """
 
+import json
+import math
+import os
+import time
+from typing import Any
+
 import pytest
 import torch
-import time
-import json
-import os
-import math
-from typing import List, Tuple, Dict, Any
 
 import merlin as ML
 from merlin.core.generators import CircuitGenerator, StateGenerator
@@ -40,10 +41,10 @@ from merlin.core.process import ComputationProcessFactory
 
 class NoBunchingBenchmarkRunner:
     """Utility class for running and validating no bunching benchmarks."""
-    
+
     def __init__(self):
         self.results = []
-        
+
     def calculate_fock_space_size(self, n_modes: int, n_photons: int) -> int:
         """Calculate the size of the Fock space for n_photons in n_modes."""
         if n_photons == 0:
@@ -57,8 +58,10 @@ class NoBunchingBenchmarkRunner:
         if n_photons > n_modes:
             return 0
         return math.comb(n_modes, n_photons)
-    
-    def validate_distribution_correctness(self, pa: torch.Tensor, expected_size: int) -> bool:
+
+    def validate_distribution_correctness(
+        self, pa: torch.Tensor, expected_size: int
+    ) -> bool:
         """Validate that the no bunching distribution is correct."""
         # Check distribution size
         if pa.shape[-1] != expected_size:
@@ -66,11 +69,11 @@ class NoBunchingBenchmarkRunner:
 
         # Check probability normalization (allow small numerical errors)
         probs = (pa.abs() ** 2).real
-           
+
         # Check that all probabilities are non-negative
         if (probs < 0).any():
             return False
-            
+
         return True
 
 
@@ -89,11 +92,11 @@ benchmark_runner = NoBunchingBenchmarkRunner()
 
 @pytest.mark.parametrize("config", BENCHMARK_CONFIGS)
 @pytest.mark.parametrize("device", DEVICE_CONFIGS)
-def test_no_bunching_computation_benchmark(benchmark, config: Dict, device: str):
+def test_no_bunching_computation_benchmark(benchmark, config: dict, device: str):
     """Benchmark no bunching computation process."""
     n_modes = config["n_modes"]
     n_photons = config["n_photons"]
-    
+
     # Create circuit and state
     circuit, _ = CircuitGenerator.generate_circuit(
         ML.CircuitType.PARALLEL_COLUMNS, n_modes, 3
@@ -122,10 +125,10 @@ def test_no_bunching_computation_benchmark(benchmark, config: Dict, device: str)
 
     def compute_no_bunching():
         return process.compute(dummy_params)
-    
+
     # Run benchmark
     result = benchmark(compute_no_bunching)
-    
+
     # Validate correctness
     expected_size = benchmark_runner.calculate_no_bunching_size(n_modes, n_photons)
     assert benchmark_runner.validate_distribution_correctness(result, expected_size)
@@ -133,7 +136,7 @@ def test_no_bunching_computation_benchmark(benchmark, config: Dict, device: str)
 
 @pytest.mark.parametrize("config", BENCHMARK_CONFIGS)
 @pytest.mark.parametrize("device", DEVICE_CONFIGS)
-def test_fock_space_comparison_benchmark(benchmark, config: Dict, device: str):
+def test_fock_space_comparison_benchmark(benchmark, config: dict, device: str):
     """Benchmark comparison between no bunching and full Fock space."""
     n_modes = config["n_modes"]
     n_photons = config["n_photons"]
@@ -177,32 +180,36 @@ def test_fock_space_comparison_benchmark(benchmark, config: Dict, device: str):
         # Compute both
         result_no_bunching = process_no_bunching.compute(dummy_params)
         result_full = process_full.compute(dummy_params)
-        
+
         return result_no_bunching, result_full
 
     # Run benchmark
     results = benchmark(compute_both_modes)
-    
+
     # Validate results
     result_no_bunching, result_full = results
-    
-    expected_no_bunching = benchmark_runner.calculate_no_bunching_size(n_modes, n_photons)
+
+    expected_no_bunching = benchmark_runner.calculate_no_bunching_size(
+        n_modes, n_photons
+    )
     expected_full_fock = benchmark_runner.calculate_fock_space_size(n_modes, n_photons)
-    
-    assert benchmark_runner.validate_distribution_correctness(result_no_bunching, expected_no_bunching)
-    assert benchmark_runner.validate_distribution_correctness(result_full, expected_full_fock)
+
+    assert benchmark_runner.validate_distribution_correctness(
+        result_no_bunching, expected_no_bunching
+    )
+    assert benchmark_runner.validate_distribution_correctness(
+        result_full, expected_full_fock
+    )
 
 
 @pytest.mark.parametrize("config", BENCHMARK_CONFIGS[:2])  # Only test smaller configs
 @pytest.mark.parametrize("device", DEVICE_CONFIGS)
-def test_compute_with_keys_benchmark(benchmark, config: Dict, device: str):
+def test_compute_with_keys_benchmark(benchmark, config: dict, device: str):
     """Benchmark compute_with_keys functionality with no bunching."""
     n_modes = config["n_modes"]
     n_photons = config["n_photons"]
-    
-    circuit, _ = CircuitGenerator.generate_circuit(
-        ML.CircuitType.SERIES, n_modes, 2
-    )
+
+    circuit, _ = CircuitGenerator.generate_circuit(ML.CircuitType.SERIES, n_modes, 2)
     input_state = StateGenerator.generate_state(
         n_modes, n_photons, ML.StatePattern.PERIODIC
     )
@@ -226,25 +233,27 @@ def test_compute_with_keys_benchmark(benchmark, config: Dict, device: str):
 
     def compute_with_keys():
         return process_no_bunching.compute_with_keys(dummy_params)
-    
+
     # Run benchmark
     keys, distribution = benchmark(compute_with_keys)
-    
+
     # Validate results
     expected_size = benchmark_runner.calculate_no_bunching_size(n_modes, n_photons)
     assert len(keys) == expected_size
-    assert benchmark_runner.validate_distribution_correctness(distribution, expected_size)
+    assert benchmark_runner.validate_distribution_correctness(
+        distribution, expected_size
+    )
 
 
 # Performance regression tests
 class TestNoBunchingPerformanceRegression:
     """Test suite for detecting no bunching performance regressions."""
-    
+
     def test_no_bunching_performance_bounds(self):
         """Test that no bunching computation stays within reasonable time bounds."""
         n_modes = 8
         n_photons = 3
-        
+
         circuit, _ = CircuitGenerator.generate_circuit(
             ML.CircuitType.PARALLEL_COLUMNS, n_modes, 2
         )
@@ -267,23 +276,27 @@ class TestNoBunchingPerformanceRegression:
             if spec in spec_mappings:
                 param_count = len(spec_mappings[spec])
                 dummy_params.append(torch.rand(param_count))
-        
+
         start_time = time.time()
         result = process.compute(dummy_params)
         compute_time = time.time() - start_time
-        
+
         # Assert reasonable performance bounds
-        assert compute_time < 3.0, f"No bunching compute took {compute_time:.3f}s, expected < 3.0s"
-        
+        assert compute_time < 3.0, (
+            f"No bunching compute took {compute_time:.3f}s, expected < 3.0s"
+        )
+
         expected_size = benchmark_runner.calculate_no_bunching_size(n_modes, n_photons)
         assert benchmark_runner.validate_distribution_correctness(result, expected_size)
 
 
 # Utility function to save benchmark results
-def save_benchmark_results(results: List[Dict[str, Any]], output_path: str = "no-bunching-results.json"):
+def save_benchmark_results(
+    results: list[dict[str, Any]], output_path: str = "no-bunching-results.json"
+):
     """Save benchmark results in the format expected by github-action-benchmark."""
     formatted_results = []
-    
+
     for result in results:
         formatted_results.append({
             "name": result.get("name", "unknown"),
@@ -293,22 +306,25 @@ def save_benchmark_results(results: List[Dict[str, Any]], output_path: str = "no
                 "min": result.get("min", 0),
                 "max": result.get("max", 0),
                 "stddev": result.get("stddev", 0),
-                "iterations": result.get("rounds", 1)
-            }
+                "iterations": result.get("rounds", 1),
+            },
         })
-    
-    os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
-    
+
+    os.makedirs(
+        os.path.dirname(output_path) if os.path.dirname(output_path) else ".",
+        exist_ok=True,
+    )
+
     with open(output_path, "w") as f:
         json.dump(formatted_results, f, indent=2)
 
 
 if __name__ == "__main__":
     print("Running no bunching benchmarks...")
-    
+
     n_modes = 6
     n_photons = 3
-    
+
     circuit, _ = CircuitGenerator.generate_circuit(
         ML.CircuitType.PARALLEL_COLUMNS, n_modes, 2
     )
@@ -331,16 +347,16 @@ if __name__ == "__main__":
         if spec in spec_mappings:
             param_count = len(spec_mappings[spec])
             dummy_params.append(torch.rand(param_count))
-    
+
     print("Testing no bunching computation performance...")
     start = time.time()
     result = process.compute(dummy_params)
     compute_time = time.time() - start
     print(f"No bunching compute time: {compute_time:.4f}s")
-    
+
     expected_size = benchmark_runner.calculate_no_bunching_size(n_modes, n_photons)
     is_valid = benchmark_runner.validate_distribution_correctness(result, expected_size)
     print(f"Output validation: {'PASS' if is_valid else 'FAIL'}")
     print(f"Expected size: {expected_size}, Actual size: {result.shape[-1]}")
-    
+
     print("No bunching benchmark tests completed!")

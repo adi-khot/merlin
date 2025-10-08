@@ -27,7 +27,7 @@ Tests for the FeedForward class.
 import pytest
 import torch
 
-from merlin.core.feed_forward import FeedForwardBlock
+from merlin.algorithms.feed_forward import FeedForwardBlock
 
 
 class TestFeedForward:

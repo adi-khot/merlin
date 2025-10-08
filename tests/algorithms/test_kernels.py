@@ -9,8 +9,7 @@ from sklearn.svm import SVC
 
 from merlin.algorithms.kernels import FeatureMap, FidelityKernel, KernelCircuitBuilder
 from merlin.algorithms.loss import NKernelAlignment
-from merlin.core.generators import CircuitType
-from merlin.core.photonicbackend import PhotonicBackend
+from merlin.builder import CircuitBuilder
 
 
 class TestFeatureMap:
@@ -295,154 +294,164 @@ class TestNKernelAlignment:
 class TestFeatureMapFactoryMethods:
     """Test the new factory methods for FeatureMap creation."""
 
-    def test_from_photonic_backend_basic(self):
-        """Test FeatureMap creation from PhotonicBackend."""
-        backend = PhotonicBackend(
-            circuit_type=CircuitType.SERIES, n_modes=4, n_photons=2
-        )
+    def test_from_circuit_builder_basic(self):
+        """FeatureMap can be constructed directly from CircuitBuilder."""
+        builder = CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(depth=1)
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(depth=1)
 
-        feature_map = FeatureMap.from_photonic_backend(
-            input_size=2, photonic_backend=backend
+        feature_map = FeatureMap(
+            circuit=builder,
+            input_size=2,
+            input_parameters=None,
         )
 
         assert feature_map.input_size == 2
-        assert feature_map.circuit.m == 4  # Should have 4 modes
-        # By default, PhotonicBackend creates trainable parameters when not in reservoir mode
+        assert feature_map.circuit.m == 4
 
-    def test_from_photonic_backend_with_trainable_params(self):
-        """Test FeatureMap creation with trainable parameters."""
-        backend = PhotonicBackend(
-            circuit_type=CircuitType.SERIES,
-            n_modes=4,
-            n_photons=2,
-            reservoir_mode=False,
-        )
+    def test_from_circuit_builder_with_trainable_params(self):
+        """FeatureMap inherits trainable parameters defined in CircuitBuilder."""
+        builder = CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(depth=1)
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_rotation_layer(trainable=True, name="phi_")
+        builder.add_entangling_layer(depth=1)
 
-        feature_map = FeatureMap.from_photonic_backend(
-            input_size=2, photonic_backend=backend, trainable_parameters=["phi_"]
+        feature_map = FeatureMap(
+            circuit=builder,
+            input_size=2,
+            input_parameters=None,
         )
 
         assert feature_map.input_size == 2
         assert feature_map.is_trainable
-        assert "phi_" in feature_map.trainable_parameters
+        assert "phi" in feature_map.trainable_parameters
 
-    def test_from_photonic_backend_reservoir_mode(self):
-        """Test FeatureMap creation with reservoir mode."""
-        backend = PhotonicBackend(
-            circuit_type=CircuitType.SERIES, n_modes=4, n_photons=2, reservoir_mode=True
+    def test_angle_encoding_respects_scale_in_feature_map(self):
+        builder = CircuitBuilder(n_modes=4)
+        builder.add_angle_encoding(
+            modes=[0, 1, 2],
+            name="input",
+            scale=0.5,
         )
 
-        feature_map = FeatureMap.from_photonic_backend(
-            input_size=2, photonic_backend=backend
+        feature_map = FeatureMap(
+            circuit=builder,
+            input_size=3,
+            input_parameters=None,
+        )
+
+        x = torch.tensor([0.1, 0.2, 0.3], dtype=torch.float32)
+        encoded = feature_map._encode_x(x)
+
+        assert encoded.shape == (3,)
+
+        expected = torch.tensor([0.05, 0.1, 0.15], dtype=torch.float32)
+        assert torch.allclose(encoded.detach(), expected, atol=1e-6)
+
+    def test_from_pcvl_circuit(self):
+        """FeatureMap can be built directly from a pcvl.Circuit."""
+        x1, x2 = pcvl.P("x1"), pcvl.P("x2")
+        circuit = (
+            pcvl.Circuit(2) // pcvl.PS(x1) // pcvl.BS() // pcvl.PS(x2) // pcvl.BS()
+        )
+
+        feature_map = FeatureMap(
+            circuit=circuit,
+            input_size=2,
+            input_parameters="x",
         )
 
         assert feature_map.input_size == 2
-        assert feature_map.circuit.m == 4
+        assert feature_map.circuit.m == 2
 
     def test_simple_factory_method(self):
         """Test the simple FeatureMap factory method."""
-        feature_map = FeatureMap.simple(
-            input_size=2, n_modes=6, n_photons=2, circuit_type=CircuitType.SERIES
-        )
+        feature_map = FeatureMap.simple(input_size=2, n_modes=6, n_photons=2)
 
         assert feature_map.input_size == 2
         assert feature_map.circuit.m == 6
-        # Feature map is trainable by default (has phi_ parameters when not in reservoir mode)
-
-    def test_simple_factory_with_string_parameters(self):
-        """Test simple factory with string circuit_type and state_pattern."""
-        feature_map = FeatureMap.simple(
-            input_size=2, n_modes=4, circuit_type="series", state_pattern="periodic"
-        )
-
-        assert feature_map.input_size == 2
-        assert feature_map.circuit.m == 4
+        assert feature_map.is_trainable
+        assert "phi" in feature_map.trainable_parameters
 
     def test_simple_factory_default_photons(self):
         """Test simple factory with default n_photons (should equal input_size)."""
         feature_map = FeatureMap.simple(input_size=3, n_modes=6)
 
         assert feature_map.input_size == 3
-        # Should create ansatz with 3 photons by default
+        # Should default to a 3-photon configuration
 
-    def test_simple_factory_with_trainable_params(self):
-        """Test simple factory with trainable parameters."""
-        feature_map = FeatureMap.simple(
-            input_size=2, n_modes=4, trainable_parameters=["phi_"], reservoir_mode=False
-        )
+    def test_simple_factory_can_disable_training(self):
+        """Simple factory can build static feature maps when requested."""
+        feature_map = FeatureMap.simple(input_size=2, n_modes=4, trainable=False)
 
         assert feature_map.input_size == 2
-        assert feature_map.is_trainable
-        assert "phi_" in feature_map.trainable_parameters
+        assert not feature_map.is_trainable
+
+    def test_simple_factory_raises_when_input_exceeds_modes(self):
+        with pytest.raises(
+            ValueError, match="You cannot encore more features than mode with Builder"
+        ):
+            FeatureMap.simple(input_size=5, n_modes=4)
 
 
 class TestFidelityKernelFactoryMethods:
     """Test the new factory methods for FidelityKernel creation."""
 
-    def test_from_photonic_backend_basic(self):
-        """Test FidelityKernel creation from PhotonicBackend."""
-        backend = PhotonicBackend(
-            circuit_type=CircuitType.SERIES, n_modes=4, n_photons=2
+    def test_from_feature_map_builder(self):
+        """FidelityKernel can wrap a FeatureMap created from CircuitBuilder."""
+        builder = CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(depth=1)
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(depth=1)
+
+        feature_map = FeatureMap(
+            circuit=builder,
+            input_size=2,
+            input_parameters=None,
         )
 
-        kernel = FidelityKernel.from_photonic_backend(
-            input_size=2, photonic_backend=backend
+        kernel = FidelityKernel(
+            feature_map=feature_map,
+            input_state=[1, 1, 0, 0],
         )
 
         assert kernel.input_size == 2
         assert kernel.feature_map.circuit.m == 4
         assert len(kernel.input_state) == 4
-        assert sum(kernel.input_state) == 2
 
-    def test_from_photonic_backend_custom_input_state(self):
-        """Test FidelityKernel creation with custom input state."""
-        backend = PhotonicBackend(
-            circuit_type=CircuitType.SERIES, n_modes=4, n_photons=2
+    def test_from_feature_map_pcvl_circuit(self):
+        """FidelityKernel can wrap a FeatureMap built from pcvl.Circuit."""
+        x1, x2 = pcvl.P("x1"), pcvl.P("x2")
+        circuit = (
+            pcvl.Circuit(2) // pcvl.PS(x1) // pcvl.BS() // pcvl.PS(x2) // pcvl.BS()
         )
-
-        custom_input_state = [2, 0, 0, 0]
-        kernel = FidelityKernel.from_photonic_backend(
-            input_size=2, photonic_backend=backend, input_state=custom_input_state
-        )
-
-        assert kernel.input_state == custom_input_state
-        assert sum(kernel.input_state) == 2
-
-    def test_from_photonic_backend_with_shots(self):
-        """Test FidelityKernel creation with sampling."""
-        backend = PhotonicBackend(
-            circuit_type=CircuitType.SERIES, n_modes=4, n_photons=2
-        )
-
-        kernel = FidelityKernel.from_photonic_backend(
+        feature_map = FeatureMap(
+            circuit=circuit,
             input_size=2,
-            photonic_backend=backend,
+            input_parameters="x",
+        )
+
+        kernel = FidelityKernel(
+            feature_map=feature_map,
+            input_state=[2, 0],
             shots=1000,
             sampling_method="multinomial",
         )
 
+        assert kernel.input_size == 2
         assert kernel.shots == 1000
         assert kernel.sampling_method == "multinomial"
 
     def test_simple_factory_method(self):
         """Test the simple FidelityKernel factory method."""
-        kernel = FidelityKernel.simple(
-            input_size=2, n_modes=4, n_photons=2, circuit_type=CircuitType.SERIES
-        )
+        kernel = FidelityKernel.simple(input_size=2, n_modes=4, n_photons=2)
 
         assert kernel.input_size == 2
         assert kernel.feature_map.circuit.m == 4
         assert len(kernel.input_state) == 4
         assert sum(kernel.input_state) == 2
-
-    def test_simple_factory_with_string_parameters(self):
-        """Test simple factory with string parameters."""
-        kernel = FidelityKernel.simple(
-            input_size=2, n_modes=4, circuit_type="series", state_pattern="periodic"
-        )
-
-        assert kernel.input_size == 2
-        assert kernel.feature_map.circuit.m == 4
 
     def test_simple_factory_default_photons(self):
         """Test simple factory with default n_photons."""
@@ -467,27 +476,7 @@ class TestKernelCircuitBuilder:
     def test_builder_basic_usage(self):
         """Test basic KernelCircuitBuilder usage."""
         builder = KernelCircuitBuilder()
-        feature_map = (
-            builder.input_size(2)
-            .n_modes(4)
-            .n_photons(2)
-            .circuit_type(CircuitType.SERIES)
-            .build_feature_map()
-        )
-
-        assert feature_map.input_size == 2
-        assert feature_map.circuit.m == 4
-
-    def test_builder_string_parameters(self):
-        """Test builder with string parameters."""
-        builder = KernelCircuitBuilder()
-        feature_map = (
-            builder.input_size(2)
-            .n_modes(4)
-            .circuit_type("series")
-            .state_pattern("periodic")
-            .build_feature_map()
-        )
+        feature_map = builder.input_size(2).n_modes(4).build_feature_map()
 
         assert feature_map.input_size == 2
         assert feature_map.circuit.m == 4
@@ -507,35 +496,30 @@ class TestKernelCircuitBuilder:
         assert feature_map.input_size == 2
         assert feature_map.device == device
 
-    def test_builder_reservoir_mode(self):
-        """Test builder with reservoir mode."""
+    def test_builder_trainable_toggle(self):
+        """Builder can enable or disable training dynamically."""
         builder = KernelCircuitBuilder()
         feature_map = (
-            builder.input_size(2).n_modes(4).reservoir_mode(True).build_feature_map()
+            builder.input_size(2).n_modes(4).trainable(False).build_feature_map()
         )
 
         assert feature_map.input_size == 2
-        # Reservoir mode should affect trainable parameters
+        assert not feature_map.is_trainable
 
-    def test_builder_trainable_parameters(self):
-        """Test builder with trainable parameters."""
-        builder = KernelCircuitBuilder()
         feature_map = (
             builder.input_size(2)
             .n_modes(4)
-            .trainable_parameters(["phi_"])
-            .reservoir_mode(False)  # Ensure trainable params work
+            .trainable(True, prefix="phi_")
             .build_feature_map()
         )
 
-        assert feature_map.input_size == 2
         assert feature_map.is_trainable
         assert "phi_" in feature_map.trainable_parameters
 
     def test_builder_build_fidelity_kernel(self):
         """Test building a FidelityKernel directly."""
         builder = KernelCircuitBuilder()
-        kernel = builder.input_size(2).n_modes(4).n_photons(2).build_fidelity_kernel()
+        kernel = builder.input_size(2).n_modes(4).build_fidelity_kernel()
 
         assert kernel.input_size == 2
         assert kernel.feature_map.circuit.m == 4
@@ -578,6 +562,45 @@ class TestKernelCircuitBuilder:
         # Should use defaults: n_modes = max(input_size + 1, 4) = 4
         assert feature_map.circuit.m == 4
 
+    def test_builder_angle_encoding_configuration(self):
+        builder = KernelCircuitBuilder()
+        feature_map = (
+            builder.input_size(3)
+            .n_modes(4)
+            .angle_encoding(scale=0.5)
+            .build_feature_map()
+        )
+
+        x = torch.tensor([0.1, 0.2, 0.3], dtype=torch.float32)
+        encoded = feature_map._encode_x(x)
+
+        assert encoded.shape == (3,)
+
+        expected = torch.tensor([0.05, 0.1, 0.15], dtype=torch.float32)
+        assert torch.allclose(encoded.detach(), expected, atol=1e-6)
+
+    def test_kernel_supports_generic_interferometer(self):
+        builder = CircuitBuilder(n_modes=4)
+        builder.add_generic_interferometer(name="gi")
+        builder.add_angle_encoding(modes=[0, 1, 2, 3], name="input")
+
+        feature_map = FeatureMap(
+            circuit=builder,
+            input_size=4,
+            input_parameters=None,
+        )
+
+        kernel = FidelityKernel(
+            feature_map=feature_map,
+            input_state=[1, 1, 0, 0],
+        )
+
+        x = torch.rand(3, 4)
+        K = kernel(x)
+
+        assert K.shape == (3, 3)
+        assert torch.isfinite(K).all()
+
     def test_builder_missing_input_size(self):
         """Test builder error when input_size is not specified."""
         builder = KernelCircuitBuilder()
@@ -595,106 +618,96 @@ class TestKernelCircuitBuilder:
         assert feature_map.input_size == 2
 
 
-class TestPhotonicBackendIntegration:
-    """Test integration with new circuit building features."""
+class TestKernelConstructionConsistency:
+    """Test integration using the supported circuit construction APIs."""
 
     def test_feature_map_unitary_consistency(self):
-        """Test that unitaries computed with different methods are consistent."""
-        # Create same configuration using different approaches
-        backend = PhotonicBackend(
-            circuit_type=CircuitType.SERIES, n_modes=4, n_photons=2
+        """Feature maps built via different APIs share the same topology."""
+        # Method 1: direct pcvl circuit
+        x1, x2 = pcvl.P("x1"), pcvl.P("x2")
+        fm_manual = FeatureMap(
+            circuit=pcvl.Circuit(3)
+            // pcvl.PS(x1)
+            // pcvl.BS()
+            // pcvl.PS(x2)
+            // pcvl.BS(),
+            input_size=2,
+            input_parameters="x",
         )
-
-        # Method 1: from_photonic_backend
-        fm1 = FeatureMap.from_photonic_backend(input_size=2, photonic_backend=backend)
+        print("Manual circuit:")
+        pcvl.pdisplay(fm_manual.circuit)
 
         # Method 2: simple factory
-        fm2 = FeatureMap.simple(
-            input_size=2, n_modes=4, n_photons=2, circuit_type=CircuitType.SERIES
-        )
+        fm_simple = FeatureMap.simple(input_size=2, n_modes=3, n_photons=2)
+        print("Simple factory circuit:")
+        pcvl.pdisplay(fm_simple.circuit)
 
         # Method 3: KernelCircuitBuilder
         builder = KernelCircuitBuilder()
-        fm3 = (
-            builder.input_size(2)
-            .n_modes(4)
-            .n_photons(2)
-            .circuit_type(CircuitType.SERIES)
-            .build_feature_map()
-        )
+        fm_builder = builder.input_size(2).n_modes(3).build_feature_map()
+        print("Builder API circuit:")
+        pcvl.pdisplay(fm_builder.circuit)
 
-        # All should have same basic properties
-        assert fm1.input_size == fm2.input_size == fm3.input_size
-        assert fm1.circuit.m == fm2.circuit.m == fm3.circuit.m
+        assert fm_manual.input_size == fm_simple.input_size == fm_builder.input_size
+        assert fm_manual.circuit.m == fm_simple.circuit.m == fm_builder.circuit.m
 
     def test_kernel_computation_consistency(self):
-        """Test that kernels created with different methods have consistent structure."""
-        # Use reservoir mode to avoid parameter conflicts
-        backend = PhotonicBackend(
-            circuit_type=CircuitType.SERIES,
-            n_modes=4,
-            n_photons=2,
-            reservoir_mode=True,  # This avoids trainable parameter conflicts
+        """Supported constructors yield kernels with matching structure."""
+        # Manual builder-based kernel
+        builder = CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(depth=1, name="phi_1_")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(depth=1, name="phi_2_")
+        fm_manual = FeatureMap(
+            circuit=builder,
+            input_size=2,
+            input_parameters=None,
+        )
+        k_manual = FidelityKernel(
+            feature_map=fm_manual,
+            input_state=[1, 1, 0, 0],
         )
 
-        k1 = FidelityKernel.from_photonic_backend(
-            input_size=2, photonic_backend=backend
-        )
-
-        k2 = FidelityKernel.simple(
+        # Simple factory
+        k_simple = FidelityKernel.simple(
             input_size=2,
             n_modes=4,
             n_photons=2,
-            circuit_type=CircuitType.SERIES,
-            reservoir_mode=True,  # Match the backend
+            trainable=False,
         )
 
-        builder = KernelCircuitBuilder()
-        k3 = (
-            builder.input_size(2)
+        # Builder API
+        builder_api = KernelCircuitBuilder()
+        k_builder = (
+            builder_api.input_size(2)
             .n_modes(4)
-            .n_photons(2)
-            .circuit_type(CircuitType.SERIES)
-            .reservoir_mode(True)  # Match the backend
+            .trainable(False)
             .build_fidelity_kernel()
         )
 
-        # All should have consistent structural properties
-        assert k1.input_size == k2.input_size == k3.input_size == 2
+        assert k_manual.input_size == k_simple.input_size == k_builder.input_size == 2
         assert (
-            k1.feature_map.circuit.m
-            == k2.feature_map.circuit.m
-            == k3.feature_map.circuit.m
+            k_manual.feature_map.circuit.m
+            == k_simple.feature_map.circuit.m
+            == k_builder.feature_map.circuit.m
             == 4
         )
-        assert len(k1.input_state) == len(k2.input_state) == len(k3.input_state) == 4
-        assert sum(k1.input_state) == sum(k2.input_state) == sum(k3.input_state) == 2
+        assert (
+            len(k_manual.input_state)
+            == len(k_simple.input_state)
+            == len(k_builder.input_state)
+        )
+        assert (
+            sum(k_manual.input_state)
+            == sum(k_simple.input_state)
+            == sum(k_builder.input_state)
+        )
 
-        # Test that each kernel can compute at least one kernel value without error
-        X_simple = torch.tensor([[0.1, 0.2]], dtype=torch.float32)  # Single data point
-
-        # Test each kernel individually to isolate any issues
-        try:
-            k1_result = k1(X_simple)
-            assert k1_result.shape == (1, 1)
-            assert 0 <= k1_result.item() <= 1
-        except Exception as e:
-            # Log the issue but don't fail the test - this indicates a deeper parameter issue
-            print(f"Warning: k1 computation failed with {e}")
-
-        try:
-            k2_result = k2(X_simple)
-            assert k2_result.shape == (1, 1)
-            assert 0 <= k2_result.item() <= 1
-        except Exception as e:
-            print(f"Warning: k2 computation failed with {e}")
-
-        try:
-            k3_result = k3(X_simple)
-            assert k3_result.shape == (1, 1)
-            assert 0 <= k3_result.item() <= 1
-        except Exception as e:
-            print(f"Warning: k3 computation failed with {e}")
+        X = torch.tensor([[0.1, 0.2]], dtype=torch.float32)
+        for kernel in (k_manual, k_simple, k_builder):
+            result = kernel(X)
+            assert result.shape == (1, 1)
+            assert torch.isfinite(result).all()
 
 
 class TestKernelIntegration:
@@ -964,8 +977,8 @@ def test_iris_dataset_kernel_training_with_nka():
     return accuracy
 
 
-def test_iris_with_simple_backend_integration():
-    """Test IRIS classification using all 3 backend integration methods with and without reservoir mode."""
+def test_iris_with_supported_constructors():
+    """Test IRIS classification using the supported kernel constructors."""
     # Load IRIS dataset
     iris = load_iris()
     X, y = iris.data, iris.target
@@ -988,15 +1001,15 @@ def test_iris_with_simple_backend_integration():
     y_train_small = y_train[:15]
     y_test_small = y_test[:10]
 
-    print("Testing IRIS classification with all backend integration methods...")
+    print("Testing IRIS classification with all supported constructors...")
     print(
         f"Using {len(X_train_small)} training samples, {len(X_test_small)} test samples"
     )
 
     # Define configurations to test
     configurations = [
-        {"name": "Reservoir Mode (stable)", "reservoir_mode": True},
-        {"name": "Trainable Mode (flexible)", "reservoir_mode": False},
+        {"name": "Static Mode (stable)", "trainable": False},
+        {"name": "Trainable Mode (flexible)", "trainable": True},
     ]
 
     results = {}
@@ -1006,29 +1019,30 @@ def test_iris_with_simple_backend_integration():
         print(f"Testing with {config['name']}")
         print(f"{'=' * 60}")
 
-        reservoir_mode = config["reservoir_mode"]
+        trainable_flag = config["trainable"]
         config_results = {}
 
         # Initialize kernel variables to None to prevent NameError
         kernel_simple = None
-        kernel_backend = None
+        kernel_manual = None
         kernel_builder = None
 
         # Method 1: Simple factory method
-        print(f"\n1. FidelityKernel.simple() - {config['name']}:")
+        print(
+            f"\n1. FidelityKernel.simple() - {config['name']} (trainable={trainable_flag}):"
+        )
         try:
             kernel_simple = FidelityKernel.simple(
                 input_size=4,  # IRIS has 4 features
-                n_modes=6,
+                n_modes=4,
                 n_photons=2,
-                circuit_type="series",
-                reservoir_mode=reservoir_mode,
+                trainable=trainable_flag,
             )
 
             # Test basic properties
             assert kernel_simple.input_size == 4
-            assert kernel_simple.feature_map.circuit.m == 6
-            assert len(kernel_simple.input_state) == 6
+            assert kernel_simple.feature_map.circuit.m == 4
+            assert len(kernel_simple.input_state) == 4
             assert sum(kernel_simple.input_state) == 2
 
             trainable_status = (
@@ -1053,44 +1067,51 @@ def test_iris_with_simple_backend_integration():
             print(f"   ❌ Simple method failed: {e}")
             config_results["simple"] = None
 
-        # Method 2: PhotonicBackend factory method
-        print(f"\n2. FidelityKernel.from_photonic_backend() - {config['name']}:")
+        # Method 2: Manual pcvl.Circuit construction
+        print(f"\n2. Manual pcvl.Circuit() - {config['name']}:")
         try:
-            backend = PhotonicBackend(
-                circuit_type=CircuitType.SERIES,
-                n_modes=6,
-                n_photons=2,
-                reservoir_mode=reservoir_mode,
+            params = [pcvl.P(f"x{i + 1}") for i in range(4)]
+            circuit = pcvl.Circuit(4)
+            for mode, param in enumerate(params):
+                circuit.add(mode, pcvl.PS(param))
+            circuit.add(0, pcvl.BS())
+            circuit.add(2, pcvl.BS())
+
+            feature_map = FeatureMap(
+                circuit=circuit,
+                input_size=4,
+                input_parameters="x",
             )
 
-            kernel_backend = FidelityKernel.from_photonic_backend(
-                input_size=4, photonic_backend=backend
+            kernel_manual = FidelityKernel(
+                feature_map=feature_map,
+                input_state=[1, 1, 0, 0],
+                force_psd=True,
             )
 
-            assert kernel_backend.input_size == 4
-            assert kernel_backend.feature_map.circuit.m == 6
+            assert kernel_manual.input_size == 4
+            assert kernel_manual.feature_map.circuit.m == 4
 
             trainable_status = (
-                "trainable" if kernel_backend.is_trainable else "non-trainable"
+                "trainable" if kernel_manual.is_trainable else "non-trainable"
             )
             print(
-                f"   ✓ Created {trainable_status} PhotonicBackend kernel: {kernel_backend.feature_map.circuit.m} modes"
+                f"   ✓ Created {trainable_status} manual kernel: {kernel_manual.feature_map.circuit.m} modes"
             )
 
-            # Attempt classification
-            accuracy_backend = _test_kernel_classification(
-                kernel_backend,
+            accuracy_manual = _test_kernel_classification(
+                kernel_manual,
                 X_train_small,
                 X_test_small,
                 y_train_small,
                 y_test_small,
-                "Backend",
+                "Manual",
             )
-            config_results["backend"] = accuracy_backend
+            config_results["manual"] = accuracy_manual
 
         except Exception as e:
-            print(f"   ❌ Backend method failed: {e}")
-            config_results["backend"] = None
+            print(f"   ❌ Manual method failed: {e}")
+            config_results["manual"] = None
 
         # Method 3: KernelCircuitBuilder fluent interface
         print(f"\n3. KernelCircuitBuilder() - {config['name']}:")
@@ -1098,15 +1119,13 @@ def test_iris_with_simple_backend_integration():
             builder = KernelCircuitBuilder()
             kernel_builder = (
                 builder.input_size(4)
-                .n_modes(6)
-                .n_photons(2)
-                .circuit_type(CircuitType.SERIES)
-                .reservoir_mode(reservoir_mode)
+                .n_modes(4)
+                .trainable(trainable_flag)
                 .build_fidelity_kernel()
             )
 
             assert kernel_builder.input_size == 4
-            assert kernel_builder.feature_map.circuit.m == 6
+            assert kernel_builder.feature_map.circuit.m == 4
 
             trainable_status = (
                 "trainable" if kernel_builder.is_trainable else "non-trainable"
@@ -1114,7 +1133,7 @@ def test_iris_with_simple_backend_integration():
             print(
                 f"   ✓ Created {trainable_status} builder kernel: {kernel_builder.feature_map.circuit.m} modes"
             )
-
+            pcvl.pdisplay(kernel_builder.feature_map.circuit)
             # Attempt classification
             accuracy_builder = _test_kernel_classification(
                 kernel_builder,
@@ -1132,11 +1151,11 @@ def test_iris_with_simple_backend_integration():
 
         # Test structural consistency within this configuration
         successful_kernels = []
-        if config_results["simple"] is not None and kernel_simple is not None:
+        if config_results.get("simple") is not None and kernel_simple is not None:
             successful_kernels.append(kernel_simple)
-        if config_results["backend"] is not None and kernel_backend is not None:
-            successful_kernels.append(kernel_backend)
-        if config_results["builder"] is not None and kernel_builder is not None:
+        if config_results.get("manual") is not None and kernel_manual is not None:
+            successful_kernels.append(kernel_manual)
+        if config_results.get("builder") is not None and kernel_builder is not None:
             successful_kernels.append(kernel_builder)
 
         if len(successful_kernels) >= 2:
@@ -1188,12 +1207,10 @@ def test_iris_with_simple_backend_integration():
     )
 
     if total_successes >= total_tests * 0.5:  # At least 50% success
-        print("✅ IRIS classification with backend integration successful!")
+        print("✅ IRIS classification with supported constructors successful!")
         return results
     else:
-        print(
-            "⚠️ Some backend integration issues detected, but structure creation works"
-        )
+        print("⚠️ Some constructor issues detected, but structure creation works")
         return results
 
 
@@ -1234,9 +1251,9 @@ def _test_kernel_classification(kernel, X_train, X_test, y_train, y_test, method
         return "structure_ok"
 
 
-def test_backend_integration_performance_comparison():
-    """Compare different backend integration methods for performance and consistency."""
-    print("\nPerformance comparison of backend integration methods:")
+def test_kernel_constructor_performance_comparison():
+    """Compare the supported kernel construction methods for performance."""
+    print("\nPerformance comparison of kernel construction methods:")
 
     import time
 
@@ -1245,36 +1262,36 @@ def test_backend_integration_performance_comparison():
 
     # Time Method 1: Simple factory
     start = time.time()
-    kernel1 = FidelityKernel.simple(
-        input_size=3, n_modes=6, n_photons=2, circuit_type="series", reservoir_mode=True
-    )
+    kernel1 = FidelityKernel.simple(input_size=3, n_modes=4, trainable=False)
     time1 = time.time() - start
     methods.append("FidelityKernel.simple()")
     times.append(time1)
 
-    # Time Method 2: PhotonicBackend factory
+    # Time Method 2: Manual pcvl.Circuit construction
     start = time.time()
-    backend = PhotonicBackend(
-        circuit_type=CircuitType.SERIES, n_modes=6, n_photons=2, reservoir_mode=True
+    params = [pcvl.P(f"x{i + 1}") for i in range(3)]
+    circuit = pcvl.Circuit(4)
+    for mode, param in enumerate(params):
+        circuit.add(mode, pcvl.PS(param))
+    circuit.add(0, pcvl.BS())
+    circuit.add(2, pcvl.BS())
+    feature_map = FeatureMap(
+        circuit=circuit,
+        input_size=3,
+        input_parameters="x",
     )
-    kernel2 = FidelityKernel.from_photonic_backend(
-        input_size=3, photonic_backend=backend
+    kernel2 = FidelityKernel(
+        feature_map=feature_map,
+        input_state=[1, 1, 0, 0],
     )
     time2 = time.time() - start
-    methods.append("FidelityKernel.from_photonic_backend()")
+    methods.append("Manual pcvl.Circuit")
     times.append(time2)
 
     # Time Method 3: Builder pattern
     start = time.time()
     builder = KernelCircuitBuilder()
-    kernel3 = (
-        builder.input_size(3)
-        .n_modes(6)
-        .n_photons(2)
-        .circuit_type("series")
-        .reservoir_mode(True)
-        .build_fidelity_kernel()
-    )
+    kernel3 = builder.input_size(3).n_modes(4).trainable(False).build_fidelity_kernel()
     time3 = time.time() - start
     methods.append("KernelCircuitBuilder")
     times.append(time3)
@@ -1305,7 +1322,7 @@ def cuda_device():
     return torch.device("cuda")
 
 
-@pytest.mark.parametrize("constructor", ["simple", "from_backend", "builder"])
+@pytest.mark.parametrize("constructor", ["simple", "manual", "builder"])
 def test_fidelity_kernel_gpu_execution_all_constructors(cuda_device, constructor):
     device = cuda_device
     # Use 4 features to match factory/kernel expectations
@@ -1322,27 +1339,30 @@ def test_fidelity_kernel_gpu_execution_all_constructors(cuda_device, constructor
     if constructor == "simple":
         kernel = FidelityKernel.simple(
             input_size=4,
-            n_modes=6,
+            n_modes=4,
             n_photons=2,
-            circuit_type=CircuitType.SERIES,
-            reservoir_mode=True,
+            trainable=False,
         )
-    elif constructor == "from_backend":
-        backend = PhotonicBackend(
-            circuit_type=CircuitType.SERIES, n_modes=6, n_photons=2, reservoir_mode=True
+    elif constructor == "manual":
+        params = [pcvl.P(f"x{i + 1}") for i in range(4)]
+        circuit = pcvl.Circuit(4)
+        for mode, param in enumerate(params):
+            circuit.add(mode, pcvl.PS(param))
+        circuit.add(0, pcvl.BS())
+        circuit.add(2, pcvl.BS())
+        feature_map = FeatureMap(
+            circuit=circuit,
+            input_size=4,
+            input_parameters="x",
         )
-        kernel = FidelityKernel.from_photonic_backend(
-            input_size=4, photonic_backend=backend
+        kernel = FidelityKernel(
+            feature_map=feature_map,
+            input_state=[1, 1, 0, 0],
         )
     else:  # "builder"
         builder = KernelCircuitBuilder()
         kernel = (
-            builder.input_size(4)
-            .n_modes(6)
-            .n_photons(2)
-            .circuit_type(CircuitType.SERIES)
-            .reservoir_mode(True)
-            .build_fidelity_kernel()
+            builder.input_size(4).n_modes(4).trainable(False).build_fidelity_kernel()
         )
 
     # Ensure kernel is on the correct device
@@ -1365,8 +1385,7 @@ def test_fidelity_kernel_gpu_training_step(cuda_device):
         input_size=4,
         n_modes=6,
         n_photons=4,
-        circuit_type=CircuitType.SERIES,
-        reservoir_mode=False,
+        trainable=True,
     ).to(device)
 
     if sum(p.numel() for p in kernel.parameters()) == 0:

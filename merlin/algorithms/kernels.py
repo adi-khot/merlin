@@ -7,9 +7,7 @@ import perceval as pcvl
 import torch
 from torch import Tensor
 
-from ..core.ansatz import AnsatzFactory
-from ..core.generators import CircuitType, StatePattern
-from ..core.photonicbackend import PhotonicBackend
+from ..builder.circuit_builder import ANGLE_ENCODING_MODE_ERROR, CircuitBuilder
 from ..pcvl_pytorch.locirc_to_tensor import CircuitConverter
 from ..pcvl_pytorch.slos_torchscript import (
     build_slos_distribution_computegraph as build_slos_graph,
@@ -41,30 +39,52 @@ class FeatureMap:
     FeatureMap embeds a datapoint within a quantum circuit and
     computes the associated unitary for quantum kernel methods.
 
-    :param circuit: Circuit with data-embedding parameters.
-    :param input_parameters: Parameters which encode each datapoint.
-    :param dtype: Data type for generated unitary.
-    :param device: Device on which to calculate the unitary.
+    Args:
+        circuit: Circuit or builder containing the data-encoding gates.
+        input_parameters: Parameter prefix(es) that host the classical data.
+        dtype: Torch dtype used when constructing the unitary.
+        device: Torch device on which unitaries are evaluated.
     """
 
     def __init__(
         self,
-        circuit: pcvl.Circuit,
+        circuit: pcvl.Circuit | CircuitBuilder,
         input_size: int,
-        input_parameters: str | list[str],
+        input_parameters: str | list[str] | None,
         *,
         trainable_parameters: list[str] | None = None,
         dtype: str | torch.dtype = torch.float32,
         device: torch.device | None = None,
         encoder: Callable[[Tensor], Tensor] | None = None,  # was: callable | None
     ):
+        builder_trainable: list[str] = []
+        builder_input: list[str] = []
+
+        self._angle_encoding_specs: dict[str, dict[str, object]] = {}
+
+        if isinstance(circuit, CircuitBuilder):
+            builder_trainable = circuit.trainable_parameter_prefixes
+            builder_input = circuit.input_parameter_prefixes
+            self._angle_encoding_specs = circuit.angle_encoding_specs
+            circuit = circuit.to_pcvl_circuit(pcvl)
+
         self.circuit = circuit
         self.input_size = input_size
+        if trainable_parameters is None:
+            trainable_parameters = builder_trainable
         self.trainable_parameters = trainable_parameters or []
         self.dtype = dtype_to_torch.get(dtype, torch.float32)
         self.device = device or torch.device("cpu")
         self.is_trainable = bool(trainable_parameters)
         self._encoder = encoder  # NEW
+
+        if input_parameters is None:
+            if builder_input:
+                input_parameters = builder_input[0]
+            else:
+                raise ValueError(
+                    "input_parameters must be provided when no input layer is defined in the builder."
+                )
 
         if isinstance(input_parameters, list):
             if len(input_parameters) > 1:
@@ -89,13 +109,20 @@ class FeatureMap:
             self._training_dict[param_name] = torch.nn.Parameter(p)
 
     def _px_len(self) -> int:
-        """Number of circuit input-parameter slots (e.g. 'px') required by the circuit."""
+        """Return how many angle-encoding slots the underlying circuit expects."""
         return len(self._circuit_graph.spec_mappings.get(self.input_parameters, []))
 
     def _subset_sum_expand(self, x: Tensor, k: int) -> Tensor:
         """
         Deterministic series-style expansion: non-empty subset sums of x in
         increasing subset-size order, truncated/padded to length k.
+
+        Args:
+            x: Input feature tensor expected to be one-dimensional.
+            k: Desired number of encoded features to return.
+
+        Returns:
+            Tensor: Encoded tensor of length ``k`` on the configured device/dtype.
         """
         x = x.to(dtype=self.dtype, device=self.device).reshape(-1)
         d = x.shape[0]
@@ -119,17 +146,36 @@ class FeatureMap:
         )
 
     def _encode_x(self, x: Tensor) -> Tensor:
-        """
-        Encode raw features x (length = input_size) to match px_len.
-        Tries ansatz-like encoder first; falls back to subset-sum expansion.
+        """Map raw features to the circuit's required parameter shape.
+
+        Preference order:
+        1. Builder-provided combination metadata (from :class:`CircuitBuilder`).
+        2. A user-supplied encoder callable.
+        3. The deterministic subset-sum expansion used by legacy feature maps.
+
+        Args:
+            x: Input feature tensor to be embedded.
+
+        Returns:
+            Tensor: Encoded tensor matching the circuit's expected parameter length.
         """
         x = x.to(dtype=self.dtype, device=self.device).reshape(-1)
         px_len = self._px_len()
 
+        spec = self._angle_encoding_specs.get(self.input_parameters)
+
+        if spec:
+            encoded = self._encode_with_specs(x, spec)
+            if encoded.numel() != px_len:
+                raise ValueError(
+                    f"Angle encoding produced {encoded.numel()} parameters but circuit expects {px_len}"
+                )
+            return encoded
+
         if x.numel() == px_len:
             return x
         if x.numel() < px_len:
-            # Try provided encoder (e.g., from Ansatz)
+            # Try provided encoder if available
             if callable(self._encoder):
                 try:
                     encoded = self._encoder(x)
@@ -151,11 +197,64 @@ class FeatureMap:
         # x longer than needed; truncate
         return x[:px_len]
 
+    def _encode_with_specs(self, x: Tensor, spec: dict[str, object]) -> Tensor:
+        """Encode input vector using builder-provided angle encoding metadata.
+
+        Args:
+            x: Flattened input feature tensor.
+            spec: Metadata describing combinations and scales produced by the builder.
+
+        Returns:
+            Tensor: Encoded tensor obeying the combination rules.
+        """
+        combos = spec.get("combinations", [])
+        scales = spec.get("scales", {})
+
+        if not isinstance(combos, list) or not all(
+            isinstance(c, tuple) for c in combos
+        ):
+            raise ValueError(
+                "Invalid angle encoding metadata: 'combinations' must be a list of tuples"
+            )
+
+        if not isinstance(scales, dict):
+            raise ValueError("Invalid angle encoding metadata: 'scales' must be a dict")
+
+        x_flat = x.to(dtype=self.dtype, device=self.device).reshape(-1)
+        encoded_vals: list[Tensor] = []
+        feature_dim = x_flat.shape[0]
+
+        for combo in combos:  # type: ignore[assignment]
+            indices = list(combo)
+            if any(idx >= feature_dim for idx in indices):
+                raise ValueError(
+                    f"Input feature dimension {feature_dim} insufficient for angle encoding combination {combo}"
+                )
+
+            selected = x_flat[indices]
+            scale_tensor = torch.tensor(
+                [float(scales.get(idx, 1.0)) for idx in indices],
+                dtype=self.dtype,
+                device=self.device,
+            )
+            encoded_vals.append((selected * scale_tensor).sum())
+
+        if not encoded_vals:
+            return torch.zeros(0, dtype=self.dtype, device=self.device)
+
+        return torch.stack(encoded_vals, dim=0)
+
     def compute_unitary(
         self, x: Tensor | np.ndarray | float, *training_parameters: Tensor
     ) -> Tensor:
-        """
-        Computes the unitary associated with the feature map and given datapoint.
+        """Generate the circuit unitary after encoding ``x`` and applying trainables.
+
+        Args:
+            x: Single datapoint to embed; accepts scalars, numpy arrays, or tensors.
+            *training_parameters: Optional overriding trainable tensors.
+
+        Returns:
+            Tensor: Complex unitary matrix representing the prepared circuit.
         """
         # Normalize input to tensor on correct device/dtype
         if isinstance(x, torch.Tensor):
@@ -185,7 +284,14 @@ class FeatureMap:
         return self._circuit_graph.to_tensor(x_encoded, *params_to_use)
 
     def is_datapoint(self, x: Tensor | np.ndarray | float | int) -> bool:
-        """Checks whether an input data is a singular datapoint or dataset."""
+        """Determine if ``x`` describes one sample or a batch.
+
+        Args:
+            x: Candidate input data.
+
+        Returns:
+            bool: ``True`` when ``x`` corresponds to a single datapoint.
+        """
         if isinstance(x, (float, int)):
             if self.input_size == 1:
                 return True
@@ -210,81 +316,18 @@ class FeatureMap:
             raise ValueError(error_msg)
 
         if self.input_size == 1:
-            if num_elements == 1:
+            if num_elements == 1 and ndim == 1:
                 return True
-            if ndim == 1:
+            if num_elements == 1 and ndim == 2:
                 return False
-            if ndim == 2 and 1 in shape:
+            if ndim > 1:
                 return False
         else:
             if ndim == 1 and shape[0] == self.input_size:
                 return True
             if ndim == 2:
-                return 1 in shape and self.input_size in shape
+                return False
         raise ValueError(error_msg)
-
-    @classmethod
-    def from_photonic_backend(
-        cls,
-        input_size: int,
-        photonic_backend: PhotonicBackend,
-        *,
-        trainable_parameters: list[str] | None = None,
-        dtype: str | torch.dtype = torch.float32,
-        device: torch.device | None = None,
-    ) -> "FeatureMap":
-        """
-        Create a FeatureMap from a PhotonicBackend configuration.
-
-        This factory method uses the PhotonicBackend to automatically generate
-        a circuit and appropriate parameters for quantum kernel applications.
-
-        :param input_size: Dimensionality of input data
-        :param photonic_backend: PhotonicBackend configuration
-        :param trainable_parameters: Optional trainable parameters.
-            If None, automatically determined from backend configuration
-        :param dtype: Data type for computations
-        :param device: Device for computations
-        :return: Configured FeatureMap instance
-
-        Examples
-        --------
-        >>> backend = PhotonicBackend(
-        ...     circuit_type=CircuitType.SERIES,
-        ...     n_modes=4,
-        ...     n_photons=2
-        ... )
-        >>> feature_map = FeatureMap.from_photonic_backend(
-        ...     input_size=2,
-        ...     photonic_backend=backend
-        ... )
-        """
-        ansatz = AnsatzFactory.create(
-            PhotonicBackend=photonic_backend,
-            input_size=input_size,
-            dtype=dtype if isinstance(dtype, torch.dtype) else None,
-        )
-
-        # Override trainable parameters if specified
-        if trainable_parameters is not None:
-            ansatz.trainable_parameters = trainable_parameters
-
-        # Try to grab the same encoder QuantumLayer uses
-        encoder = None
-        for name in ("encode_input", "encode_features", "feature_encoder", "encode"):
-            if hasattr(ansatz, name) and callable(getattr(ansatz, name)):
-                encoder = getattr(ansatz, name)
-                break
-
-        return cls(
-            circuit=ansatz.circuit,
-            input_size=input_size,
-            input_parameters=ansatz.input_parameters,
-            trainable_parameters=ansatz.trainable_parameters,
-            dtype=dtype,
-            device=device,
-            encoder=encoder,  # pass encoder through
-        )
 
     @classmethod
     def simple(
@@ -293,35 +336,58 @@ class FeatureMap:
         n_modes: int,
         n_photons: int | None = None,
         *,
-        circuit_type: CircuitType | str = CircuitType.SERIES,
-        state_pattern: StatePattern | str = StatePattern.PERIODIC,
-        reservoir_mode: bool = False,
-        trainable_parameters: list[str] | None = None,
         dtype: str | torch.dtype = torch.float32,
         device: torch.device | None = None,
+        angle_encoding_scale: float = 1.0,
+        trainable: bool = True,
+        trainable_prefix: str = "phi",
     ) -> "FeatureMap":
         """
         Simple factory method to create a FeatureMap with minimal configuration.
+
+        Args:
+            input_size: Classical feature dimension.
+            n_modes: Number of photonic modes used by the helper circuit.
+            n_photons: Optional photon count (defaults to ``input_size``).
+            dtype: Target dtype for internal tensors.
+            device: Optional torch device handle.
+            angle_encoding_scale: Global scaling applied to angle encoding features.
+            trainable: Whether to expose a trainable rotation layer.
+            trainable_prefix: Prefix used for the generated trainable parameter names.
+
+        Returns:
+            FeatureMap: Configured feature-map instance.
         """
         if n_photons is None:
             n_photons = input_size
-        # Coerce string enums
-        if isinstance(circuit_type, str):
-            circuit_type = CircuitType(circuit_type.lower())
-        if isinstance(state_pattern, str):
-            state_pattern = StatePattern(state_pattern.lower())
 
-        backend = PhotonicBackend(
-            circuit_type=circuit_type,
-            n_modes=n_modes,
-            n_photons=n_photons,
-            state_pattern=state_pattern,
-            reservoir_mode=reservoir_mode,
+        if input_size > n_modes:
+            raise ValueError(ANGLE_ENCODING_MODE_ERROR)
+
+        builder = CircuitBuilder(n_modes=n_modes)
+
+        builder.add_entangling_layer(depth=1)
+        input_modes = list(range(input_size))
+
+        builder.add_angle_encoding(
+            modes=input_modes,
+            name="input",
+            scale=angle_encoding_scale,
         )
 
-        return cls.from_photonic_backend(
+        trainable_parameters: list[str] | None
+        if trainable:
+            builder.add_rotation_layer(trainable=True, name=trainable_prefix)
+            trainable_parameters = [trainable_prefix]
+        else:
+            trainable_parameters = None
+
+        builder.add_entangling_layer(depth=1)
+
+        return cls(
+            circuit=builder,
             input_size=input_size,
-            photonic_backend=backend,
+            input_parameters=None,
             trainable_parameters=trainable_parameters,
             dtype=dtype,
             device=device,
@@ -338,26 +404,18 @@ class KernelCircuitBuilder:
 
     def __init__(self):
         self._input_size: int | None = None
-        self._circuit_type: CircuitType = CircuitType.SERIES
         self._n_modes: int | None = None
         self._n_photons: int | None = None
-        self._state_pattern: StatePattern = StatePattern.PERIODIC
-        self._reservoir_mode: bool = False
-        self._trainable_parameters: list[str] | None = None
         self._dtype: str | torch.dtype = torch.float32
         self._device: torch.device | None = None
         self._use_bandwidth_tuning: bool = False
+        self._angle_encoding_scale: float = 1.0
+        self._trainable: bool = True
+        self._trainable_prefix: str = "phi"
 
     def input_size(self, size: int) -> "KernelCircuitBuilder":
         """Set the input dimensionality."""
         self._input_size = size
-        return self
-
-    def circuit_type(self, circuit_type: CircuitType | str) -> "KernelCircuitBuilder":
-        """Set the circuit topology type."""
-        if isinstance(circuit_type, str):
-            circuit_type = CircuitType(circuit_type.lower())
-        self._circuit_type = circuit_type
         return self
 
     def n_modes(self, modes: int) -> "KernelCircuitBuilder":
@@ -370,21 +428,16 @@ class KernelCircuitBuilder:
         self._n_photons = photons
         return self
 
-    def state_pattern(self, pattern: StatePattern | str) -> "KernelCircuitBuilder":
-        """Set the state initialization pattern."""
-        if isinstance(pattern, str):
-            pattern = StatePattern(pattern.lower())
-        self._state_pattern = pattern
-        return self
-
-    def reservoir_mode(self, enabled: bool = True) -> "KernelCircuitBuilder":
-        """Enable or disable reservoir computing mode."""
-        self._reservoir_mode = enabled
-        return self
-
-    def trainable_parameters(self, params: list[str]) -> "KernelCircuitBuilder":
-        """Set custom trainable parameters."""
-        self._trainable_parameters = params
+    def trainable(
+        self,
+        enabled: bool = True,
+        *,
+        prefix: str = "phi",
+    ) -> "KernelCircuitBuilder":
+        """Enable or disable trainable rotations generated by the helper."""
+        self._trainable = enabled
+        if enabled:
+            self._trainable_prefix = prefix
         return self
 
     def dtype(self, dtype: str | torch.dtype) -> "KernelCircuitBuilder":
@@ -402,6 +455,15 @@ class KernelCircuitBuilder:
         self._use_bandwidth_tuning = enabled
         return self
 
+    def angle_encoding(
+        self,
+        *,
+        scale: float = 1.0,
+    ) -> "KernelCircuitBuilder":
+        """Configure the angle encoding scale."""
+        self._angle_encoding_scale = scale
+        return self
+
     def build_feature_map(self) -> FeatureMap:
         """
         Build and return a FeatureMap instance.
@@ -412,23 +474,38 @@ class KernelCircuitBuilder:
         if self._input_size is None:
             raise ValueError("Input size must be specified")
 
-        # Set defaults
         n_modes = self._n_modes or max(self._input_size + 1, 4)
-        n_photons = self._n_photons or self._input_size
 
-        backend = PhotonicBackend(
-            circuit_type=self._circuit_type,
-            n_modes=n_modes,
-            n_photons=n_photons,
-            state_pattern=self._state_pattern,
-            reservoir_mode=self._reservoir_mode,
-            use_bandwidth_tuning=self._use_bandwidth_tuning,
+        trainable_params: list[str] | None
+        if self._trainable:
+            trainable_params = [self._trainable_prefix]
+        else:
+            trainable_params = None
+
+        builder = CircuitBuilder(n_modes=n_modes)
+        builder.add_entangling_layer(depth=1)
+
+        if self._input_size > n_modes:
+            raise ValueError(ANGLE_ENCODING_MODE_ERROR)
+
+        input_modes = list(range(self._input_size))
+
+        builder.add_angle_encoding(
+            modes=input_modes,
+            name="input",
+            scale=self._angle_encoding_scale,
         )
 
-        return FeatureMap.from_photonic_backend(
+        if self._trainable:
+            builder.add_rotation_layer(trainable=True, name=self._trainable_prefix)
+
+        builder.add_entangling_layer(depth=1)
+
+        return FeatureMap(
+            circuit=builder,
             input_size=self._input_size,
-            photonic_backend=backend,
-            trainable_parameters=self._trainable_parameters,
+            input_parameters=None,
+            trainable_parameters=trainable_params,
             dtype=self._dtype,
             device=self._device,
         )
@@ -458,12 +535,7 @@ class KernelCircuitBuilder:
         if input_state is None:
             n_modes = self._n_modes or max(self._input_size or 2, 4)
             n_photons = self._n_photons or (self._input_size or 2)
-
-            # Create input state based on state pattern
-            if self._state_pattern == StatePattern.PERIODIC:
-                input_state = [1] * n_photons + [0] * (n_modes - n_photons)
-            else:  # FIRST_MODES or other patterns
-                input_state = [1] * n_photons + [0] * (n_modes - n_photons)
+            input_state = [1] * n_photons + [0] * (n_modes - n_photons)
 
         return FidelityKernel(
             feature_map=feature_map,
@@ -735,52 +807,39 @@ class FidelityKernel(torch.nn.Module):
         return torch.abs(probs[0, self._input_state_index]).item()
 
     @classmethod
-    def from_photonic_backend(
+    def simple(
         cls,
         input_size: int,
-        photonic_backend: PhotonicBackend,
+        n_modes: int,
+        n_photons: int | None = None,
         input_state: list[int] | None = None,
         *,
         shots: int = 0,
         sampling_method: str = "multinomial",
         no_bunching: bool = False,
         force_psd: bool = True,
-        trainable_parameters: list[str] | None = None,
+        trainable: bool = True,
         dtype: str | torch.dtype = torch.float32,
         device: torch.device | None = None,
+        angle_encoding_scale: float = 1.0,
     ) -> "FidelityKernel":
         """
-        Create a FidelityKernel from a PhotonicBackend configuration.
-
-        :param input_size: Dimensionality of input data
-        :param photonic_backend: PhotonicBackend configuration
-        :param input_state: Input Fock state. If None, auto-generated
-        :param shots: Number of sampling shots
-        :param sampling_method: Sampling method for shots
-        :param no_bunching: Whether to exclude bunched states
-        :param force_psd: Whether to project to positive semi-definite
-        :param trainable_parameters: Optional trainable parameters
-        :param dtype: Data type for computations
-        :param device: Device for computations
-        :return: Configured FidelityKernel
+        Simple factory method to create a FidelityKernel with minimal configuration.
         """
-        # Create feature map
-        feature_map = FeatureMap.from_photonic_backend(
+        if n_photons is None:
+            n_photons = input_size
+        feature_map = FeatureMap.simple(
             input_size=input_size,
-            photonic_backend=photonic_backend,
-            trainable_parameters=trainable_parameters,
+            n_modes=n_modes,
+            n_photons=n_photons,
+            trainable=trainable,
             dtype=dtype,
             device=device,
+            angle_encoding_scale=angle_encoding_scale,
         )
 
-        # Generate default input state if not provided
         if input_state is None:
-            ansatz = AnsatzFactory.create(
-                PhotonicBackend=photonic_backend,
-                input_size=input_size,
-                dtype=dtype if isinstance(dtype, torch.dtype) else None,
-            )
-            input_state = ansatz.input_state
+            input_state = [1] * n_photons + [0] * (n_modes - n_photons)
 
         return cls(
             feature_map=feature_map,
@@ -791,57 +850,6 @@ class FidelityKernel(torch.nn.Module):
             force_psd=force_psd,
             device=device,
             dtype=dtype,
-        )
-
-    @classmethod
-    def simple(
-        cls,
-        input_size: int,
-        n_modes: int,
-        n_photons: int | None = None,
-        input_state: list[int] | None = None,
-        *,
-        circuit_type: CircuitType | str = CircuitType.SERIES,
-        state_pattern: StatePattern | str = StatePattern.PERIODIC,
-        reservoir_mode: bool = False,
-        shots: int = 0,
-        sampling_method: str = "multinomial",
-        no_bunching: bool = False,
-        force_psd: bool = True,
-        trainable_parameters: list[str] | None = None,
-        dtype: str | torch.dtype = torch.float32,
-        device: torch.device | None = None,
-    ) -> "FidelityKernel":
-        """
-        Simple factory method to create a FidelityKernel with minimal configuration.
-        """
-        if n_photons is None:
-            n_photons = input_size
-        # Coerce string enums
-        if isinstance(circuit_type, str):
-            circuit_type = CircuitType(circuit_type.lower())
-        if isinstance(state_pattern, str):
-            state_pattern = StatePattern(state_pattern.lower())
-
-        backend = PhotonicBackend(
-            circuit_type=circuit_type,
-            n_modes=n_modes,
-            n_photons=n_photons,
-            state_pattern=state_pattern,
-            reservoir_mode=reservoir_mode,
-        )
-
-        return cls.from_photonic_backend(
-            input_size=input_size,
-            photonic_backend=backend,
-            input_state=input_state,
-            shots=shots,
-            sampling_method=sampling_method,
-            no_bunching=no_bunching,
-            force_psd=force_psd,
-            trainable_parameters=trainable_parameters,
-            dtype=dtype,
-            device=device,
         )
 
     @staticmethod

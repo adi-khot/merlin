@@ -4,10 +4,8 @@ import perceval as pcvl
 import torch
 from perceval.components import BS, PS
 
-from merlin import (
-    OutputMappingStrategy,
-    QuantumLayer,
-)
+from ..algorithms.layer import QuantumLayer
+from ..sampling.strategies import OutputMappingStrategy
 
 
 def create_circuit(M, input_size):
