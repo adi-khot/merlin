@@ -181,7 +181,6 @@ class TestPoolingFeedForward:
         n_input_states = len(pff.match_indices) + len(pff.exclude_indices)
         amplitudes = torch.rand(2, n_input_states)
         output = pff(amplitudes)
-
         assert output.device == amplitudes.device
 
     def test_match_tuples_method(self):
@@ -190,11 +189,7 @@ class TestPoolingFeedForward:
         keys_in = [(0, 0, 1, 1, 0, 0, 0, 0), (1, 0, 1, 0, 0, 0, 0, 0)]
         keys_out = [(0, 1, 0, 0), (1, 1, 0, 0)]
         pooling_modes = [[0, 1], [2, 3], [4, 5], [6, 7]]
-
-        match_indices, exclude_indices = pff.match_tuples(
-            keys_in, keys_out, pooling_modes
-        )
-
+        match_indices, exclude_indices = pff.match_tuples(keys_in, keys_out, pooling_modes)
         assert isinstance(match_indices, list)
         assert isinstance(exclude_indices, list)
 
@@ -203,40 +198,57 @@ class TestPoolingFeedForward:
         pff = PoolingFeedForward(n_modes=8, n_photons=2, n_output_modes=4)
         n_input_states = len(pff.match_indices) + len(pff.exclude_indices)
         amplitudes = torch.rand(2, n_input_states, requires_grad=True)
-
         output = pff(amplitudes)
         loss = output.sum()
         loss.backward()
-
         assert amplitudes.grad is not None
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_forward_pass_on_cuda(self):
+        """Test that forward pass runs correctly on CUDA."""
+        device = torch.device("cuda")
+        pff = PoolingFeedForward(n_modes=16, n_photons=2, n_output_modes=8).to(device)
+        n_input_states = len(pff.match_indices) + len(pff.exclude_indices)
+        amplitudes = torch.rand(4, n_input_states, device=device)
+        output = pff(amplitudes)
+        assert output.is_cuda
+        assert output.shape[0] == 4
+        assert output.shape[1] == len(pff.keys_out)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_backward_pass_on_cuda(self):
+        """Test backward pass with CUDA tensors."""
+        device = torch.device("cuda")
+        pff = PoolingFeedForward(n_modes=8, n_photons=2, n_output_modes=4).to(device)
+        n_input_states = len(pff.match_indices) + len(pff.exclude_indices)
+        amplitudes = torch.rand(2, n_input_states, requires_grad=True, device=device)
+        output = pff(amplitudes)
+        loss = output.pow(2).sum()
+        loss.backward()
+        assert amplitudes.grad is not None
+        assert amplitudes.grad.is_cuda
 
     def test_integration_with_quantum_layer(self):
         """Test integration with quantum layers (as in the main script)."""
         pff = PoolingFeedForward(n_modes=16, n_photons=2, n_output_modes=8)
         pre_layer = define_layer_no_input(16, 2)
         post_layer = define_layer_no_input(8, 2)
-
-        # Forward pass
         _, amplitudes = pre_layer(return_amplitudes=True)
         amplitudes = pff(amplitudes)
         post_layer.set_input_state(amplitudes)
         res = post_layer()
-
         assert isinstance(res, torch.Tensor)
         assert res.requires_grad
 
     def test_optimization_with_layers(self):
         """Test optimization loop with PoolingFeedForward between layers."""
         from itertools import chain
-
         pff = PoolingFeedForward(n_modes=8, n_photons=2, n_output_modes=4)
         pre_layer = define_layer_no_input(8, 2)
         post_layer = define_layer_no_input(4, 2)
-
         params = chain(pre_layer.parameters(), post_layer.parameters())
         optimizer = torch.optim.Adam(params)
 
-        # Run a few optimization steps
         for _ in range(3):
             _, amplitudes = pre_layer(return_amplitudes=True)
             amplitudes = pff(amplitudes)
@@ -245,27 +257,16 @@ class TestPoolingFeedForward:
             res.backward()
             optimizer.step()
             optimizer.zero_grad()
-
-        # Should complete without errors
         assert True
 
     def test_different_pooling_ratios(self):
         """Test various pooling ratios."""
-        test_cases = [
-            (16, 8),  # 2:1 pooling
-            (16, 4),  # 4:1 pooling
-            (12, 6),  # 2:1 pooling
-            (9, 3),   # 3:1 pooling
-        ]
-
+        test_cases = [(16, 8), (16, 4), (12, 6), (9, 3)]
         for n_modes, n_output_modes in test_cases:
-            pff = PoolingFeedForward(
-                n_modes=n_modes, n_photons=2, n_output_modes=n_output_modes
-            )
+            pff = PoolingFeedForward(n_modes=n_modes, n_photons=2, n_output_modes=n_output_modes)
             n_input_states = len(pff.match_indices) + len(pff.exclude_indices)
             amplitudes = torch.rand(2, n_input_states)
             output = pff(amplitudes)
-
             assert output.shape[1] == len(pff.keys_out)
 
     def test_single_photon_case(self):
@@ -274,7 +275,6 @@ class TestPoolingFeedForward:
         n_input_states = len(pff.match_indices) + len(pff.exclude_indices)
         amplitudes = torch.rand(2, n_input_states)
         output = pff(amplitudes)
-
         assert isinstance(output, torch.Tensor)
         assert output.shape[0] == 2
 
@@ -284,7 +284,6 @@ class TestPoolingFeedForward:
         n_input_states = len(pff.match_indices) + len(pff.exclude_indices)
         amplitudes = torch.rand(1, n_input_states)
         output = pff(amplitudes)
-
         assert output.shape[0] == 1
 
     def test_large_batch_size(self):
@@ -294,8 +293,8 @@ class TestPoolingFeedForward:
         batch_size = 32
         amplitudes = torch.rand(batch_size, n_input_states)
         output = pff(amplitudes)
-
         assert output.shape[0] == batch_size
+
 
 
 if __name__ == "__main__":
