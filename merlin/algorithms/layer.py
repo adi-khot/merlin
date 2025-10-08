@@ -695,7 +695,6 @@ class QuantumLayer(nn.Module):
         input_size: int,
         n_params: int = 100,
         shots: int = 0,
-        reservoir_mode: bool = False,
         output_size: int | None = None,
         output_mapping_strategy: OutputMappingStrategy = OutputMappingStrategy.NONE,
         device: torch.device | None = None,
@@ -716,7 +715,6 @@ class QuantumLayer(nn.Module):
             input_size: Size of the classical input vector.
             n_params: Number of trainable parameters to allocate across rotation layers.
             shots: Number of sampling shots for stochastic evaluation.
-            reservoir_mode: Reserved for API compatibility (unused in builder mode).
             output_size: Optional classical output width.
             output_mapping_strategy: Strategy used to post-process the quantum distribution.
             device: Optional target device for tensors.
@@ -726,8 +724,6 @@ class QuantumLayer(nn.Module):
         Returns:
             QuantumLayer configured with the described architecture.
         """
-        _ = reservoir_mode  # Reserved for API compatibility; builder path ignores this flag.
-
         n_modes = 10
         n_photons = 5
 

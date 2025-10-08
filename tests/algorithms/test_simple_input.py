@@ -113,6 +113,12 @@ def test_default_strategy_is_none(quantum_layer_api):
     )
 
 
+def test_simple_signature_does_not_include_reservoir_mode(quantum_layer_api):
+    QuantumLayer, _ = quantum_layer_api
+    sig = inspect.signature(QuantumLayer.simple)
+    assert "reservoir_mode" not in sig.parameters
+
+
 def test_trainable_parameter_budget_matches_request(quantum_layer_api):
     QuantumLayer, OutputMappingStrategy = quantum_layer_api
 
