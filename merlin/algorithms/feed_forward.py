@@ -586,7 +586,9 @@ class PoolingFeedForward(torch.nn.Module):
         )
 
         # Create a mask to exclude certain indices
-        mask = torch.ones(amplitudes.shape[1], dtype=torch.bool, device=amplitudes.device)
+        mask = torch.ones(
+            amplitudes.shape[1], dtype=torch.bool, device=amplitudes.device
+        )
         if self.exclude_indices.numel() != 0:
             mask[self.exclude_indices] = False
 
