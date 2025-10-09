@@ -538,10 +538,6 @@ class QuantumLayer(nn.Module):
         self.input_state = input_state
         self.computation_process.input_state = input_state
 
-    def set_input_state(self, input_state):
-        self.input_state = input_state
-        self.computation_process.input_state = input_state
-
     def prepare_parameters(
         self, input_parameters: list[torch.Tensor]
     ) -> list[torch.Tensor]:
