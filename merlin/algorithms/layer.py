@@ -156,6 +156,7 @@ class QuantumLayer(nn.Module):
     ):
         """Initialize from ansatz (auto-generated mode)."""
         self.ansatz = ansatz
+        self.circuit = ansatz.circuit
         self.auto_generation_mode = True
 
         # For ansatz mode, we need to create a new computation process with correct device
@@ -407,9 +408,11 @@ class QuantumLayer(nn.Module):
             elif measurement_strategy == MeasurementStrategy.STATEVECTOR:
                 self.output_size = dist_size
             else:
-                raise ValueError(
-                    "output_size must be specified for FockGrouping measurement strategy"
+                warnings.warn(
+                    f"output_size should be specified for FockGrouping measurement strategy. Will default to the number of possible Fock states ({dist_size}).",
+                    stacklevel=2,
                 )
+                self.output_size = dist_size
         else:
             self.output_size = output_size
 

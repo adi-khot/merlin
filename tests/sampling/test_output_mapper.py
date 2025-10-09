@@ -29,7 +29,48 @@ import merlin as ML
 
 
 class TestOutputMapper:
-    """Test suite for OutputMapper factory."""
+    def test_mode_expectation_mapping(self):
+        """Test ModeExpectation mapping creation and behavior."""
+        # keys: 3 modes, 2 photons, all possible Fock states
+        keys = [(2, 0, 0), (1, 1, 0), (1, 0, 1), (0, 2, 0), (0, 1, 1), (0, 0, 2)]
+        input_size = len(keys)
+        output_size = 3
+        mapping = ML.OutputMapper.create_mapping(
+            ML.MeasurementStrategy.MODEEXPECTATION,
+            input_size=input_size,
+            output_size=output_size,
+            keys=keys,
+            no_bunching=True,
+        )
+        # Input: batch of probability distributions
+        x = torch.rand(4, input_size, requires_grad=True)
+        output = mapping(x)
+        assert output.shape == (4, output_size)
+        assert torch.all(output >= 0)
+        output.sum().backward()
+        assert x.grad is not None
+        # Since no_bunching=True
+        assert torch.all(output <= torch.ones_like(output))
+        assert torch.all(output >= torch.zeros_like(output))
+
+    def test_state_vector_mapping(self):
+        """Test StateVector mapping creation and behavior."""
+        input_size = 5
+        output_size = 5
+        mapping = ML.OutputMapper.create_mapping(
+            ML.MeasurementStrategy.STATEVECTOR,
+            input_size=input_size,
+            output_size=output_size,
+        )
+        x = torch.rand(3, input_size, requires_grad=True)
+
+        # Use MSE loss instead of sum for better gradient flow
+        output = mapping(x)
+        target = torch.ones_like(output)
+        loss = F.mse_loss(output, target)
+        loss.backward()
+
+        assert x.grad is not None
 
     def test_linear_mapping_creation(self):
         """Test creation of linear output mapping."""
@@ -65,8 +106,8 @@ class TestOutputMapper:
         assert mapping.input_size == 10
         assert mapping.output_size == 3
 
-    def test_none_mapping_creation_valid(self):
-        """Test creation of identity mapping with matching sizes."""
+    def test_state_vector_mapping_creation_valid(self):
+        """Test creation of state vector mapping with matching sizes."""
         mapping = ML.OutputMapper.create_mapping(
             ML.MeasurementStrategy.STATEVECTOR, input_size=5, output_size=5
         )
@@ -134,7 +175,6 @@ class TestLexGroupingMapper:
         assert output.shape == (4,)
         assert torch.allclose(output.sum(), input_dist.sum(), atol=1e-6)
 
-    # TODO change this test because new mapper takes amplitudes or counts
     def test_lexgrouping_batched(self):
         """Test lexicographical grouping with batched input."""
         mapper = ML.OutputMapper.create_mapping(
@@ -173,7 +213,6 @@ class TestLexGroupingMapper:
         expected = torch.tensor([0.3, 0.4, 0.3])
         assert torch.allclose(output, expected, atol=1e-6)
 
-    # TODO change this test because new mapper takes amplitudes or counts
     def test_lexgrouping_single_input(self):
         """Test lexicographical grouping with single input dimension."""
         mapper = ML.OutputMapper.create_mapping(
@@ -201,8 +240,10 @@ class TestLexGroupingMapper:
 
         input_dist = torch.rand(2, 6, requires_grad=True)
 
+        # Use MSE loss instead of sum for better gradient flow
         output = mapper(input_dist)
-        loss = output.sum()
+        target = torch.ones_like(output)
+        loss = F.mse_loss(output, target)
         loss.backward()
 
         assert input_dist.grad is not None
@@ -253,7 +294,6 @@ class TestModGroupingMapper:
         expected = torch.tensor([0.3, 0.4, 0.3, 0.0, 0.0])
         assert torch.allclose(output, expected, atol=1e-6)
 
-    # TODO change this test because new mapper takes amplitudes or counts
     def test_modgrouping_batched(self):
         """Test modulo grouping with batched input."""
         mapper = ML.OutputMapper.create_mapping(
