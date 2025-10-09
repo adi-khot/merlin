@@ -437,7 +437,7 @@ class SLOSComputeGraph:
         self, unitary: torch.Tensor, input_state: list[int]
     ) -> tuple[list[tuple[int, ...]], torch.Tensor]:
         """
-        Compute the probability distribution using the pre-built graph.
+        Compute the amplitudes using the pre-built graph.
 
         Args:
             unitary (torch.Tensor): Single unitary matrix [m x m] or batch of unitaries [b x m x m].\
@@ -448,7 +448,7 @@ class SLOSComputeGraph:
         Returns:
             Tuple[List[Tuple[int, ...]], torch.Tensor]:
                 - List of tuples representing output Fock state configurations
-                - Probability amplitudes distribution tensor
+                - Fock state amplitudes tensor
         """
         if len(unitary.shape) == 2:
             unitary = unitary.unsqueeze(0)  # Add batch dimension [1 x m x m]
@@ -519,6 +519,25 @@ class SLOSComputeGraph:
         # Remove batch dimension if input was single unitary
 
         return keys, amplitudes
+    
+    def compute_probabilities(self, unitary, input_state):
+        """
+        Compute the probability distribution using the pre-built graph.
+
+        Args:
+            unitary (torch.Tensor): Single unitary matrix [m x m] or batch of unitaries [b x m x m].\
+                The unitary should be provided in the complex dtype corresponding to the graph's dtype.\
+                For example, for torch.float32, use torch.cfloat; for torch.float64, use torch.cdouble.
+            input_state (list[int]): Input_state of length self.m with self.n_photons in the input state
+
+        Returns:
+            Tuple[List[Tuple[int, ...]], torch.Tensor]:
+                - List of tuples representing output Fock state configurations
+                - Probability distribution tensor
+        """
+        keys, amplitudes = self.compute(unitary, input_state)
+        probabilities = amplitudes.abs() ** 2
+        return keys, probabilities
 
     def _prepare_pa_inc(self, unitary):
         self.ct_inverts = []
