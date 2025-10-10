@@ -666,6 +666,9 @@ class QuantumLayer(nn.Module):
                 )
         return self
 
+    def get_output_keys(self):
+        return self.computation_process.simulation_graph.mapped_keys
+
     def get_index_photons_info(self) -> dict:
         """
         Get information about index_photons constraints.
