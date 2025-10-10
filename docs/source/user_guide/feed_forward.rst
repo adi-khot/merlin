@@ -30,6 +30,7 @@ It provides a structured way to define a sequence of layers that adapt dynamical
   - ``n``: number of photons.
   - ``m``: number of modes.
   - ``state_injection``: Whether or not to enable state injection
+  - ``conditional_modes``: Modes on which the measure will be done (default value is the first mode)
 
 - Each feedforward layer is defined as a *collection of quantum layers* corresponding to the possible measurement outcomes.
   - Each successive layer acts on *one mode less*.
@@ -61,7 +62,7 @@ Example
    import torch
 
    # Initialize feedforward block
-   ffb = FeedForwardBlock(input_size=20, n=2, m=6, depth=3)
+   ffb = FeedforwardBlock(input_size=20, n=2, m=6, depth=3, conditional_modes=[2, 5])
 
    # You can define the mode to measure (conditional_mode)
    # By default, the input_size is divided into the first layers of the ff block,
