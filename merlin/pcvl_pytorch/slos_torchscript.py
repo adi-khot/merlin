@@ -519,8 +519,8 @@ class SLOSComputeGraph:
         # Remove batch dimension if input was single unitary
 
         return keys, amplitudes
-    
-    def compute_probabilities(self, unitary, input_state):
+
+    def compute_probs(self, unitary, input_state):
         """
         Compute the probability distribution using the pre-built graph.
 

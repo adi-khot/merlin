@@ -728,7 +728,7 @@ class FidelityKernel(torch.nn.Module):
             all_circuits = U_forward[upper_idx[0]] @ U_adjoint[upper_idx[1]]
 
         # Distribution for every evaluated circuit
-        all_probs = self._slos_graph.compute_probabilities(all_circuits, self.input_state)[1]
+        _, all_probs = self._slos_graph.compute_probs(all_circuits, self.input_state)
 
         if self.shots > 0:
             # Convert complex amplitudes to real probabilities for multinomial sampling
@@ -796,7 +796,7 @@ class FidelityKernel(torch.nn.Module):
         U_adjoint = self.feature_map.compute_unitary(x2_t)
         U_adjoint = U_adjoint.conj().T
 
-        probs = self._slos_graph.compute_probabilities(U @ U_adjoint, self.input_state)[1]
+        _, probs = self._slos_graph.compute_probs(U @ U_adjoint, self.input_state)
 
         if self.shots > 0:
             # Convert complex amplitudes to real probabilities for multinomial sampling
