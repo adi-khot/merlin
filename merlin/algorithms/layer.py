@@ -123,8 +123,15 @@ class QuantumLayer(nn.Module):
             input_parameters = list(input_parameters)
 
         # Determine construction mode
-        # TODO: can be deprectated once Builder is fully supported
+
         if ansatz is not None:
+            warnings.warn(
+                "The ansatz-based QuantumLayer construction is deprecated and will be "
+                "removed in a future release. Please migrate to builder-based circuits "
+                "using `builder=CircuitBuilder(...)`.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             self._init_from_ansatz(ansatz, output_size, output_mapping_strategy)
 
         elif resolved_circuit is not None:
