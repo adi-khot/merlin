@@ -26,10 +26,12 @@ Tests for the FeedForward class.
 
 import pytest
 import torch
-import perceval as pcvl
 
-
-from merlin.algorithms.feed_forward import FeedForwardBlock, PoolingFeedForward, define_layer_no_input
+from merlin.algorithms.feed_forward import (
+    FeedForwardBlock,
+    PoolingFeedForward,
+    define_layer_no_input,
+)
 
 
 class TestFeedForwardBlock:
@@ -274,7 +276,9 @@ class TestPoolingFeedForward:
         keys_in = [(0, 0, 1, 1, 0, 0, 0, 0), (1, 0, 1, 0, 0, 0, 0, 0)]
         keys_out = [(0, 1, 0, 0), (1, 1, 0, 0)]
         pooling_modes = [[0, 1], [2, 3], [4, 5], [6, 7]]
-        match_indices, exclude_indices = pff.match_tuples(keys_in, keys_out, pooling_modes)
+        match_indices, exclude_indices = pff.match_tuples(
+            keys_in, keys_out, pooling_modes
+        )
         assert isinstance(match_indices, list)
         assert isinstance(exclude_indices, list)
 
@@ -328,6 +332,7 @@ class TestPoolingFeedForward:
     def test_optimization_with_layers(self):
         """Test optimization loop with PoolingFeedForward between layers."""
         from itertools import chain
+
         pff = PoolingFeedForward(n_modes=8, n_photons=2, n_output_modes=4)
         pre_layer = define_layer_no_input(8, 2)
         post_layer = define_layer_no_input(4, 2)
@@ -348,7 +353,9 @@ class TestPoolingFeedForward:
         """Test various pooling ratios."""
         test_cases = [(16, 8), (16, 4), (12, 6), (9, 3)]
         for n_modes, n_output_modes in test_cases:
-            pff = PoolingFeedForward(n_modes=n_modes, n_photons=2, n_output_modes=n_output_modes)
+            pff = PoolingFeedForward(
+                n_modes=n_modes, n_photons=2, n_output_modes=n_output_modes
+            )
             n_input_states = len(pff.match_indices) + len(pff.exclude_indices)
             amplitudes = torch.rand(2, n_input_states)
             output = pff(amplitudes)
@@ -379,7 +386,6 @@ class TestPoolingFeedForward:
         amplitudes = torch.rand(batch_size, n_input_states)
         output = pff(amplitudes)
         assert output.shape[0] == batch_size
-
 
 
 if __name__ == "__main__":

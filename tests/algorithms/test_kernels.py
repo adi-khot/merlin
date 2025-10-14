@@ -1133,7 +1133,9 @@ def test_iris_with_supported_constructors():
             print(
                 f"   ✓ Created {trainable_status} builder kernel: {kernel_builder.feature_map.circuit.m} modes"
             )
-            pcvl.pdisplay(kernel_builder.feature_map.circuit, output_format=pcvl.Format.TEXT)
+            pcvl.pdisplay(
+                kernel_builder.feature_map.circuit, output_format=pcvl.Format.TEXT
+            )
             # Attempt classification
             accuracy_builder = _test_kernel_classification(
                 kernel_builder,

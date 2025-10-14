@@ -1,4 +1,5 @@
 import torch
+
 from merlin.pcvl_pytorch.slos_torchscript import build_slos_distribution_computegraph
 
 
@@ -17,14 +18,18 @@ def test_slos_compute_backward_supports_unitary_grad():
     # create batched random complex matrices and obtain unitary via QR
     B = 3
     # create random complex matrix with real and imag parts
-    u = torch.randn((B, m, m), dtype=dtype, device=device) + 1j * torch.randn((B, m, m), dtype=dtype, device=device)
+    u = torch.randn((B, m, m), dtype=dtype, device=device) + 1j * torch.randn(
+        (B, m, m), dtype=dtype, device=device
+    )
     u = u.to(complex_dtype)
     # make unitary via batch QR
     q, r = torch.linalg.qr(u)
 
     # fix phases on r diagonal
     r_diag = torch.diagonal(r, dim1=-2, dim2=-1)
-    safe_abs = torch.where(torch.abs(r_diag) == 0, torch.ones_like(r_diag), torch.abs(r_diag))
+    safe_abs = torch.where(
+        torch.abs(r_diag) == 0, torch.ones_like(r_diag), torch.abs(r_diag)
+    )
     phases = r_diag / safe_abs
     q = q * phases.conj().unsqueeze(-2)
 

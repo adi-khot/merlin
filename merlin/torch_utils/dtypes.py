@@ -26,7 +26,7 @@ Utilities for converting between various dtype representations and torch dtypes.
 
 from __future__ import annotations
 
-from typing import Iterable, Tuple
+from collections.abc import Iterable
 
 import numpy as np
 import torch
@@ -50,7 +50,9 @@ _TORCH_DTYPE_MAP: dict[object, torch.dtype] = {
 }
 
 
-def to_torch_dtype(dtype_like: object, *, default: torch.dtype | None = None) -> torch.dtype:
+def to_torch_dtype(
+    dtype_like: object, *, default: torch.dtype | None = None
+) -> torch.dtype:
     """
     Convert common dtype representations (strings, numpy dtypes, torch dtypes) into torch dtypes.
 
@@ -89,7 +91,7 @@ def to_torch_dtype(dtype_like: object, *, default: torch.dtype | None = None) ->
     raise TypeError(f"Unsupported dtype representation: {dtype_like!r}")
 
 
-def resolve_float_complex(dtype: torch.dtype) -> Tuple[torch.dtype, torch.dtype]:
+def resolve_float_complex(dtype: torch.dtype) -> tuple[torch.dtype, torch.dtype]:
     """
     Given a torch dtype representing either the float or complex side, return the matching pair.
 
