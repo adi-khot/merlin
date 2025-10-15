@@ -45,8 +45,7 @@ class ComputationProcess(AbstractComputationProcess):
         dtype: torch.dtype = torch.float32,
         device: torch.device | None = None,
         no_bunching: bool = None,
-        output_map_func=None,
-        index_photons=None,
+        output_map_func=None
     ):
         self.circuit = circuit
         self.input_state = input_state
@@ -58,7 +57,6 @@ class ComputationProcess(AbstractComputationProcess):
         self.device = device
         self.no_bunching = no_bunching
         self.output_map_func = output_map_func
-        self.index_photons = index_photons
 
         # Extract circuit parameters for graph building
 
@@ -90,8 +88,7 @@ class ComputationProcess(AbstractComputationProcess):
             no_bunching=self.no_bunching,
             keep_keys=True,  # Usually want to keep keys for output interpretation
             device=self.device,
-            dtype=self.dtype,
-            index_photons=self.index_photons,
+            dtype=self.dtype
         )
 
     def compute(self, parameters: list[torch.Tensor]) -> torch.Tensor:
@@ -213,8 +210,7 @@ class ComputationProcessFactory:
         reservoir_mode: bool = False,
         no_bunching: bool = None,
         output_map_func=None,
-        index_photons=None,
-        **kwargs,
+        **kwargs
     ) -> ComputationProcess:
         """Create a computation process."""
         return ComputationProcess(
@@ -225,6 +221,5 @@ class ComputationProcessFactory:
             reservoir_mode=reservoir_mode,
             no_bunching=no_bunching,
             output_map_func=output_map_func,
-            index_photons=index_photons,
             **kwargs,
         )
