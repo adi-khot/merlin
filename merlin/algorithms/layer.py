@@ -65,7 +65,7 @@ class QuantumLayer(nn.Module):
         self,
         input_size: int,
         output_size: int | None = None,
-        # Ansatz-based construction
+        # Ansatz-based construction - will be deprecated
         ansatz: Ansatz | None = None,
         # Builder-based construction
         builder: CircuitBuilder | None = None,
@@ -94,24 +94,29 @@ class QuantumLayer(nn.Module):
         self.no_bunching = no_bunching
         self.index_photons = index_photons
 
-        trainable_parameters = list(trainable_parameters) if trainable_parameters else []
-        input_parameters = list(input_parameters) if input_parameters else []
-        resolved_circuit: pcvl.Circuit | None = None
+        if builder is not None and (
+            trainable_parameters is not None or input_parameters is not None
+        ):
+            raise ValueError(
+                "When providing a builder, do not also specify 'trainable_parameters' "
+                "or 'input_parameters'. Those prefixes are derived from the builder."
+            )
 
         self.angle_encoding_specs: dict[str, dict[str, Any]] = {}
+        resolved_circuit: pcvl.Circuit | None = None
+        trainable_parameters = list(trainable_parameters) if trainable_parameters else []
+        input_parameters = list(input_parameters) if input_parameters else []
 
-        if circuit is not None and builder is not None:
-            raise ValueError("Provide either 'circuit' or 'builder', not both")
-
-        # define circuit from input builder or from circuit
         if builder is not None:
+            if circuit is not None:
+                raise ValueError("Provide either 'circuit' or 'builder', not both")
             trainable_parameters = list(builder.trainable_parameter_prefixes)
             input_parameters = list(builder.input_parameter_prefixes)
             self.angle_encoding_specs = builder.angle_encoding_specs
             resolved_circuit = builder.to_pcvl_circuit(pcvl)
-        
         elif circuit is not None:
             resolved_circuit = circuit
+
 
         # Determine construction mode with deprecated ansatz or resolved circuit
         # this if/elif loop can be removed for future releases because resolved_circuit will always be not None
