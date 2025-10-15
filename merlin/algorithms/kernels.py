@@ -65,7 +65,7 @@ class FeatureMap:
         self._angle_encoding_specs: dict[str, dict[str, object]] = {}
 
         if circuit is not None and builder is not None:
-            raise ValueError("Provide either 'circuit' or 'builder', not both")   
+            raise ValueError("Provide either 'circuit' or 'builder', not both")
 
         if builder is not None:
             builder_trainable = builder.trainable_parameter_prefixes
@@ -74,7 +74,7 @@ class FeatureMap:
             circuit = builder.to_pcvl_circuit(pcvl)
 
         if circuit is None:
-            raise ValueError("Either 'circuit' or 'builder' must be provided")  
+            raise ValueError("Either 'circuit' or 'builder' must be provided")
         self.circuit = circuit
         self.input_size = input_size
         if trainable_parameters is None:

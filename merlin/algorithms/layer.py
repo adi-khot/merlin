@@ -104,7 +104,9 @@ class QuantumLayer(nn.Module):
 
         self.angle_encoding_specs: dict[str, dict[str, Any]] = {}
         resolved_circuit: pcvl.Circuit | None = None
-        trainable_parameters = list(trainable_parameters) if trainable_parameters else []
+        trainable_parameters = (
+            list(trainable_parameters) if trainable_parameters else []
+        )
         input_parameters = list(input_parameters) if input_parameters else []
 
         if builder is not None:
@@ -116,7 +118,6 @@ class QuantumLayer(nn.Module):
             resolved_circuit = builder.to_pcvl_circuit(pcvl)
         elif circuit is not None:
             resolved_circuit = circuit
-
 
         # Determine construction mode with deprecated ansatz or resolved circuit
         # this if/elif loop can be removed for future releases because resolved_circuit will always be not None
@@ -142,7 +143,9 @@ class QuantumLayer(nn.Module):
                 output_mapping_strategy,
             )
         else:
-            raise ValueError("Either 'ansatz', 'circuit', or 'builder' must be provided")
+            raise ValueError(
+                "Either 'ansatz', 'circuit', or 'builder' must be provided"
+            )
 
         # Setup sampling
         self.autodiff_process = AutoDiffProcess(sampling_method)
