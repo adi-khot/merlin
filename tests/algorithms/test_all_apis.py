@@ -86,8 +86,8 @@ def test_builder_api_pipeline_on_iris(iris_batch):
         measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
         dtype=features.dtype,
     )
+    pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
     model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
-    # pcvl.pdisplay(layer.computation_process.circuit)
     _check_training_step(model, features, labels)
     _train_for_classification(model, features, labels)
 
@@ -101,11 +101,11 @@ def test_simple_api_pipeline_on_iris(iris_batch):
         measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
         dtype=features.dtype,
     )
-    model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
-    # pcvl.pdisplay(layer.computation_process.circuit)
+    pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
     print(
         f"Nb of parameters = {sum(p.numel() for p in layer.parameters() if p.requires_grad)}"
     )
+    model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
     _check_training_step(model, features, labels)
     _train_for_classification(model, features, labels)
 
