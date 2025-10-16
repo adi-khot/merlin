@@ -20,39 +20,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-"""
-Output mapping strategy definitions.
-"""
+"""Grouping utilities."""
 
-from enum import Enum
+from .mappers import LexGrouping, ModGrouping
 
-
-class OutputMappingStrategy(Enum):
-    """
-    Strategy for mapping quantum probability distributions to classical outputs.
-
-    This class is deprecated and will be removed in v0.3.
-    """
-
-    LINEAR = "linear"
-    GROUPING = "grouping"
-    LEXGROUPING = "lexgrouping"
-    MODGROUPING = "modgrouping"
-    NONE = "none"
-
-
-class MeasurementStrategy(Enum):
-    """Strategy for measuring quantum states or counts and possibly apply mapping to classical outputs."""
-
-    FOCKDISTRIBUTION = "fockdistribution"
-    FOCKGROUPING = "fockgrouping"
-    MODEEXPECTATION = "modeexpectation"
-    STATEVECTOR = "statevector"
-    CUSTOMOBSERVABLE = "customobservable"
-
-
-class GroupingPolicy(Enum):
-    """Policy for the grouping of quantum probability distributions to classical outputs."""
-
-    MODGROUPING = "modgrouping"
-    LEXGROUPING = "lexgrouping"
+__all__ = ["LexGrouping", "ModGrouping"]

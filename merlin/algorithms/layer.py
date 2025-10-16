@@ -42,10 +42,9 @@ from ..builder.circuit_builder import (
 )
 from ..core.components import GenericInterferometer
 from ..core.process import ComputationProcessFactory
-from ..sampling import OutputMapper
-from ..sampling.autodiff import AutoDiffProcess
-from ..sampling.strategies import (
-    GroupingPolicy,
+from ..measurement import OutputMapper
+from ..measurement.autodiff import AutoDiffProcess
+from ..measurement.strategies import (
     MeasurementStrategy,
 )
 
@@ -79,7 +78,6 @@ class QuantumLayer(nn.Module):
         input_parameters: list[str] | None = None,
         # Common parameters
         measurement_strategy: MeasurementStrategy = MeasurementStrategy.FOCKDISTRIBUTION,
-        grouping_policy: GroupingPolicy | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         shots: int = 0,
@@ -123,9 +121,7 @@ class QuantumLayer(nn.Module):
         # Determine construction mode
         # TODO: can be deprectated once Builder is fully supported
         if ansatz is not None:
-            self._init_from_ansatz(
-                ansatz, output_size, measurement_strategy, grouping_policy
-            )
+            self._init_from_ansatz(ansatz, output_size, measurement_strategy)
 
         elif circuit is not None:
             self.circuit = circuit
@@ -137,7 +133,6 @@ class QuantumLayer(nn.Module):
                 input_parameters,
                 output_size,
                 measurement_strategy,
-                grouping_policy,
             )
         else:
             raise ValueError("Either 'ansatz' or 'circuit' must be provided")
@@ -152,7 +147,6 @@ class QuantumLayer(nn.Module):
         ansatz: Ansatz,
         output_size: int | None,
         measurement_strategy: MeasurementStrategy,
-        grouping_policy: GroupingPolicy | None,
     ):
         """Initialize from ansatz (auto-generated mode)."""
         self.ansatz = ansatz
@@ -186,7 +180,6 @@ class QuantumLayer(nn.Module):
         # Use the ansatz's output mapping strategy - it should take precedence!
         actual_strategy = ansatz.measurement_strategy
         actual_output_size = output_size or ansatz.output_size
-        grouping_policy = ansatz.grouping_policy
 
         # Setup bandwidth tuning if enabled
         if ansatz.experiment.use_bandwidth_tuning:
@@ -209,9 +202,7 @@ class QuantumLayer(nn.Module):
         self._setup_parameters_from_ansatz(ansatz)
 
         # Setup output mapping using ansatz configuration
-        self._setup_measurement_mapping(
-            ansatz, actual_output_size, actual_strategy, grouping_policy
-        )
+        self._setup_measurement_mapping(ansatz, actual_output_size, actual_strategy)
 
     def _init_from_custom_circuit(
         self,
@@ -222,7 +213,6 @@ class QuantumLayer(nn.Module):
         input_parameters: list[str],
         output_size: int | None,
         measurement_strategy: MeasurementStrategy,
-        grouping_policy: GroupingPolicy | None = None,
     ):
         """Initialize from custom circuit (backward compatible mode)."""
         self.auto_generation_mode = False
@@ -263,9 +253,7 @@ class QuantumLayer(nn.Module):
         self._setup_parameters_from_custom(trainable_parameters)
 
         # Setup output mapping
-        self._setup_measurement_mapping_from_custom(
-            output_size, measurement_strategy, grouping_policy
-        )
+        self._setup_measurement_mapping_from_custom(output_size, measurement_strategy)
 
     def _validate_input_state_with_index_photons(self, input_state: list[int]):
         """Validate that input_state respects index_photons constraints."""
@@ -377,7 +365,6 @@ class QuantumLayer(nn.Module):
         ansatz: Ansatz,
         output_size: int | None,
         measurement_strategy: MeasurementStrategy,
-        grouping_policy: GroupingPolicy | None,
     ):
         """Setup output mapping for ansatz-based construction."""
         # Get distribution size
@@ -407,12 +394,6 @@ class QuantumLayer(nn.Module):
                 self.output_size = circuit_m
             elif measurement_strategy == MeasurementStrategy.STATEVECTOR:
                 self.output_size = dist_size
-            else:
-                warnings.warn(
-                    f"output_size should be specified for FockGrouping measurement strategy. Will default to the number of possible Fock states ({dist_size}).",
-                    stacklevel=2,
-                )
-                self.output_size = dist_size
         else:
             self.output_size = output_size
 
@@ -425,16 +406,13 @@ class QuantumLayer(nn.Module):
             and self.output_size != dist_size
         ):
             raise ValueError(
-                f"Distribution size ({dist_size}) must equal output size ({self.output_size}) "
+                f"Output size ({self.output_size}) must equal Distribution size ({dist_size}) "
                 f"when using FockDistribution or StateVector measurement strategies"
             )
 
         # Create output mapping
         self.measurement_mapping = OutputMapper.create_mapping(
             measurement_strategy,
-            dist_size,
-            self.output_size,
-            grouping_policy,
             self.computation_process.no_bunching,
             keys,
         )
@@ -443,7 +421,6 @@ class QuantumLayer(nn.Module):
         self,
         output_size: int | None,
         measurement_strategy: MeasurementStrategy,
-        grouping_policy: GroupingPolicy | None,
     ):
         """Setup output mapping for custom circuit construction."""
         # Get distribution size
@@ -481,9 +458,6 @@ class QuantumLayer(nn.Module):
         # Create output mapping
         self.measurement_mapping = OutputMapper.create_mapping(
             measurement_strategy,
-            dist_size,
-            self.output_size,
-            grouping_policy,
             self.computation_process.no_bunching,
             keys,
         )
@@ -765,7 +739,6 @@ class QuantumLayer(nn.Module):
         reservoir_mode: bool = False,
         output_size: int | None = None,
         measurement_strategy: MeasurementStrategy = MeasurementStrategy.FOCKDISTRIBUTION,
-        grouping_policy: GroupingPolicy | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         no_bunching: bool = True,
@@ -787,8 +760,6 @@ class QuantumLayer(nn.Module):
             reservoir_mode: Reserved for API compatibility (unused in builder mode).
             output_size: Optional classical output width.
             measurement_strategy: Strategy used to post-process the quantum amplitudes or counts.
-            grouping_policy: Optional grouping policy to use for sampling photons. Only used if measurement_strategy is
-                             FockGrouping.
             device: Optional target device for tensors.
             dtype: Optional tensor dtype.
             no_bunching: Whether to restrict to states without photon bunching.
@@ -873,7 +844,6 @@ class QuantumLayer(nn.Module):
             circuit=builder,
             n_photons=n_photons,
             measurement_strategy=measurement_strategy,
-            grouping_policy=grouping_policy,
             shots=shots,
             no_bunching=no_bunching,
             device=device,

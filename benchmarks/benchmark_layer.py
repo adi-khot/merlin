@@ -255,12 +255,12 @@ def test_output_mapping_strategies_benchmark(benchmark, config: dict, device: st
             "grouping_policy": None,
         },
         {
-            "measurement_strategy": ML.MeasurementStrategy.FOCKGROUPING,
-            "grouping_policy": ML.GroupingPolicy.LEXGROUPING,
+            "measurement_strategy": ML.MeasurementStrategy.FOCKDISTRIBUTION,
+            "grouping_policy": ML.LexGrouping,
         },
         {
-            "measurement_strategy": ML.MeasurementStrategy.FOCKGROUPING,
-            "grouping_policy": ML.GroupingPolicy.MODGROUPING,
+            "measurement_strategy": ML.MeasurementStrategy.FOCKDISTRIBUTION,
+            "grouping_policy": ML.ModGrouping,
         },
     ]
 
@@ -278,7 +278,6 @@ def test_output_mapping_strategies_benchmark(benchmark, config: dict, device: st
                     PhotonicBackend=experiment,
                     input_size=config["input_size"],
                     measurement_strategy=cfg["measurement_strategy"],
-                    grouping_policy=cfg["grouping_policy"],
                 )
                 layer = ML.QuantumLayer(input_size=config["input_size"], ansatz=ansatz)
                 model = torch.nn.Sequential(
@@ -291,13 +290,15 @@ def test_output_mapping_strategies_benchmark(benchmark, config: dict, device: st
                 ansatz = ML.AnsatzFactory.create(
                     PhotonicBackend=experiment,
                     input_size=config["input_size"],
-                    output_size=config["output_size"],
                     measurement_strategy=cfg["measurement_strategy"],
-                    grouping_policy=cfg["grouping_policy"],
                 )
                 layer = ML.QuantumLayer(input_size=config["input_size"], ansatz=ansatz)
+                model = torch.nn.Sequential(
+                    layer,
+                    cfg["grouping_policy"](layer.output_size, config["output_size"]),
+                )
                 x = torch.rand(16, config["input_size"])
-                output = layer(x)
+                output = model(x)
                 results.append(output)
         return results
 

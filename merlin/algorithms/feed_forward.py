@@ -5,7 +5,7 @@ import torch
 from perceval.components import BS, PS
 
 from ..core.generators import CircuitType
-from ..sampling.strategies import MeasurementStrategy
+from ..measurement.strategies import MeasurementStrategy
 from .layer import QuantumLayer
 
 

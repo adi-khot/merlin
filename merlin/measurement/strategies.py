@@ -21,30 +21,30 @@
 # SOFTWARE.
 
 """
-Automatic differentiation handling for sampling.
+Output mapping strategy definitions.
 """
 
-import warnings
-
-from ..sampling.process import SamplingProcess
+from enum import Enum
 
 
-class AutoDiffProcess:
-    """Handles automatic differentiation backend and sampling noise integration."""
+class OutputMappingStrategy(Enum):
+    """
+    Strategy for mapping quantum probability distributions to classical outputs.
 
-    def __init__(self, sampling_method: str = "multinomial"):
-        self.sampling_noise = SamplingProcess(method=sampling_method)
+    This class is deprecated and will be removed in v0.3.
+    """
 
-    def autodiff_backend(
-        self, needs_gradient: bool, apply_sampling: bool, shots: int
-    ) -> tuple[bool, int]:
-        """Determine sampling configuration based on gradient requirements."""
-        if needs_gradient and (apply_sampling or shots > 0):
-            warnings.warn(
-                "Sampling was requested but is disabled because gradients are being computed. "
-                "Sampling during gradient computation would lead to incorrect gradients.",
-                category=UserWarning,
-                stacklevel=1,
-            )
-            return False, 0
-        return apply_sampling, shots
+    LINEAR = "linear"
+    GROUPING = "grouping"
+    LEXGROUPING = "lexgrouping"
+    MODGROUPING = "modgrouping"
+    NONE = "none"
+
+
+class MeasurementStrategy(Enum):
+    """Strategy for measuring quantum states or counts and possibly apply mapping to classical outputs."""
+
+    FOCKDISTRIBUTION = "fockdistribution"
+    MODEEXPECTATION = "modeexpectation"
+    STATEVECTOR = "statevector"
+    CUSTOMOBSERVABLE = "customobservable"

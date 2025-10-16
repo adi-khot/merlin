@@ -36,7 +36,7 @@ from merlin.core.generators import (
     StatePattern,
 )
 from merlin.core.process import ComputationProcessFactory
-from merlin.sampling.strategies import MeasurementStrategy
+from merlin.measurement.strategies import MeasurementStrategy
 
 
 def calculate_fock_space_size(n_modes: int, n_photons: int) -> int:

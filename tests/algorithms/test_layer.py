@@ -225,12 +225,12 @@ class TestQuantumLayer:
                 "grouping_policy": None,
             },
             {
-                "measurement_strategy": ML.MeasurementStrategy.FOCKGROUPING,
-                "grouping_policy": ML.GroupingPolicy.LEXGROUPING,
+                "measurement_strategy": ML.MeasurementStrategy.FOCKDISTRIBUTION,
+                "grouping_policy": ML.LexGrouping,
             },
             {
-                "measurement_strategy": ML.MeasurementStrategy.FOCKGROUPING,
-                "grouping_policy": ML.GroupingPolicy.MODGROUPING,
+                "measurement_strategy": ML.MeasurementStrategy.FOCKDISTRIBUTION,
+                "grouping_policy": ML.ModGrouping,
             },
         ]
 
@@ -240,7 +240,6 @@ class TestQuantumLayer:
                     PhotonicBackend=experiment,
                     input_size=2,
                     measurement_strategy=cfg["measurement_strategy"],
-                    grouping_policy=cfg["grouping_policy"],
                 )
 
                 layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
@@ -257,15 +256,16 @@ class TestQuantumLayer:
                 ansatz = ML.AnsatzFactory.create(
                     PhotonicBackend=experiment,
                     input_size=2,
-                    output_size=4,
                     measurement_strategy=cfg["measurement_strategy"],
-                    grouping_policy=cfg["grouping_policy"],
                 )
 
                 layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+                model = torch.nn.Sequential(
+                    layer, cfg["grouping_policy"](layer.output_size, 4)
+                )
 
                 x = torch.rand(3, 2)
-                output = layer(x)
+                output = model(x)
 
                 assert output.shape == (3, 4)
                 assert torch.all(torch.isfinite(output))

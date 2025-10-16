@@ -24,7 +24,7 @@ import math as math
 
 import torch
 
-from ..core.generators import CircuitType
+from ...core.generators import CircuitType
 
 """
 Output mapping implementations for quantum-to-classical conversion.

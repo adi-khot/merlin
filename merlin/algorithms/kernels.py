@@ -8,12 +8,12 @@ import torch
 from torch import Tensor
 
 from ..builder.circuit_builder import ANGLE_ENCODING_MODE_ERROR, CircuitBuilder
+from ..measurement.autodiff import AutoDiffProcess
 from ..pcvl_pytorch.locirc_to_tensor import CircuitConverter
 from ..pcvl_pytorch.slos_torchscript import (
     build_slos_distribution_computegraph as build_slos_graph,
 )
-from ..sampling.autodiff import AutoDiffProcess
-from ..torch_utils.dtypes import to_torch_dtype
+from ..utils.torch_utils.dtypes import to_torch_dtype
 
 
 class FeatureMap:

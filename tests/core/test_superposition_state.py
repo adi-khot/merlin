@@ -2,7 +2,7 @@ import perceval as pcvl
 import torch
 
 from merlin.algorithms.layer import QuantumLayer
-from merlin.sampling.strategies import MeasurementStrategy
+from merlin.measurement.strategies import MeasurementStrategy
 
 
 def classical_method(layer, input_state):
