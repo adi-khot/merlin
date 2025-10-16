@@ -635,18 +635,18 @@ class TestKernelConstructionConsistency:
             input_parameters="x",
         )
         print("Manual circuit:")
-        pcvl.pdisplay(fm_manual.circuit)
+        pcvl.pdisplay(fm_manual.circuit, output_format=pcvl.Format.TEXT)
 
         # Method 2: simple factory
         fm_simple = FeatureMap.simple(input_size=2, n_modes=3, n_photons=2)
         print("Simple factory circuit:")
-        pcvl.pdisplay(fm_simple.circuit)
+        pcvl.pdisplay(fm_simple.circuit, output_format=pcvl.Format.TEXT)
 
         # Method 3: KernelCircuitBuilder
         builder = KernelCircuitBuilder()
         fm_builder = builder.input_size(2).n_modes(3).build_feature_map()
         print("Builder API circuit:")
-        pcvl.pdisplay(fm_builder.circuit)
+        pcvl.pdisplay(fm_builder.circuit, output_format=pcvl.Format.TEXT)
 
         assert fm_manual.input_size == fm_simple.input_size == fm_builder.input_size
         assert fm_manual.circuit.m == fm_simple.circuit.m == fm_builder.circuit.m
@@ -1133,7 +1133,9 @@ def test_iris_with_supported_constructors():
             print(
                 f"   ✓ Created {trainable_status} builder kernel: {kernel_builder.feature_map.circuit.m} modes"
             )
-            pcvl.pdisplay(kernel_builder.feature_map.circuit)
+            pcvl.pdisplay(
+                kernel_builder.feature_map.circuit, output_format=pcvl.Format.TEXT
+            )
             # Attempt classification
             accuracy_builder = _test_kernel_classification(
                 kernel_builder,

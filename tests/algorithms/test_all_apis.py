@@ -85,7 +85,7 @@ def test_builder_api_pipeline_on_iris(iris_batch):
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
         dtype=features.dtype,
     )
-    pcvl.pdisplay(layer.computation_process.circuit)
+    pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
     _check_training_step(layer, features, labels)
     _train_for_classification(layer, features, labels)
 
@@ -100,7 +100,7 @@ def test_simple_api_pipeline_on_iris(iris_batch):
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
         dtype=features.dtype,
     )
-    pcvl.pdisplay(layer.computation_process.circuit)
+    pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
     print(
         f"Nb of parameters = {sum(p.numel() for p in layer.parameters() if p.requires_grad)}"
     )

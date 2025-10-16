@@ -534,6 +534,10 @@ class QuantumLayer(nn.Module):
             return encoded.squeeze(0)
         return encoded
 
+    def set_input_state(self, input_state):
+        self.input_state = input_state
+        self.computation_process.input_state = input_state
+
     def prepare_parameters(
         self, input_parameters: list[torch.Tensor]
     ) -> list[torch.Tensor]:
@@ -661,6 +665,9 @@ class QuantumLayer(nn.Module):
                     dtype=self.dtype, device=self.device
                 )
         return self
+
+    def get_output_keys(self):
+        return self.computation_process.simulation_graph.mapped_keys
 
     def get_index_photons_info(self) -> dict:
         """

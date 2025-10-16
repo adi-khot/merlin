@@ -13,23 +13,7 @@ from ..pcvl_pytorch.slos_torchscript import (
     build_slos_distribution_computegraph as build_slos_graph,
 )
 from ..sampling.autodiff import AutoDiffProcess
-
-dtype_to_torch: dict[object, torch.dtype] = {
-    "float": torch.float64,
-    "complex": torch.complex128,
-    "float64": torch.float64,
-    "float32": torch.float32,
-    "complex128": torch.complex128,
-    "complex64": torch.complex64,
-    torch.float64: torch.float64,
-    torch.float32: torch.float32,
-    torch.complex128: torch.complex128,
-    torch.complex64: torch.complex64,
-    np.float64: torch.float64,
-    np.float32: torch.float32,
-    np.complex128: torch.complex128,
-    np.complex64: torch.complex64,
-}
+from ..torch_utils.dtypes import to_torch_dtype
 
 
 class FeatureMap:
@@ -73,7 +57,7 @@ class FeatureMap:
         if trainable_parameters is None:
             trainable_parameters = builder_trainable
         self.trainable_parameters = trainable_parameters or []
-        self.dtype = dtype_to_torch.get(dtype, torch.float32)
+        self.dtype = to_torch_dtype(dtype)
         self.device = device or torch.device("cpu")
         self.is_trainable = bool(trainable_parameters)
         self._encoder = encoder  # NEW
@@ -627,8 +611,7 @@ class FidelityKernel(torch.nn.Module):
         if dtype is None:
             self.dtype = feature_map.dtype
         else:
-            mapped = dtype_to_torch.get(dtype)
-            self.dtype = mapped if mapped is not None else feature_map.dtype
+            self.dtype = to_torch_dtype(dtype, default=feature_map.dtype)
         self.input_size = self.feature_map.input_size
 
         if self.feature_map.circuit.m != len(input_state):
