@@ -73,8 +73,8 @@ class QuantumLayer(nn.Module):
         builder: CircuitBuilder | None = None,
         # Custom circuit
         circuit: pcvl.Circuit | None = None,
-        trainable_parameters: list[str] = None,
-        input_parameters: list[str] = None,
+        trainable_parameters: list[str] | None = None,
+        input_parameters: list[str] | None = None,
         # For both custom circuits and builder
         input_state: list[int] | None = None,
         n_photons: int | None = None,
