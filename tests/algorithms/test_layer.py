@@ -220,7 +220,6 @@ class TestQuantumLayer:
                                 builder = builder,  
                                 output_mapping_strategy=ML.OutputMappingStrategy.GROUPING)
     
-        pcvl.pdisplay(layer.circuit)
         layer_str = str(layer)
         print(f"Layer string representation:\n{layer_str}")
         assert "QuantumLayer" in layer_str
