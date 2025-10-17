@@ -92,7 +92,7 @@ Grouping modules reshape the output of :class:`~merlin.measurement.strategies.Me
 LexGrouping
 -----------
 
-Groups consecutive probabilities into equally sized buckets. Padding with zeros ensures all buckets have the same width.
+Groups consecutive values into equally sized buckets. Padding with zeros ensures all buckets have the same width.
 
 .. code-block:: python
 
@@ -104,10 +104,17 @@ Groups consecutive probabilities into equally sized buckets. Padding with zeros 
 
 Useful when the order of Fock states carries meaning (e.g., lexicographic encoding). The module preserves probability mass and supports batched inputs.
 
+Example (single vector)::
+
+    >>> p = torch.tensor([0.1, 0.2, 0.4, 0.3])
+    >>> mapper = ML.LexGrouping(input_size=4, output_size=2)
+    >>> mapper(p)
+    tensor([0.3000, 0.7000])
+
 ModGrouping
 -----------
 
-Sums probabilities sharing the same index modulo ``output_size``. When ``output_size`` exceeds ``input_size``, the layer pads with zeros.
+Sums values sharing the same index modulo ``output_size``. When ``output_size`` exceeds ``input_size``, the layer pads with zeros.
 
 .. code-block:: python
 
@@ -117,6 +124,13 @@ Sums probabilities sharing the same index modulo ``output_size``. When ``output_
     )
 
 This is effective for cyclic structures (e.g., periodic sensors) where indices wrapping around the distribution should be combined.
+
+Example (single vector)::
+
+    >>> p = torch.tensor([0.1, 0.2, 0.3, 0.4])
+    >>> mapper = ML.ModGrouping(input_size=4, output_size=2)
+    >>> mapper(p)
+    tensor([0.4000, 0.6000])
 
 Chaining Measurement and Grouping
 ---------------------------------
