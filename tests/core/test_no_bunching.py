@@ -27,7 +27,7 @@ Tests for no_bunching functionality in quantum computation.
 import math
 
 import torch
-
+import perceval as pcvl
 from merlin.algorithms.layer import QuantumLayer
 from merlin.core.generators import (
     CircuitGenerator,
@@ -183,9 +183,8 @@ class TestNoBunchingFunctionality:
             input_state = StateGenerator.generate_state(
                 n_modes, n_photons, StatePattern.PERIODIC
             )
-
             q_layer = QuantumLayer(
-                input_size=2,
+                input_size=3,
                 circuit=circuit,
                 input_state=input_state,
                 trainable_parameters=["phi_"],
