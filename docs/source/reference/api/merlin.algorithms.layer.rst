@@ -11,12 +11,18 @@ Example: Quickstart QuantumLayer
 
 .. code-block:: python
 
-    from merlin import QuantumLayer, OutputMappingStrategy
+    import torch.nn as nn
+    from merlin import MeasurementStrategy, QuantumLayer
+
     simple_layer = QuantumLayer.simple(
         input_size=4,
         n_params=120,
-        output_size=3,
-        output_mapping_strategy=OutputMappingStrategy.GROUPING,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+    )
+
+    model = nn.Sequential(
+        simple_layer,
+        nn.Linear(simple_layer.output_size, 3),
     )
     # Train and evaluate as a standard torch.nn.Module
 
@@ -35,6 +41,8 @@ Example: Declarative builder API
 
 .. code-block:: python
 
+    import torch.nn as nn
+    from merlin import LexGrouping, MeasurementStrategy, QuantumLayer
     from merlin.builder import CircuitBuilder
     builder = CircuitBuilder(n_modes=6)
     builder.add_generic_interferometer(trainable=True, name="U1")
@@ -45,9 +53,13 @@ Example: Declarative builder API
     builder_layer = QuantumLayer(
         input_size=4,
         circuit=builder,
-        n_photons=3, # is equivalent to input_state=[1,1,1,0,0,0]
-        output_size=3,
-        output_mapping_strategy=OutputMappingStrategy.GROUPING,
+        n_photons=3,  # is equivalent to input_state=[1,1,1,0,0,0]
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+    )
+
+    model = nn.Sequential(
+        builder_layer,
+        LexGrouping(builder_layer.output_size, 3),
     )
     # Train and evaluate as a standard torch.nn.Module
 
@@ -77,7 +89,9 @@ Example: Manual Perceval circuit (more control)
 
 .. code-block:: python
 
+    import torch.nn as nn
     import perceval as pcvl
+    from merlin import LexGrouping, MeasurementStrategy, QuantumLayer
     modes = 6
     wl = pcvl.GenericInterferometer(
         modes,
@@ -98,13 +112,17 @@ Example: Manual Perceval circuit (more control)
     circuit.add(0, wr)
 
     manual_layer = QuantumLayer(
-        input_size=4, # matches the number of phase shifters named "input{mode}"
+        input_size=4,  # matches the number of phase shifters named "input{mode}"
         circuit=circuit,
-        input_state=[1,0,1,0,1,0],
+        input_state=[1, 0, 1, 0, 1, 0],
         trainable_parameters=["theta"],
         input_parameters=["input"],
-        output_size=3,
-        output_mapping_strategy=OutputMappingStrategy.GROUPING,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+    )
+
+    model = nn.Sequential(
+        manual_layer,
+        LexGrouping(manual_layer.output_size, 3),
     )
     # Train and evaluate as a standard torch.nn.Module
 

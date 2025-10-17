@@ -38,10 +38,10 @@ from .builder.ansatz import Ansatz, AnsatzFactory
 from .core.generators import CircuitGenerator, CircuitType, StateGenerator, StatePattern
 from .core.photonicbackend import PhotonicBackend
 from .measurement import (
-    FockDistribution,
-    ModeExpectation,
+    AmplitudeVector,
+    MeasurementDistribution,
+    ModeExpectations,
     OutputMapper,
-    StateVector,
 )
 from .measurement.autodiff import AutoDiffProcess
 from .measurement.process import SamplingProcess
@@ -77,9 +77,9 @@ __all__ = [
     "SamplingProcess",
     "AutoDiffProcess",
     "OutputMapper",
-    "FockDistribution",
-    "ModeExpectation",
-    "StateVector",
+    "MeasurementDistribution",
+    "ModeExpectations",
+    "AmplitudeVector",
     "LexGrouping",
     "ModGrouping",
     "CircuitConverter",

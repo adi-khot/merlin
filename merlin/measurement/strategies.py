@@ -44,7 +44,7 @@ class OutputMappingStrategy(Enum):
 class MeasurementStrategy(Enum):
     """Strategy for measuring quantum states or counts and possibly apply mapping to classical outputs."""
 
-    FOCKDISTRIBUTION = "fockdistribution"
-    MODEEXPECTATION = "modeexpectation"
-    STATEVECTOR = "statevector"
+    MEASUREMENTDISTRIBUTION = "measurementdistribution"
+    MODEEXPECTATIONS = "modeexpectations"
+    AMPLITUDEVECTOR = "amplitudevector"
     CUSTOMOBSERVABLE = "customobservable"

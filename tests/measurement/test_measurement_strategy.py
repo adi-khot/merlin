@@ -31,8 +31,8 @@ from merlin.measurement.strategies import MeasurementStrategy
 
 
 class TestQuantumLayerMeasurementStrategy:
-    def test_fock_distribution(self):
-        # FockDistribution is equivalent to OutputMappingStrategy.NONE
+    def test_measurement_distribution(self):
+        # MeasurementDistribution is equivalent to OutputMappingStrategy.NONE
         experiment = ML.PhotonicBackend(
             circuit_type=ML.CircuitType.PARALLEL, n_modes=3, n_photons=1
         )
@@ -41,7 +41,7 @@ class TestQuantumLayerMeasurementStrategy:
             PhotonicBackend=experiment,
             input_size=2,
             output_size=output_size,
-            measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
         x = torch.rand(2, 2, requires_grad=True)
@@ -60,14 +60,14 @@ class TestQuantumLayerMeasurementStrategy:
         output.sum().backward()
         assert x.grad is not None
 
-        # Ensure that QuantumLayer with FockDistribution strategy can be initialized without specifying output_size and that its output_size is accessible
+        # Ensure that QuantumLayer with MeasurementDistribution strategy can be initialized without specifying output_size and that its output_size is accessible
         experiment = ML.PhotonicBackend(
             circuit_type=ML.CircuitType.PARALLEL, n_modes=3, n_photons=1
         )
         ansatz = ML.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=2,
-            measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
         x = torch.rand(2, 2, requires_grad=True)
@@ -85,7 +85,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_state=input_state,
             trainable_parameters=[],
             input_parameters=["px"],
-            measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
             no_bunching=True,
         )
         x = torch.rand(2, 2, requires_grad=True)
@@ -103,20 +103,20 @@ class TestQuantumLayerMeasurementStrategy:
             PhotonicBackend=experiment,
             input_size=2,
             output_size=output_size,
-            measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
         with pytest.raises(ValueError):
             layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
 
     def test_linear_equivalent(self):
-        # OutputMappingStrategy.LINEAR is equivalent to FockDistribution + torch.nn.Linear
+        # OutputMappingStrategy.LINEAR is equivalent to MeasurementDistribution + torch.nn.Linear
         experiment = ML.PhotonicBackend(
             circuit_type=ML.CircuitType.PARALLEL, n_modes=3, n_photons=1
         )
         ansatz = ML.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=2,
-            measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
         linear = torch.nn.Linear(layer.output_size, 2)
@@ -144,7 +144,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_state=input_state,
             trainable_parameters=[],
             input_parameters=["px"],
-            measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
             no_bunching=True,
         )
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 2))
@@ -154,8 +154,8 @@ class TestQuantumLayerMeasurementStrategy:
         output.sum().backward()
         assert x.grad is not None
 
-    def test_mode_expectation(self):
-        # ModeExpectation is a new strategy unlike any previous OutputMappingStrategy
+    def test_mode_expectations(self):
+        # ModeExpectations is a new strategy unlike any previous OutputMappingStrategy
         n_modes = 3
         n_photons = 2
         experiment = ML.PhotonicBackend(
@@ -165,7 +165,7 @@ class TestQuantumLayerMeasurementStrategy:
             PhotonicBackend=experiment,
             input_size=2,
             output_size=n_modes,
-            measurement_strategy=MeasurementStrategy.MODEEXPECTATION,
+            measurement_strategy=MeasurementStrategy.MODEEXPECTATIONS,
         )
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
         x = torch.rand(2, 2, requires_grad=True)
@@ -185,7 +185,7 @@ class TestQuantumLayerMeasurementStrategy:
         assert torch.all(output <= 1.0 + 1e-6)
         assert torch.all(output >= -1e-6)  # No negative values
 
-        # ModeExpectation with explicit no_bunching=True
+        # ModeExpectations with explicit no_bunching=True
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz, no_bunching=True)
         output = layer(x)
         assert output.shape == (2, n_modes)
@@ -195,7 +195,7 @@ class TestQuantumLayerMeasurementStrategy:
         assert torch.all(output <= 1.0 + 1e-6)
         assert torch.all(output >= -1e-6)  # No negative values
 
-        # ModeExpectation with no_bunching=False (allows output values > 1)
+        # ModeExpectations with no_bunching=False (allows output values > 1)
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz, no_bunching=False)
         output = layer(x)
         assert output.shape == (2, n_modes)
@@ -207,11 +207,11 @@ class TestQuantumLayerMeasurementStrategy:
             output <= n_photons + 1e-6
         )  # Some values can surpass 1 but cannot surpass the number of photons
 
-        # ModeExpectation can be initialized without specifying output_size. Its output_size is accessible and equal to n_modes
+        # ModeExpectations can be initialized without specifying output_size. Its output_size is accessible and equal to n_modes
         ansatz = ML.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=2,
-            measurement_strategy=MeasurementStrategy.MODEEXPECTATION,
+            measurement_strategy=MeasurementStrategy.MODEEXPECTATIONS,
         )
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
         assert layer.output_size == n_modes
@@ -232,7 +232,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_state=input_state,
             trainable_parameters=[],
             input_parameters=["px"],
-            measurement_strategy=MeasurementStrategy.MODEEXPECTATION,
+            measurement_strategy=MeasurementStrategy.MODEEXPECTATIONS,
             no_bunching=True,
         )
         x = torch.rand(2, 2, requires_grad=True)
@@ -241,18 +241,18 @@ class TestQuantumLayerMeasurementStrategy:
         output.sum().backward()
         assert x.grad is not None
 
-        """# Error: ModeExpectation with wrong output_size (not None or n_modes)
+        """# Error: ModeExpectations with wrong output_size (not None or n_modes)
         ansatz = ML.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=2,
             output_size=10,  # Wrong output size
-            measurement_strategy=MeasurementStrategy.MODEEXPECTATION,
+            measurement_strategy=MeasurementStrategy.MODEEXPECTATIONS,
         )
         with pytest.raises(ValueError):
             layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)"""
 
-    def test_state_vector(self):
-        # StateVector is equivalent to return_amplitudes=True
+    def test_amplitude_vector(self):
+        # AmplitudeVector is equivalent to return_amplitudes=True
         experiment = ML.PhotonicBackend(
             circuit_type=ML.CircuitType.PARALLEL, n_modes=3, n_photons=1
         )
@@ -261,7 +261,7 @@ class TestQuantumLayerMeasurementStrategy:
             PhotonicBackend=experiment,
             input_size=2,
             output_size=output_size,
-            measurement_strategy=MeasurementStrategy.STATEVECTOR,
+            measurement_strategy=MeasurementStrategy.AMPLITUDEVECTOR,
         )
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
         x = torch.rand(2, 2, requires_grad=True)
@@ -282,11 +282,11 @@ class TestQuantumLayerMeasurementStrategy:
             torch.sum(output.abs() ** 2, dim=-1), torch.ones(output.shape[0]), atol=1e-6
         )
 
-        # Ensure that QuantumLayer with StateVector strategy can be initialized without specifying output_size and that its output_size is accessible and equal to the number of possible Fock states
+        # Ensure that QuantumLayer with AmplitudeVector strategy can be initialized without specifying output_size and that its output_size is accessible and equal to the number of possible Fock states
         ansatz = ML.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=2,
-            measurement_strategy=MeasurementStrategy.STATEVECTOR,
+            measurement_strategy=MeasurementStrategy.AMPLITUDEVECTOR,
         )
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
         x = torch.rand(2, 2, requires_grad=True)
@@ -307,7 +307,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_state=input_state,
             trainable_parameters=[],
             input_parameters=["px"],
-            measurement_strategy=MeasurementStrategy.STATEVECTOR,
+            measurement_strategy=MeasurementStrategy.AMPLITUDEVECTOR,
             no_bunching=True,
         )
         x = torch.rand(2, 2, requires_grad=True)
@@ -325,7 +325,7 @@ class TestQuantumLayerMeasurementStrategy:
             PhotonicBackend=experiment,
             input_size=2,
             output_size=output_size,
-            measurement_strategy=MeasurementStrategy.STATEVECTOR,
+            measurement_strategy=MeasurementStrategy.AMPLITUDEVECTOR,
         )
         with pytest.raises(ValueError):
             layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)

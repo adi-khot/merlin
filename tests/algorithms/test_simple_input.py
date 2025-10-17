@@ -8,7 +8,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from merlin import FockDistribution, MeasurementStrategy, QuantumLayer
+from merlin import MeasurementDistribution, MeasurementStrategy, QuantumLayer
 
 _PCVL_HOME = Path(__file__).resolve().parents[2] / ".pcvl_home"
 (
@@ -33,7 +33,7 @@ def test_none_strategy_without_output_size(quantum_layer_api):
     layer = QuantumLayer.simple(
         input_size=3,
         n_params=60,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         dtype=torch.float32,
     )
 
@@ -50,7 +50,7 @@ def test_none_strategy_with_matching_output_size(quantum_layer_api):
     reference_layer = QuantumLayer.simple(
         input_size=3,
         n_params=60,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
     dist_size = reference_layer.output_size
 
@@ -58,7 +58,7 @@ def test_none_strategy_with_matching_output_size(quantum_layer_api):
         input_size=3,
         n_params=60,
         output_size=dist_size,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
 
     x = torch.rand(2, 3)
@@ -74,7 +74,7 @@ def test_none_strategy_with_matching_output_size(quantum_layer_api):
             input_size=3,
             n_params=60,
             output_size=10,
-            measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
 
     with pytest.raises(ValueError):
@@ -82,7 +82,7 @@ def test_none_strategy_with_matching_output_size(quantum_layer_api):
             input_size=3,
             n_params=60,
             output_size=10,
-            measurement_strategy=MeasurementStrategy.STATEVECTOR,
+            measurement_strategy=MeasurementStrategy.AMPLITUDEVECTOR,
         )
 
     with pytest.raises(ValueError):
@@ -90,7 +90,7 @@ def test_none_strategy_with_matching_output_size(quantum_layer_api):
             input_size=3,
             n_params=60,
             output_size=5,
-            measurement_strategy=MeasurementStrategy.MODEEXPECTATION,
+            measurement_strategy=MeasurementStrategy.MODEEXPECTATIONS,
         )"""
 
 
@@ -100,11 +100,11 @@ def test_linear_strategy_creates_linear_mapping(quantum_layer_api):
     layer = QuantumLayer.simple(
         input_size=3,
         n_params=60,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
     model = nn.Sequential(layer, nn.Linear(layer.output_size, 5))
 
-    assert isinstance(layer.measurement_mapping, FockDistribution)
+    assert isinstance(layer.measurement_mapping, MeasurementDistribution)
     x = torch.rand(6, 3)
     output = model(x)
     assert output.shape == (6, 5)
@@ -115,7 +115,7 @@ def test_default_strategy_is_none(quantum_layer_api):
     sig = inspect.signature(QuantumLayer.simple)
     assert (
         sig.parameters["measurement_strategy"].default
-        == MeasurementStrategy.FOCKDISTRIBUTION
+        == MeasurementStrategy.MEASUREMENTDISTRIBUTION
     )
 
 
@@ -127,7 +127,7 @@ def test_trainable_parameter_budget_matches_request(quantum_layer_api):
         layer = QuantumLayer.simple(
             input_size=3,
             n_params=requested_params,
-            measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
 
     theta_param_count = sum(
@@ -156,7 +156,7 @@ def test_gradient_flow_for_strategies(quantum_layer_api):
     layer = QuantumLayer.simple(
         input_size=3,
         n_params=nb_params,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
     model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 4))
 
@@ -170,7 +170,7 @@ def test_gradient_flow_for_strategies(quantum_layer_api):
     layer_none = QuantumLayer.simple(
         input_size=3,
         n_params=nb_params,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
 
     x = torch.rand(8, 3, requires_grad=True)
@@ -207,7 +207,7 @@ def test_quantum_layer_simple_raises_when_input_exceeds_modes(quantum_layer_api)
         QuantumLayer.simple(
             input_size=12,
             n_params=30,
-            measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
 
 
@@ -217,7 +217,7 @@ def test_batch_shapes_and_probabilities(quantum_layer_api):
     layer = QuantumLayer.simple(
         input_size=4,
         n_params=80,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
 
     for batch_size in [1, 5, 16]:
@@ -236,7 +236,7 @@ def test_dtype_propagation(quantum_layer_api):
             input_size=3,
             n_params=60,
             dtype=dtype,
-            measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
 
         for param in layer.parameters():

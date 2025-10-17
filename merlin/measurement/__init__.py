@@ -24,10 +24,10 @@
 
 from .autodiff import AutoDiffProcess
 from .mappers import (
-    FockDistribution,
-    ModeExpectation,
+    AmplitudeVector,
+    MeasurementDistribution,
+    ModeExpectations,
     OutputMapper,
-    StateVector,
 )
 from .process import SamplingProcess
 from .strategies import MeasurementStrategy, OutputMappingStrategy
@@ -36,9 +36,9 @@ __all__ = [
     "OutputMappingStrategy",
     "MeasurementStrategy",
     "OutputMapper",
-    "FockDistribution",
-    "ModeExpectation",
-    "StateVector",
+    "MeasurementDistribution",
+    "ModeExpectations",
+    "AmplitudeVector",
     "SamplingProcess",
     "AutoDiffProcess",
 ]

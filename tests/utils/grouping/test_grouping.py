@@ -20,6 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -42,6 +43,16 @@ def test_groupings_creation():
 
 class TestLexGrouping:
     """Test suite for LexGrouping."""
+
+    def test_lexgrouping_input_size_mismatch(self):
+        """LexGrouping should raise when the input size does not match."""
+        lex_mapper = LexGrouping(input_size=4, output_size=2)
+
+        with pytest.raises(ValueError, match="Input tensor's last dimension"):
+            lex_mapper(torch.rand(3))
+
+        with pytest.raises(ValueError, match="Input tensor's last dimension"):
+            lex_mapper(torch.rand(2, 3))
 
     def test_lexgrouping_exact_division(self):
         """Test lexicographical grouping with exact division."""
@@ -120,9 +131,34 @@ class TestLexGrouping:
         assert input_dist.grad is not None
         assert not torch.allclose(input_dist.grad, torch.zeros_like(input_dist.grad))
 
+    def test_lexgrouping_with_padding_batched(self):
+        """Batched inputs with padding should preserve mass per batch."""
+        lex_mapper = LexGrouping(input_size=5, output_size=4)
+
+        input_dist = torch.tensor([
+            [1.0, 2.0, 3.0, 4.0, 5.0],
+            [5.0, 4.0, 3.0, 2.0, 1.0],
+        ])
+
+        output = lex_mapper(input_dist)
+        expected = torch.tensor([[3.0, 7.0, 5.0, 0.0], [9.0, 5.0, 1.0, 0.0]])
+
+        assert output.shape == (2, 4)
+        assert torch.allclose(output, expected, atol=1e-6)
+
 
 class TestModGrouping:
     """Test suite for ModGrouping."""
+
+    def test_modgrouping_input_size_mismatch(self):
+        """ModGrouping should raise when the input size does not match."""
+        mod_mapper = ModGrouping(input_size=5, output_size=2)
+
+        with pytest.raises(ValueError, match="Input tensor's last dimension"):
+            mod_mapper(torch.rand(4))
+
+        with pytest.raises(ValueError, match="Input tensor's last dimension"):
+            mod_mapper(torch.rand(2, 4))
 
     def test_modgrouping_basic(self):
         """Test basic modulo grouping."""
@@ -153,6 +189,18 @@ class TestModGrouping:
 
         # Should pad with zeros: [0.3, 0.4, 0.3, 0.0, 0.0]
         expected = torch.tensor([0.3, 0.4, 0.3, 0.0, 0.0])
+        assert torch.allclose(output, expected, atol=1e-6)
+
+    def test_modgrouping_larger_output_than_input_batched(self):
+        """Batched modulo grouping should pad correctly."""
+        mod_mapper = ModGrouping(input_size=2, output_size=4)
+
+        input_dist = torch.tensor([[0.2, 0.8], [0.6, 0.4]])
+
+        output = mod_mapper(input_dist)
+        expected = torch.tensor([[0.2, 0.8, 0.0, 0.0], [0.6, 0.4, 0.0, 0.0]])
+
+        assert output.shape == (2, 4)
         assert torch.allclose(output, expected, atol=1e-6)
 
     def test_modgrouping_batched(self):
@@ -215,7 +263,7 @@ def test_lexgrouping_mapping_integration():
     ansatz = ML.AnsatzFactory.create(
         PhotonicBackend=experiment,
         input_size=2,
-        measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
 
     layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
@@ -237,7 +285,7 @@ def test_modgrouping_mapping_integration():
     ansatz = ML.AnsatzFactory.create(
         PhotonicBackend=experiment,
         input_size=2,
-        measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
 
     layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
@@ -262,7 +310,7 @@ def test_mapping_gradient_flow():
         ansatz = ML.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=2,
-            measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
 
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
@@ -293,7 +341,7 @@ def test_mapping_output_bounds():
     ansatz = ML.AnsatzFactory.create(
         PhotonicBackend=experiment,
         input_size=2,
-        measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
 
     # LEXGROUPING mapping - should preserve probability mass
@@ -320,7 +368,7 @@ def test_large_dimension_mappings():
     ansatz = ML.AnsatzFactory.create(
         PhotonicBackend=experiment,
         input_size=4,
-        measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
 
     layer = ML.QuantumLayer(input_size=4, ansatz=ansatz)
@@ -343,7 +391,7 @@ def test_mapping_determinism():
     ansatz = ML.AnsatzFactory.create(
         PhotonicBackend=experiment,
         input_size=2,
-        measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
 
     layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)

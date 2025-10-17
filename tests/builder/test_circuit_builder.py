@@ -180,7 +180,7 @@ def test_builder_integrates_directly_with_quantum_layer():
         input_size=3,
         circuit=builder,
         n_photons=1,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         dtype=torch.float32,
     )
     model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
@@ -260,7 +260,7 @@ def test_angle_encoding_applies_scaling_in_quantum_layer():
         input_size=3,
         circuit=builder,
         n_photons=1,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         dtype=torch.float32,
     )
     torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
@@ -289,7 +289,7 @@ def test_angle_encoding_subset_combinations_in_quantum_layer():
         input_size=3,
         circuit=builder,
         n_photons=1,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         dtype=torch.float32,
     )
     torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
@@ -423,7 +423,7 @@ def test_generic_interferometer_layer_trains():
         input_size=4,
         circuit=builder,
         n_photons=1,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         dtype=torch.float32,
     )
     model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 4))
@@ -450,7 +450,7 @@ def test_generic_interferometer_with_additional_components_trains():
         input_size=5,
         circuit=builder,
         n_photons=1,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         dtype=torch.float32,
     )
     pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
@@ -482,7 +482,7 @@ def test_builder_functionality_on_gpu():
         circuit=builder,
         n_photons=1,
         output_size=3,
-        measurement_strategy=MeasurementStrategy.FockDistribution,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         dtype=torch.float32,
     ).to(device)
 

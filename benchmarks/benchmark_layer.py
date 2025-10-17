@@ -251,15 +251,15 @@ def test_output_mapping_strategies_benchmark(benchmark, config: dict, device: st
     """Benchmark different output mapping strategies."""
     configs = [
         {
-            "measurement_strategy": ML.MeasurementStrategy.FOCKDISTRIBUTION,
+            "measurement_strategy": ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
             "grouping_policy": None,
         },
         {
-            "measurement_strategy": ML.MeasurementStrategy.FOCKDISTRIBUTION,
+            "measurement_strategy": ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
             "grouping_policy": ML.LexGrouping,
         },
         {
-            "measurement_strategy": ML.MeasurementStrategy.FOCKDISTRIBUTION,
+            "measurement_strategy": ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
             "grouping_policy": ML.ModGrouping,
         },
     ]

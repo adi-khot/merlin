@@ -42,7 +42,7 @@ def test_load_model_on_cuda():
         input_state=[1, 1, 0, 0],
         trainable_parameters=["phi"],
         device=torch.device("cuda"),
-        measurement_strategy=ml.MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=ml.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
     model = nn.Sequential(layer, torch.nn.Linear(layer.output_size, 1)).to(
         torch.device("cuda")
@@ -74,7 +74,7 @@ def test_switch_model_to_cuda():
         input_state=[1, 1, 0, 0],
         trainable_parameters=["phi"],
         device=torch.device("cpu"),
-        measurement_strategy=ml.MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=ml.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
     )
     model = nn.Sequential(layer, torch.nn.Linear(layer.output_size, 1)).to(
         torch.device("cpu")
@@ -131,7 +131,7 @@ class QuantumClassifier_withAnsatz(nn.Module):
         ansatz = ml.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=hidden_dim,
-            measurement_strategy=ml.MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=ml.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
 
         # Build the QLayer using Merlin

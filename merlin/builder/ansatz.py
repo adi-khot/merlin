@@ -41,7 +41,7 @@ class Ansatz:
         PhotonicBackend: PhotonicBackend,
         input_size: int,
         output_size: int | None = None,
-        measurement_strategy: MeasurementStrategy = MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy: MeasurementStrategy = MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         dtype: torch.dtype | None = None,
     ):
         r"""Initialize the Ansatz with the given configuration.
@@ -117,7 +117,7 @@ class AnsatzFactory:
         PhotonicBackend: PhotonicBackend,
         input_size: int,
         output_size: int | None = None,
-        measurement_strategy: MeasurementStrategy = MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy: MeasurementStrategy = MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         dtype: torch.dtype | None = None,
     ) -> Ansatz:
         r"""Create a complete ansatz configuration.

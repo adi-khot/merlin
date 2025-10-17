@@ -75,9 +75,9 @@ class LexGrouping(nn.Module):
             padded = x
 
         if x.dim() == 2:
-            return padded.view(x.shape[0], self.output_size, -1).sum(dim=-1)
+            return padded.reshape(x.shape[0], self.output_size, -1).sum(dim=-1)
         else:
-            return padded.view(self.output_size, -1).sum(dim=-1)
+            return padded.reshape(self.output_size, -1).sum(dim=-1)
 
 
 class ModGrouping(nn.Module):
@@ -140,13 +140,7 @@ class ModGrouping(nn.Module):
                 device=x.device,
                 dtype=x.dtype,
             )
-            for b in range(batch_size):
-                result[b] = torch.zeros(
-                    self.output_size,
-                    device=x.device,
-                    dtype=x.dtype,
-                )
-                result[b].index_add_(0, group_indices, x[b])
+            result.index_add_(1, group_indices, x)
             return result
         else:
             result = torch.zeros(

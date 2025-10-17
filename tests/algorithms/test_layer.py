@@ -78,7 +78,7 @@ class TestQuantumLayer:
         ansatz = ML.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=2,
-            measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
 
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
@@ -221,15 +221,15 @@ class TestQuantumLayer:
 
         configs = [
             {
-                "measurement_strategy": ML.MeasurementStrategy.FOCKDISTRIBUTION,
+                "measurement_strategy": ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
                 "grouping_policy": None,
             },
             {
-                "measurement_strategy": ML.MeasurementStrategy.FOCKDISTRIBUTION,
+                "measurement_strategy": ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
                 "grouping_policy": ML.LexGrouping,
             },
             {
-                "measurement_strategy": ML.MeasurementStrategy.FOCKDISTRIBUTION,
+                "measurement_strategy": ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
                 "grouping_policy": ML.ModGrouping,
             },
         ]
@@ -303,7 +303,7 @@ class TestQuantumLayer:
             )
 
     def test_none_measurement_with_correct_size(self):
-        """Test FockDistribution measurement with correct size matching."""
+        """Test MeasurementDistribution measurement with correct size matching."""
         experiment = ML.PhotonicBackend(
             circuit_type=ML.CircuitType.PARALLEL, n_modes=3, n_photons=1
         )
@@ -312,7 +312,7 @@ class TestQuantumLayer:
         ansatz = ML.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=2,
-            measurement_strategy=ML.MeasurementStrategy.STATEVECTOR,
+            measurement_strategy=ML.MeasurementStrategy.AMPLITUDEVECTOR,
         )
 
         # Create layer to find out actual distribution size
@@ -323,12 +323,12 @@ class TestQuantumLayer:
         with torch.no_grad():
             temp_output = temp_layer(dummy_input)
 
-        # Now create StateVector strategy with correct size
+        # Now create AmplitudeVector strategy with correct size
         ansatz_none = ML.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=2,
             output_size=temp_output.shape[1],  # Match actual output size
-            measurement_strategy=ML.MeasurementStrategy.STATEVECTOR,
+            measurement_strategy=ML.MeasurementStrategy.AMPLITUDEVECTOR,
         )
 
         layer_none = ML.QuantumLayer(input_size=2, ansatz=ansatz_none)
@@ -363,7 +363,7 @@ class TestQuantumLayer:
             input_state=input_state,
             trainable_parameters=["phi"],  # Parameters to train (by prefix)
             input_parameters=[],  # No input parameters
-            measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
 
         output_size = math.comb(3, sum(input_state))  # Calculate output size
@@ -409,7 +409,7 @@ class TestQuantumLayer:
             input_state=input_state,
             trainable_parameters=[],  # Parameters to train (by prefix)
             input_parameters=["phi"],  # No input parameters
-            measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 

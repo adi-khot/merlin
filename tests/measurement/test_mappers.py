@@ -18,7 +18,7 @@
 # AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
+import math
 
 import pytest
 import torch
@@ -32,27 +32,27 @@ class TestOutputMapper:
     def test_linear_mapping_creation(self):
         """Test creation of linear output mapping."""
         fock_distribution = ML.OutputMapper.create_mapping(
-            ML.MeasurementStrategy.FOCKDISTRIBUTION
+            ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION
         )
         mapping = torch.nn.Sequential(fock_distribution, nn.Linear(6, 3))
-        assert isinstance(mapping[0], ML.FockDistribution)
+        assert isinstance(mapping[0], ML.MeasurementDistribution)
         assert isinstance(mapping[-1], nn.Linear)
         assert mapping[-1].in_features == 6
         assert mapping[-1].out_features == 3
 
     def test_fock_distribution_mapping_creation(self):
         fock_distribution = ML.OutputMapper.create_mapping(
-            ML.MeasurementStrategy.FOCKDISTRIBUTION
+            ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION
         )
-        assert isinstance(fock_distribution, ML.FockDistribution)
+        assert isinstance(fock_distribution, ML.MeasurementDistribution)
 
     def test_state_vector_mapping_creation_valid(self):
         """Test creation of state vector mapping with matching sizes."""
-        mapping = ML.OutputMapper.create_mapping(ML.MeasurementStrategy.STATEVECTOR)
+        mapping = ML.OutputMapper.create_mapping(ML.MeasurementStrategy.AMPLITUDEVECTOR)
         batch_size = 4
         input_amps = torch.rand(batch_size, 5)
         output_amps = mapping(input_amps)
-        assert isinstance(mapping, ML.StateVector)
+        assert isinstance(mapping, ML.AmplitudeVector)
         assert torch.allclose(input_amps, output_amps, atol=1e-6)
 
     def test_invalid_strategy(self):
@@ -63,6 +63,14 @@ class TestOutputMapper:
 
         with pytest.raises(ValueError, match="Unknown measurement strategy"):
             ML.OutputMapper.create_mapping(FakeStrategy())
+
+    def test_mode_expectations_requires_keys(self):
+        """ModeExpectations mapping should require keys."""
+        with pytest.raises(
+            ValueError,
+            match="When using ModeExpectations measurement strategy, keys must be provided.",
+        ):
+            ML.OutputMapper.create_mapping(ML.MeasurementStrategy.MODEEXPECTATIONS)
 
 
 class TestOutputMappingIntegration:
@@ -77,7 +85,7 @@ class TestOutputMappingIntegration:
         ansatz = ML.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=2,
-            measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
 
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
@@ -96,9 +104,9 @@ class TestOutputMappingIntegration:
         )
 
         strategies = [
-            ML.MeasurementStrategy.FOCKDISTRIBUTION,
-            ML.MeasurementStrategy.MODEEXPECTATION,
-            ML.MeasurementStrategy.STATEVECTOR,
+            ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            ML.MeasurementStrategy.MODEEXPECTATIONS,
+            ML.MeasurementStrategy.AMPLITUDEVECTOR,
         ]
 
         for strategy in strategies:
@@ -148,7 +156,7 @@ class TestOutputMappingIntegration:
         ansatz_linear = ML.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=2,
-            measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
         layer = ML.QuantumLayer(input_size=2, ansatz=ansatz_linear)
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
@@ -165,7 +173,7 @@ class TestOutputMappingIntegration:
             ansatz = ML.AnsatzFactory.create(
                 PhotonicBackend=experiment,
                 input_size=2,
-                measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+                measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
                 dtype=dtype,
             )
 
@@ -190,7 +198,7 @@ class TestOutputMappingIntegration:
         ansatz = ML.AnsatzFactory.create(
             PhotonicBackend=experiment,
             input_size=1,
-            measurement_strategy=ML.MeasurementStrategy.FOCKDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         )
 
         layer = ML.QuantumLayer(input_size=1, ansatz=ansatz)
@@ -201,3 +209,62 @@ class TestOutputMappingIntegration:
 
         assert output.shape == (5, 1)
         assert torch.all(torch.isfinite(output))
+
+
+class TestMeasurementDistributionMapping:
+    """Unit tests for MeasurementDistribution mapper."""
+
+    def test_amplitudes_are_squared(self):
+        """Amplitude inputs should be converted to probabilities."""
+        mapper = ML.MeasurementDistribution()
+        amplitude = torch.tensor(
+            [1 / math.sqrt(2) + 0j, 1j / math.sqrt(2)], dtype=torch.complex64
+        )
+
+        prob = mapper(amplitude)
+        expected = torch.tensor([0.5, 0.5], dtype=torch.float32)
+        assert prob.shape == (2,)
+        assert torch.allclose(prob, expected, atol=1e-6)
+
+    def test_probabilities_are_preserved(self):
+        """Already probabilistic inputs should be left untouched."""
+        mapper = ML.MeasurementDistribution()
+        probabilities = torch.tensor([[0.2, 0.8], [0.3, 0.7]], dtype=torch.float32)
+
+        prob = mapper(probabilities)
+        assert prob.shape == probabilities.shape
+        assert torch.allclose(prob, probabilities, atol=1e-6)
+
+
+class TestModeExpectationsMapping:
+    """Unit tests for ModeExpectations mapper."""
+
+    def test_no_bunching_probability(self):
+        """no_bunching=True should compute per-mode occupancy probability."""
+        keys = [(1, 0), (0, 1), (1, 1)]
+        mapper = ML.ModeExpectations(no_bunching=True, keys=keys)
+
+        probability_distribution = torch.tensor([0.2, 0.3, 0.5])
+        expected = torch.tensor([0.7, 0.8])
+
+        output = mapper(probability_distribution)
+        assert torch.allclose(output, expected, atol=1e-6)
+
+    def test_expectation_counts(self):
+        """no_bunching=False should compute expected photon counts per mode."""
+        keys = [(2, 0), (0, 2), (1, 1)]
+        mapper = ML.ModeExpectations(no_bunching=False, keys=keys)
+
+        probability_distribution = torch.tensor([[0.1, 0.2, 0.7]])
+        expected = torch.tensor([[0.9, 1.1]])
+
+        output = mapper(probability_distribution)
+        assert torch.allclose(output, expected, atol=1e-6)
+
+    def test_invalid_keys(self):
+        """Empty or mismatched keys should raise."""
+        with pytest.raises(ValueError, match="Keys list cannot be empty"):
+            ML.ModeExpectations(no_bunching=True, keys=[])
+
+        with pytest.raises(ValueError, match="All keys must have the same length"):
+            ML.ModeExpectations(no_bunching=True, keys=[(1, 0), (0, 1, 0)])

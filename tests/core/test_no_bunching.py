@@ -190,7 +190,7 @@ class TestNoBunchingFunctionality:
                 input_state=input_state,
                 trainable_parameters=["phi_"],
                 input_parameters=["pl"],
-                measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+                measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
                 no_bunching=no_bunching,
             )
 

@@ -77,7 +77,7 @@ class QuantumLayer(nn.Module):
         trainable_parameters: list[str] | None = None,
         input_parameters: list[str] | None = None,
         # Common parameters
-        measurement_strategy: MeasurementStrategy = MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy: MeasurementStrategy = MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         shots: int = 0,
@@ -381,9 +381,9 @@ class QuantumLayer(nn.Module):
 
         # Determine output size
         if output_size is None:
-            if measurement_strategy == MeasurementStrategy.FOCKDISTRIBUTION:
+            if measurement_strategy == MeasurementStrategy.MEASUREMENTDISTRIBUTION:
                 self.output_size = dist_size
-            elif measurement_strategy == MeasurementStrategy.MODEEXPECTATION:
+            elif measurement_strategy == MeasurementStrategy.MODEEXPECTATIONS:
                 if type(self.circuit) is CircuitBuilder:
                     circuit = self.circuit.build()
                 elif type(self.circuit) is pcvl.Circuit:
@@ -392,22 +392,22 @@ class QuantumLayer(nn.Module):
                     raise TypeError(f"Unknown circuit type: {type(self.circuit)}")
                 circuit_m = cast(pcvl.AComponent, circuit).m
                 self.output_size = circuit_m
-            elif measurement_strategy == MeasurementStrategy.STATEVECTOR:
+            elif measurement_strategy == MeasurementStrategy.AMPLITUDEVECTOR:
                 self.output_size = dist_size
         else:
             self.output_size = output_size
 
         # Validate NONE strategy
         if (
-            measurement_strategy == MeasurementStrategy.FOCKDISTRIBUTION
+            measurement_strategy == MeasurementStrategy.MEASUREMENTDISTRIBUTION
             and self.output_size != dist_size
         ) or (
-            measurement_strategy == MeasurementStrategy.STATEVECTOR
+            measurement_strategy == MeasurementStrategy.AMPLITUDEVECTOR
             and self.output_size != dist_size
         ):
             raise ValueError(
                 f"Output size ({self.output_size}) must equal Distribution size ({dist_size}) "
-                f"when using FockDistribution or StateVector measurement strategies"
+                f"when using MeasurementDistribution or AmplitudeVector measurement strategies"
             )
 
         # Create output mapping
@@ -437,16 +437,16 @@ class QuantumLayer(nn.Module):
 
         # Determine output size
         if output_size is None:
-            if measurement_strategy == MeasurementStrategy.FOCKDISTRIBUTION:
+            if measurement_strategy == MeasurementStrategy.MEASUREMENTDISTRIBUTION:
                 self.output_size = dist_size
-            elif measurement_strategy == MeasurementStrategy.MODEEXPECTATION:
+            elif measurement_strategy == MeasurementStrategy.MODEEXPECTATIONS:
                 if type(self.circuit) is pcvl.Circuit:
                     self.output_size = self.circuit.m
                 elif type(self.circuit) is CircuitBuilder:
                     self.output_size = self.circuit.n_modes
                 else:
                     raise TypeError(f"Unknown circuit type: {type(self.circuit)}")
-            elif measurement_strategy == MeasurementStrategy.STATEVECTOR:
+            elif measurement_strategy == MeasurementStrategy.AMPLITUDEVECTOR:
                 self.output_size = dist_size
             else:
                 raise ValueError(
@@ -738,7 +738,7 @@ class QuantumLayer(nn.Module):
         shots: int = 0,
         reservoir_mode: bool = False,
         output_size: int | None = None,
-        measurement_strategy: MeasurementStrategy = MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy: MeasurementStrategy = MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         no_bunching: bool = True,

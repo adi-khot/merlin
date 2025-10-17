@@ -83,7 +83,7 @@ def test_builder_api_pipeline_on_iris(iris_batch):
         input_size=features.shape[1],
         circuit=builder,
         n_photons=5,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         dtype=features.dtype,
     )
     pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
@@ -98,7 +98,7 @@ def test_simple_api_pipeline_on_iris(iris_batch):
     layer = QuantumLayer.simple(
         input_size=features.shape[1],
         n_params=10,
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         dtype=features.dtype,
     )
     pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
@@ -142,7 +142,7 @@ def test_manual_pcvl_circuit_pipeline_on_iris(iris_batch):
         n_photons=1,
         trainable_parameters=["theta"],
         input_parameters=["input"],
-        measurement_strategy=MeasurementStrategy.FOCKDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
         dtype=features.dtype,
     )
     model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))

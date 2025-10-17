@@ -55,9 +55,9 @@ class OutputMapper:
 
         Args:
             strategy: The measurement mapping strategy to use
-            no_bunching: (Only used for ModeExpectation measurement strategy) If True (default), the per-mode probability of finding at least one photon is returned.
+            no_bunching: (Only used for ModeExpectations measurement strategy) If True (default), the per-mode probability of finding at least one photon is returned.
                          Otherwise, it is the per-mode expected number of photons that is returned.
-            keys: (Only used for ModeExpectation measurement strategy) List of tuples that represent the possible quantum Fock states.
+            keys: (Only used for ModeExpectations measurement strategy) List of tuples that represent the possible quantum Fock states.
                   For example, keys = [(0,1,0,2), (1,0,1,0), ...]
 
         Returns:
@@ -76,53 +76,53 @@ class OutputMapper:
             )
             if strategy == OutputMappingStrategy.LINEAR:
                 warnings.warn(
-                    "OutputMappingStrategy.LINEAR was used and it will be replaced by MeasurementStrategy.FOCKDISTRIBUTION. To obtain the same behavior as before, please add a torch.nn.Linear layer after the quantum layer with your desired output size.",
+                    "OutputMappingStrategy.LINEAR was used and it will be replaced by MeasurementStrategy.MEASUREMENTDISTRIBUTION. To obtain the same behavior as before, please add a torch.nn.Linear layer after the quantum layer with your desired output size.",
                     DeprecationWarning,
                     stacklevel=2,
                 )
-                strategy = MeasurementStrategy.FOCKDISTRIBUTION
+                strategy = MeasurementStrategy.MEASUREMENTDISTRIBUTION
             elif (
                 strategy == OutputMappingStrategy.GROUPING
                 or strategy == OutputMappingStrategy.LEXGROUPING
             ):
                 warnings.warn(
-                    "OutputMappingStrategy.GROUPING or OutputMappingStrategy.LEXGROUPING was used and it will be replaced by MeasurementStrategy.FOCKDISTRIBUTION. Use merlin.GroupingPolicy.LEXGROUPING afterwards for equivalent behavior.",
+                    "OutputMappingStrategy.GROUPING or OutputMappingStrategy.LEXGROUPING was used and it will be replaced by MeasurementStrategy.MEASUREMENTDISTRIBUTION. Use merlin.GroupingPolicy.LEXGROUPING afterwards for equivalent behavior.",
                     DeprecationWarning,
                     stacklevel=2,
                 )
-                strategy = MeasurementStrategy.FOCKDISTRIBUTION
+                strategy = MeasurementStrategy.MEASUREMENTDISTRIBUTION
             elif strategy == OutputMappingStrategy.MODGROUPING:
                 warnings.warn(
-                    "OutputMappingStrategy.MODGROUPING was used and it will be replaced by MeasurementStrategy.FOCKDISTRIBUTION. Use merlin.GroupingPolicy.MODGROUPING afterwards for equivalent behavior.",
+                    "OutputMappingStrategy.MODGROUPING was used and it will be replaced by MeasurementStrategy.MEASUREMENTDISTRIBUTION. Use merlin.GroupingPolicy.MODGROUPING afterwards for equivalent behavior.",
                     DeprecationWarning,
                     stacklevel=2,
                 )
-                strategy = MeasurementStrategy.FOCKDISTRIBUTION
+                strategy = MeasurementStrategy.MEASUREMENTDISTRIBUTION
             elif strategy == OutputMappingStrategy.NONE:
                 warnings.warn(
-                    "OutputMappingStrategy.NONE was used and it will be replaced by MeasurementStrategy.FOCKDISTRIBUTION. This is equivalent to the previous behavior.",
+                    "OutputMappingStrategy.NONE was used and it will be replaced by MeasurementStrategy.MEASUREMENTDISTRIBUTION. This is equivalent to the previous behavior.",
                     DeprecationWarning,
                     stacklevel=2,
                 )
-                strategy = MeasurementStrategy.FOCKDISTRIBUTION
+                strategy = MeasurementStrategy.MEASUREMENTDISTRIBUTION
 
-        if strategy == MeasurementStrategy.FOCKDISTRIBUTION:
-            return FockDistribution()
-        elif strategy == MeasurementStrategy.MODEEXPECTATION:
+        if strategy == MeasurementStrategy.MEASUREMENTDISTRIBUTION:
+            return MeasurementDistribution()
+        elif strategy == MeasurementStrategy.MODEEXPECTATIONS:
             if keys is None:
                 raise ValueError(
-                    "When using ModeExpectation measurement strategy, keys must be provided."
+                    "When using ModeExpectations measurement strategy, keys must be provided."
                 )
-            return ModeExpectation(no_bunching, keys)
-        elif strategy == MeasurementStrategy.STATEVECTOR:
-            return StateVector()
+            return ModeExpectations(no_bunching, keys)
+        elif strategy == MeasurementStrategy.AMPLITUDEVECTOR:
+            return AmplitudeVector()
         elif strategy == MeasurementStrategy.CUSTOMOBSERVABLE:
             return CustomObservable()
         else:
             raise ValueError(f"Unknown measurement strategy: {strategy}")
 
 
-class FockDistribution(nn.Module):
+class MeasurementDistribution(nn.Module):
     """Maps quantum state amplitudes or probabilities to the complete Fock state probability distribution."""
 
     def __init__(self):
@@ -153,7 +153,7 @@ class FockDistribution(nn.Module):
         return prob.squeeze(0) if single_input else prob
 
 
-class ModeExpectation(nn.Module):
+class ModeExpectations(nn.Module):
     """Maps quantum state amplitudes or probabilities to the per mode expected number of photons."""
 
     def __init__(self, no_bunching: bool, keys: list[tuple[int, ...]]):
@@ -214,8 +214,8 @@ class ModeExpectation(nn.Module):
             raise ValueError("Input must be 1D or 2D tensor")
 
         # Get probabilities
-        fock_distribution = FockDistribution()
-        prob = fock_distribution(x)
+        distribution_mapper = MeasurementDistribution()
+        prob = distribution_mapper(x)
 
         # Handle both 1D and 2D inputs uniformly
         original_shape = prob.shape
@@ -230,7 +230,7 @@ class ModeExpectation(nn.Module):
         return marginalized_probs
 
 
-class StateVector(nn.Module):
+class AmplitudeVector(nn.Module):
     """
     Output the Fock state vector (also called amplitudes) directly. This can only be done with a simulator because amplitudes cannot be retrieved
     from the per state probabilities obtained with a QPU.
