@@ -184,12 +184,11 @@ class TestQuantumLayer:
 
     def test_output_mapping_strategies(self):
         """Test different output mapping strategies."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS,  # Use consistent circuit type
-            n_modes=4,
-            n_photons=2,
-        )
-
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+      
         strategies = [
             ML.OutputMappingStrategy.LINEAR,
             ML.OutputMappingStrategy.LEXGROUPING,
@@ -197,14 +196,11 @@ class TestQuantumLayer:
         ]
 
         for strategy in strategies:
-            ansatz = ML.AnsatzFactory.create(
-                PhotonicBackend=experiment,
-                input_size=2,
-                output_size=4,
-                output_mapping_strategy=strategy,
-            )
 
-            layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+            layer = ML.QuantumLayer(input_size=2, output_size = 4,
+                                input_state = [1,0,1,0],
+                                builder = builder,  
+                                output_mapping_strategy=strategy)
 
             x = torch.rand(3, 2)
             output = layer(x)
