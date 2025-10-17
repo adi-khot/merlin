@@ -200,13 +200,6 @@ class TestRobustness:
 
     def test_parameter_initialization_consistency(self):
         """Test that parameter initialization is consistent."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
-        )
-
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
 
         builder = ML.CircuitBuilder(n_modes=4)
         builder.add_entangling_layer(trainable=True, name="U1")
@@ -216,7 +209,6 @@ class TestRobustness:
 
         # Create multiple layers with same random seed
         torch.manual_seed(42)
-        layer1 = ML.QuantumLayer(input_size=2, ansatz=ansatz)
 
         layer1 = ML.QuantumLayer(input_size=2, output_size = 3,
                                 input_state = [1,0,1,0],
