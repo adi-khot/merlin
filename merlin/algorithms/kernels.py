@@ -25,6 +25,7 @@ class FeatureMap:
 
     Args:
         circuit: Pre-compiled :class:`pcvl.Circuit` to encode features.
+        input_size: Dimension of incoming classical data (required).
         builder: Optional :class:`CircuitBuilder` to compile into a circuit.
         input_parameters: Parameter prefix(es) that host the classical data.
         dtype: Torch dtype used when constructing the unitary.
@@ -34,9 +35,9 @@ class FeatureMap:
     def __init__(
         self,
         circuit: pcvl.Circuit | None = None,
+        input_size: int | None = None,
         *,
         builder: CircuitBuilder | None = None,
-        input_size: int,
         input_parameters: str | list[str] | None,
         trainable_parameters: list[str] | None = None,
         dtype: str | torch.dtype = torch.float32,
@@ -60,6 +61,8 @@ class FeatureMap:
         if circuit is None:
             raise ValueError("Either 'circuit' or 'builder' must be provided")
         self.circuit = circuit
+        if input_size is None:
+            raise TypeError("FeatureMap requires 'input_size' to be specified.")
         self.input_size = input_size
         if trainable_parameters is None:
             trainable_parameters = builder_trainable
