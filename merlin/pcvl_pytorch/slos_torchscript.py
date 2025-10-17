@@ -536,8 +536,12 @@ class SLOSComputeGraph:
                 - Probability distribution tensor
         """
         keys, amplitudes = self.compute(unitary, input_state)
-        probabilities = amplitudes.abs() ** 2
-        return keys, probabilities
+        keys, probabilities = self.post_pa_inc(amplitudes, unitary)
+
+        if self.keep_keys:
+            return keys, probabilities
+
+        return probabilities
 
     def _prepare_pa_inc(self, unitary):
         self.ct_inverts = []
