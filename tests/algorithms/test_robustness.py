@@ -24,9 +24,9 @@
 Robustness and integration tests for Merlin.
 """
 
+import pytest
 import torch
 import torch.nn as nn
-import pytest
 
 import merlin as ML
 

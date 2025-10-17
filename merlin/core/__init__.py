@@ -29,7 +29,6 @@ from .generators import CircuitGenerator, CircuitType, StateGenerator, StatePatt
 from .photonicbackend import PhotonicBackend
 from .process import ComputationProcess, ComputationProcessFactory
 
-
 __all__ = [
     "PhotonicBackend",
     "AbstractComputationProcess",
@@ -43,5 +42,5 @@ __all__ = [
     "Rotation",
     "BeamSplitter",
     "EntanglingBlock",
-    "Circuit"
+    "Circuit",
 ]

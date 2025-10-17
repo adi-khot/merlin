@@ -45,7 +45,7 @@ class ComputationProcess(AbstractComputationProcess):
         dtype: torch.dtype = torch.float32,
         device: torch.device | None = None,
         no_bunching: bool = None,
-        output_map_func=None
+        output_map_func=None,
     ):
         self.circuit = circuit
         self.input_state = input_state
@@ -88,7 +88,7 @@ class ComputationProcess(AbstractComputationProcess):
             no_bunching=self.no_bunching,
             keep_keys=True,  # Usually want to keep keys for output interpretation
             device=self.device,
-            dtype=self.dtype
+            dtype=self.dtype,
         )
 
     def compute(self, parameters: list[torch.Tensor]) -> torch.Tensor:
@@ -210,7 +210,7 @@ class ComputationProcessFactory:
         reservoir_mode: bool = False,
         no_bunching: bool = None,
         output_map_func=None,
-        **kwargs
+        **kwargs,
     ) -> ComputationProcess:
         """Create a computation process."""
         return ComputationProcess(
