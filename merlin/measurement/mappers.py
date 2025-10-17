@@ -181,6 +181,9 @@ class ModeExpectations(nn.Module):
             mask = (keys_tensor >= 1).T.float()
         else:
             mask = keys_tensor.T.float()
+
+        # Make the expected type explicit for static analysers.
+        self.mask: torch.Tensor
         self.register_buffer("mask", mask)
 
     def marginalize_per_mode(
