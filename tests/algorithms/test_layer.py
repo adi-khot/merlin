@@ -160,7 +160,9 @@ class TestQuantumLayer:
                                 builder = builder,  
                                 output_mapping_strategy=ML.OutputMappingStrategy.LINEAR)
         
-        layer_reservoir.requires_grad_ = False
+        layer_reservoir.requires_grad_(False)
+        assert any(p.requires_grad for p in layer_normal.parameters())
+        assert all(not p.requires_grad for p in layer_reservoir.parameters())
         
         normal_trainable = sum(
             p.numel() for p in layer_normal.parameters() if p.requires_grad
@@ -170,9 +172,9 @@ class TestQuantumLayer:
             p.numel() for p in layer_reservoir.parameters() if p.requires_grad
         )
 
-        # In reservoir mode, should have fewer or equal trainable parameters
-        # (since some parameters are fixed)
-        assert reservoir_trainable <= normal_trainable
+        # Reservoir mode should freeze all parameters while keeping the normal layer trainable.
+        assert normal_trainable > 0
+        assert reservoir_trainable == 0
 
         # Test that reservoir layer still works
         x = torch.rand(3, 2)
