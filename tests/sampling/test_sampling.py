@@ -222,15 +222,17 @@ class TestSamplingIntegration:
 
     def test_layer_sampling_during_training(self):
         """Test that sampling is disabled during training mode."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
-        )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input", subset_combinations=True)
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz, shots=100)
+        layer = ML.QuantumLayer(input_size=2, output_size = 3,
+                                input_state = [1,0,1,0],
+                                builder = builder,  
+                                output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+                                shots=100)
 
         # Set to training mode
         layer.train()
@@ -254,15 +256,15 @@ class TestSamplingIntegration:
 
     def test_layer_sampling_during_evaluation(self):
         """Test that sampling works during evaluation mode."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input", subset_combinations=True)
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz, shots=100)
+        layer = ML.QuantumLayer(input_size=2, output_size = 3,
+                                input_state = [1,0,1,0],
+                                builder = builder,  
+                                output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,)
 
         # Set to evaluation mode
         layer.eval()
@@ -284,15 +286,15 @@ class TestSamplingIntegration:
 
     def test_layer_sampling_config_update(self):
         """Test updating sampling configuration on layer."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input", subset_combinations=True)
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+        layer = ML.QuantumLayer(input_size=2, output_size = 3,
+                                input_state = [1,0,1,0],
+                                builder = builder,  
+                                output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,)
 
         # Initial config
         assert layer.shots == 0
@@ -313,15 +315,15 @@ class TestSamplingIntegration:
 
     def test_different_sampling_methods_produce_different_results(self):
         """Test that different sampling methods produce different results."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input", subset_combinations=True)
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+        layer = ML.QuantumLayer(input_size=2, output_size = 3,
+                                input_state = [1,0,1,0],
+                                builder = builder,  
+                                output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,)
         layer.eval()
 
         x = torch.rand(5, 2)
