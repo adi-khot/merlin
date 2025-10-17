@@ -271,7 +271,7 @@ def test_angle_encoding_subset_combinations_in_quantum_layer():
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
         dtype=torch.float32,
     )
-
+    pcvl.pdisplay(layer.circuit)
     x = torch.tensor([[0.2, 0.3, 0.4]], dtype=torch.float32)
     encoded = layer.prepare_parameters([x])[-1]
 
