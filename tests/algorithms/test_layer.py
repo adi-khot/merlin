@@ -36,33 +36,30 @@ class TestQuantumLayer:
 
     def test_ansatz_based_layer_creation(self):
         """Test creating a layer from an ansatz."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1, 3], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=3, output_size=5
-        )
-
-        layer = ML.QuantumLayer(input_size=3, ansatz=ansatz)
-
+        layer = ML.QuantumLayer(input_size=3, output_size = 5,
+                                input_state = [1,0,1,0],
+                                builder = builder,  
+                                output_mapping_strategy=ML.OutputMappingStrategy.GROUPING)
         assert layer.input_size == 3
         assert layer.output_size == 5
-        assert layer.auto_generation_mode is True
+        assert layer.thetas[0].shape[0] == 2 * 4 * (4-1)  # 24 trainable parameters from U1 and U2
 
     def test_forward_pass_batched(self):
         """Test forward pass with batched input."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS,  # Changed to match parameter count
-            n_modes=4,
-            n_photons=2,
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+        layer = ML.QuantumLayer(input_size=2, output_size = 3,
+                                input_state = [1,0,1,0],
+                                builder = builder,  
+                                output_mapping_strategy=ML.OutputMappingStrategy.GROUPING)
 
         # Test with batch
         x = torch.rand(10, 2)
@@ -73,18 +70,15 @@ class TestQuantumLayer:
 
     def test_forward_pass_single(self):
         """Test forward pass with single input."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL, n_modes=4, n_photons=1
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment,
-            input_size=2,
-            output_size=3,  # Don't use NONE strategy to avoid size mismatch
-            output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
-        )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+        layer = ML.QuantumLayer(input_size=2, output_size = 3,
+                                input_state = [1,0,0,0],
+                                builder = builder,  
+                                output_mapping_strategy=ML.OutputMappingStrategy.LINEAR)
 
         # Test with single sample
         x = torch.rand(1, 2)
@@ -95,18 +89,16 @@ class TestQuantumLayer:
 
     def test_gradient_computation(self):
         """Test that gradients flow through the layer."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS,
-            n_modes=4,
-            n_photons=2,
-            use_bandwidth_tuning=True,
-        )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+        layer = ML.QuantumLayer(input_size=2, output_size = 3,
+                                input_state = [1,1,0,0],
+                                builder = builder,  
+                                output_mapping_strategy=ML.OutputMappingStrategy.LINEAR)
 
         x = torch.rand(5, 2, requires_grad=True)
         output = layer(x)
@@ -127,15 +119,16 @@ class TestQuantumLayer:
 
     def test_sampling_configuration(self):
         """Test sampling configuration methods."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz, shots=100)
+        layer = ML.QuantumLayer(input_size=2, output_size = 3,
+                                input_state = [1,0,1,0],
+                                builder = builder,  
+                                output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+                                shots = 100,)
 
         assert layer.shots == 100
         assert layer.sampling_method == "multinomial"
@@ -152,35 +145,27 @@ class TestQuantumLayer:
     def test_reservoir_mode(self):
         """Test reservoir computing mode."""
         # Test normal mode first
-        experiment_normal = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL,
-            n_modes=4,
-            n_photons=2,
-            reservoir_mode=False,
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz_normal = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment_normal, input_size=2, output_size=3
-        )
-
-        layer_normal = ML.QuantumLayer(input_size=2, ansatz=ansatz_normal)
+        layer_normal = ML.QuantumLayer(input_size=2, output_size = 3,
+                                input_state = [1,0,1,0],
+                                builder = builder,  
+                                output_mapping_strategy=ML.OutputMappingStrategy.LINEAR)
+        
+        layer_reservoir = ML.QuantumLayer(input_size=2, output_size = 3,
+                                input_state = [1,0,1,0],
+                                builder = builder,  
+                                output_mapping_strategy=ML.OutputMappingStrategy.LINEAR)
+        
+        layer_reservoir.requires_grad_ = False
+        
         normal_trainable = sum(
             p.numel() for p in layer_normal.parameters() if p.requires_grad
         )
 
-        # Test reservoir mode
-        experiment_reservoir = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL,
-            n_modes=4,
-            n_photons=2,
-            reservoir_mode=True,
-        )
-
-        ansatz_reservoir = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment_reservoir, input_size=2, output_size=3
-        )
-
-        layer_reservoir = ML.QuantumLayer(input_size=2, ansatz=ansatz_reservoir)
         reservoir_trainable = sum(
             p.numel() for p in layer_reservoir.parameters() if p.requires_grad
         )
