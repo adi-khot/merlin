@@ -37,7 +37,7 @@ def test_load_model_on_cuda():
     )
 
     layer = ml.QuantumLayer(
-        input_size=2,
+        input_size=0,
         output_size=1,
         circuit=circuit,
         input_state=[1, 1, 0, 0],
@@ -65,7 +65,7 @@ def test_switch_model_to_cuda():
         shape=pcvl.InterferometerShape.RECTANGLE,
     )
     layer = ml.QuantumLayer(
-        input_size=2,
+        input_sizer=0,
         output_size=1,
         circuit=circuit,
         input_state=[1, 1, 0, 0],
