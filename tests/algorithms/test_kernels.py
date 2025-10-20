@@ -243,6 +243,131 @@ class TestFidelityKernel:
             f"Matrix has negative eigenvalues: {real_eigenvals[real_eigenvals < -1e-10]}"
         )
 
+    def test_kernel_no_bunching(self):
+        from perceval import (
+            BS,
+            PS,
+            BasicState,
+            Circuit,
+            GenericInterferometer,
+            P,
+            Processor,
+            Unitary,
+        )
+        from perceval.algorithm import Sampler
+
+        from merlin.algorithms import FidelityKernel
+
+        # ---- Evaluate kernel using Perceval ----
+        def circ_func(x):
+            """Function for generating rectangular generic Interferometer
+            with an MZI depth equal to the number of modes
+            """
+            circuit = Circuit(2) // PS(P(f"phi{2 * x}")) // BS()
+            circuit.add(0, PS(P(f"phi{2 * x + 1}")))
+            circuit.add(0, BS())
+            return circuit
+
+        input_state = [1, 1, 0, 0]
+
+        # Define the unbunching kernel
+        circuit = GenericInterferometer(len(input_state), circ_func)
+        input_size = len(circuit.get_parameters())
+
+        feature_map = FeatureMap(circuit, input_size, input_parameters=["phi"])
+
+        unbunching_kernel = FidelityKernel(
+            feature_map,
+            input_state,
+            no_bunching=True,
+            force_psd=False,
+        )
+        quantum_kernel = FidelityKernel(
+            feature_map,
+            input_state,
+            no_bunching=False,
+        )
+
+        rng = np.random.default_rng(42)
+        X1 = rng.random(input_size)
+        X2 = rng.random(input_size)
+
+        merlin_pnr = float(quantum_kernel(X1, X2))
+        merlin_thr = float(unbunching_kernel(X1, X2))
+
+        print(f"MerLin quantum kernel (PNR) {quantum_kernel(X1, X2)}")
+        print(f"MerLin quantum kernel (THR) {unbunching_kernel(X1, X2)} \n")
+        # --- Compute kernel circuit unitary using Perceval ---
+        circuit_forward = GenericInterferometer(len(input_state), circ_func)
+        for i, p in enumerate(circuit_forward.get_parameters()):
+            p.set_value(X1[i])
+        forward_unitary = np.asarray(
+            circuit_forward.compute_unitary(), dtype=np.complex128
+        )
+
+        feature_forward = (
+            feature_map.compute_unitary(torch.as_tensor(X1, dtype=feature_map.dtype))
+            .detach()
+            .cpu()
+            .numpy()
+        )
+        assert np.allclose(feature_forward, forward_unitary, atol=1e-6)
+
+        circuit_backward = GenericInterferometer(len(input_state), circ_func)
+        for i, p in enumerate(circuit_backward.get_parameters()):
+            p.set_value(X2[i])
+        backward_unitary = np.asarray(
+            circuit_backward.compute_unitary(), dtype=np.complex128
+        )
+
+        feature_backward = (
+            feature_map.compute_unitary(torch.as_tensor(X2, dtype=feature_map.dtype))
+            .detach()
+            .cpu()
+            .numpy()
+        )
+        assert np.allclose(feature_backward, backward_unitary, atol=1e-6)
+
+        circ_unitary = forward_unitary @ backward_unitary.conj().T
+        circ_unitary = Unitary(pcvl.Matrix(circ_unitary))
+
+        # Set up processor
+        processor = Processor("SLOS")
+        processor.set_circuit(circ_unitary)
+        processor.with_input(BasicState([1, 1, 0, 0]))
+        processor.min_detected_photons_filter(0)
+
+        sampler = Sampler(processor)
+
+        def state_to_tuple(state):
+            try:
+                return tuple(int(n) for n in state.tolist())
+            except AttributeError:
+                return tuple(int(n) for n in state)
+
+        raw_results = sampler.probs()["results"]
+        results = {
+            state_to_tuple(state): float(prob) for state, prob in raw_results.items()
+        }
+
+        key = tuple(input_state)
+        assert key in results
+        perceval_pnr = results[key]
+
+        thresholded_results = {
+            state: prob for state, prob in results.items() if max(state) == 1
+        }
+        print(f"Thresholded results with Perceval = {thresholded_results}")
+        total_threshold_prob = sum(thresholded_results.values())
+
+        assert total_threshold_prob > 0
+        assert key in thresholded_results
+
+        perceval_thr = thresholded_results[key] / total_threshold_prob
+
+        assert merlin_pnr == pytest.approx(perceval_pnr, rel=1e-6, abs=1e-8)
+        assert merlin_thr == pytest.approx(perceval_thr, rel=1e-6, abs=1e-8)
+
 
 class TestNKernelAlignment:
     def setup_method(self):

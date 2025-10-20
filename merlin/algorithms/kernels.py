@@ -25,6 +25,7 @@ class FeatureMap:
 
     Args:
         circuit: Pre-compiled :class:`pcvl.Circuit` to encode features.
+        input_size: Dimension of incoming classical data (required).
         builder: Optional :class:`CircuitBuilder` to compile into a circuit.
         input_parameters: Parameter prefix(es) that host the classical data.
         dtype: Torch dtype used when constructing the unitary.
@@ -34,9 +35,9 @@ class FeatureMap:
     def __init__(
         self,
         circuit: pcvl.Circuit | None = None,
+        input_size: int | None = None,
         *,
         builder: CircuitBuilder | None = None,
-        input_size: int,
         input_parameters: str | list[str] | None,
         trainable_parameters: list[str] | None = None,
         dtype: str | torch.dtype = torch.float32,
@@ -60,6 +61,8 @@ class FeatureMap:
         if circuit is None:
             raise ValueError("Either 'circuit' or 'builder' must be provided")
         self.circuit = circuit
+        if input_size is None:
+            raise TypeError("FeatureMap requires 'input_size' to be specified.")
         self.input_size = input_size
         if trainable_parameters is None:
             trainable_parameters = builder_trainable
@@ -718,16 +721,18 @@ class FidelityKernel(torch.nn.Module):
             all_circuits = U_forward[upper_idx[0]] @ U_adjoint[upper_idx[1]]
 
         # Distribution for every evaluated circuit
-        all_probs = self._slos_graph.compute(all_circuits, self.input_state)[1]
+        _, amplitudes = self._slos_graph.compute(all_circuits, self.input_state)
+        _, probabilities = self._slos_graph.compute_probs_from_amplitudes(amplitudes)
+        if probabilities.ndim == 1:
+            probabilities = probabilities.unsqueeze(0)
+        probabilities = probabilities.to(dtype=self.dtype)
 
         if self.shots > 0:
-            # Convert complex amplitudes to real probabilities for multinomial sampling
-            real_probs = torch.abs(all_probs).square()
-            all_probs = self._autodiff_process.sampling_noise.pcvl_sampler(
-                real_probs, self.shots, self.sampling_method
+            probabilities = self._autodiff_process.sampling_noise.pcvl_sampler(
+                probabilities, self.shots, self.sampling_method
             )
 
-        transition_probs = torch.abs(all_probs[:, self._input_state_index])
+        transition_probs = probabilities[:, self._input_state_index]
 
         if x2 is None:
             # Copy transition probs to upper & lower diagonal
@@ -786,15 +791,18 @@ class FidelityKernel(torch.nn.Module):
         U_adjoint = self.feature_map.compute_unitary(x2_t)
         U_adjoint = U_adjoint.conj().T
 
-        probs = self._slos_graph.compute(U @ U_adjoint, self.input_state)[1]
+        kernel_unitary = U @ U_adjoint
+        _, amplitudes = self._slos_graph.compute(kernel_unitary, self.input_state)
+        _, probabilities = self._slos_graph.compute_probs_from_amplitudes(amplitudes)
+        if probabilities.ndim == 1:
+            probabilities = probabilities.unsqueeze(0)
+        probabilities = probabilities.to(dtype=self.dtype, device=self.device)
 
         if self.shots > 0:
-            # Convert complex amplitudes to real probabilities for multinomial sampling
-            real_probs = torch.abs(probs).square()
-            probs = self._autodiff_process.sampling_noise.pcvl_sampler(
-                real_probs, self.shots, self.sampling_method
+            probabilities = self._autodiff_process.sampling_noise.pcvl_sampler(
+                probabilities, self.shots, self.sampling_method
             )
-        return torch.abs(probs[0, self._input_state_index]).item()
+        return probabilities[0, self._input_state_index].item()
 
     @classmethod
     def simple(

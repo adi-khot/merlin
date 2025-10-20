@@ -641,11 +641,14 @@ class SLOSComputeGraph:
 
         return amplitudes
 
-    def post_pa_inc(self, amplitudes, unitary):
-        if len(unitary.shape) == 2:
-            is_batched = False
-        else:
-            is_batched = True
+    def compute_probs_from_amplitudes(self, amplitudes):
+        added_batch_dim = False
+        if amplitudes.ndim == 1:
+            amplitudes = amplitudes.unsqueeze(0)
+            added_batch_dim = True
+
+        is_batched = amplitudes.shape[0] > 1
+
         probabilities = amplitudes.real**2 + amplitudes.imag**2
         probabilities *= self.norm_factor_output.to(probabilities.device)
         probabilities /= self.norm_factor_input
@@ -670,7 +673,7 @@ class SLOSComputeGraph:
                     )
             keys = self.final_keys if self.keep_keys else None
         # Remove batch dimension if input was single unitary
-        if not is_batched:
+        if not is_batched or added_batch_dim:
             probabilities = probabilities.squeeze(0)
 
         return keys, probabilities
