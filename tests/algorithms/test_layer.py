@@ -268,9 +268,10 @@ class TestQuantumLayer:
 
     def test_invalid_configurations(self):
         """Test that invalid configurations raise appropriate errors."""
-        # Test missing both ansatz and circuit
+        # Test missing both ansatz and builder
         with pytest.raises(
-            ValueError, match="Either 'ansatz' or 'circuit' must be provided"
+            ValueError,
+            match="Either 'ansatz', 'circuit', or 'builder' must be provided",
         ):
             ML.QuantumLayer(input_size=3)
 
