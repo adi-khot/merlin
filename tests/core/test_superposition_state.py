@@ -19,7 +19,7 @@ def classical_method(layer, input_state):
         )
 
     output_probs = layer.computation_process.simulation_graph.compute_probs_from_amplitudes(
-        output_classical, layer.computation_process.unitary
+        output_classical
     )
     return output_probs[1]
 
