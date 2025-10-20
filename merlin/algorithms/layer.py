@@ -512,10 +512,11 @@ class QuantumLayer(nn.Module):
         # sometimes omit converter specs ->  we fall
         # back to their stored combination metadata to deduce tensor length.
         for prefix in input_prefixes:
-            param_count = len(spec_mappings.get(prefix, []))
-            if param_count == 0 and prefix in self.angle_encoding_specs:
+            param_count = self._feature_count_for_prefix(prefix) or 0
+            if prefix in self.angle_encoding_specs:
                 combos = self.angle_encoding_specs[prefix].get("combinations", [])
-                param_count = len(combos)
+                if combos:
+                    param_count = max(param_count, len(combos))
             params.append(_zeros(param_count))
 
         # Ansatze manage classical features via a single encoder tensor.
@@ -669,7 +670,6 @@ class QuantumLayer(nn.Module):
         # to the user, while the converter expects separate tensors per prefix.
         if (
             not self.auto_generation_mode
-            and prefixes
             and len(prefixes) > 1
             and len(input_parameters) == 1
         ):
