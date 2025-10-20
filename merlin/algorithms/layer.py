@@ -1,27 +1,6 @@
-# MIT License
-#
-# Copyright (c) 2025 Quandela
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
 """
 Main QuantumLayer implementation with bug fixes and index_photons support.
+Modified for MerlinProcessor compatibility - removed direct cloud processor coupling.
 """
 
 from __future__ import annotations
@@ -49,13 +28,13 @@ from ..torch_utils.torch_codes import OutputMapper
 
 class QuantumLayer(nn.Module):
     """
-    Enhanced Quantum Neural Network Layer with cloud processor support.
+    Enhanced Quantum Neural Network Layer.
 
     This layer can be created either from:
     1. An Ansatz object (from AnsatzFactory) - for auto-generated circuits
     2. Direct parameters - for custom circuits (backward compatible)
 
-    Supports both local PyTorch SLOS execution and cloud QPU deployment.
+    Supports local PyTorch SLOS execution. Remote execution handled by MerlinProcessor.
     """
 
     def __init__(
@@ -90,12 +69,10 @@ class QuantumLayer(nn.Module):
         self.shots = shots
         self.sampling_method = sampling_method
 
-        # Cloud processor support
-        self._cloud_processor = None
-        self._result_cache = {}  # Cache for fixed quantum layers
-        self._current_params = {}  # Store current parameter values for export
+        # Store current parameter values for export
+        self._current_params = {}
 
-        # Track trainable parameters for fixed layer optimization
+        # Track trainable parameters for optimization
         self.trainable_parameters = trainable_parameters or []
         self.input_parameters = input_parameters or []
 
@@ -441,44 +418,8 @@ class QuantumLayer(nn.Module):
             if param.requires_grad:
                 self._current_params[name] = param.detach().cpu().numpy()
 
-
     def export_config(self) -> dict:
-        """Export configuration for cloud deployment."""
-        self._update_current_params()
-
-        # Get the circuit with current trained values
-        if self.experiment:
-            exported_circuit = self.experiment.unitary_circuit(flatten=False)
-        else:
-            exported_circuit = self.circuit.copy()
-
-        # Set trainable parameter values in the circuit
-        for p in exported_circuit.get_parameters():
-            if any(p.name.startswith(tp) for tp in self.trainable_parameters):
-                # This is a trainable parameter - set its value
-                for name, value in self._current_params.items():
-                    if name in p.name or p.name.startswith(name.replace('theta', '')):
-                        p.set_value(float(value.item()) if value.size == 1 else float(value[0]))
-
-        config = {
-            'circuit': exported_circuit,
-            'experiment': self.experiment,
-            'input_size': self.input_size,
-            'output_size': self.output_size,
-            'input_state': self.input_state if hasattr(self, 'input_state') else None,
-            'n_modes': exported_circuit.m,
-            'n_photons': sum(self.input_state) if hasattr(self, 'input_state') else None,
-            'trainable_parameters': self.trainable_parameters,
-            'input_parameters': self.input_parameters,  # This was the key name issue
-            'no_bunching': self.no_bunching,
-            'shots': self.shots,
-            'noise_model': self.noise_model,
-        }
-
-        return config
-
-    def export_config(self) -> dict:
-        """Export configuration for cloud deployment."""
+        """Export configuration for remote deployment by MerlinProcessor."""
         self._update_current_params()
 
         # Get the circuit with current trained values
@@ -497,10 +438,6 @@ class QuantumLayer(nn.Module):
                         if param.requires_grad:
                             # Match parameter names - handle different naming conventions
                             if tp_prefix in name:
-                                # Get the index from the parameter name
-                                # e.g., "theta_li0" -> extract the full suffix after prefix
-                                suffix = p.name.replace(tp_prefix + "_", "")
-
                                 # Find the index in the tensor
                                 if hasattr(self.computation_process.converter, 'spec_mappings'):
                                     spec_mappings = self.computation_process.converter.spec_mappings
@@ -530,12 +467,9 @@ class QuantumLayer(nn.Module):
 
         return config
 
-    def _make_cache_key(self, input_data: torch.Tensor) -> tuple:
-        """Create a hashable cache key from input tensor."""
-        if input_data.requires_grad:
-            input_data = input_data.detach()
-        # Round to avoid floating point precision issues
-        return tuple(input_data.cpu().numpy().flatten().round(decimals=6))
+    def get_experiment(self) -> Optional[pcvl.Experiment]:
+        """Return Experiment object if available (for future MerlinProcessor use)."""
+        return self.experiment
 
     def forward(
             self,
@@ -545,60 +479,14 @@ class QuantumLayer(nn.Module):
             return_amplitudes: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
         """
-        Forward pass through the quantum layer.
+        Forward pass through the quantum layer using local PyTorch SLOS.
 
-        If a cloud processor is attached and model is in eval mode, uses cloud backend.
-        Otherwise uses PyTorch SLOS simulation.
+        Remote execution should be handled externally by MerlinProcessor.
         """
-
-        # Check if we should use cloud backend
-        if self._cloud_processor is not None:
-            if self.training:
-                raise RuntimeError(
-                    "Cannot compute gradients through cloud backend. "
-                    "Use model.eval() for inference or train with PyTorch backend."
-                )
-
-            # Fixed layer optimization: use cache if no trainable parameters
-            if self._is_fixed:
-                cache_key = self._make_cache_key(input_parameters[0])
-                if cache_key in self._result_cache:
-                    cached_result = self._result_cache[cache_key]
-                    if return_amplitudes:
-                        # Return cached result with dummy amplitudes
-                        return cached_result, torch.zeros_like(cached_result, dtype=torch.complex64)
-                    return cached_result
-
-                # Execute and cache
-                result = self._cloud_processor.execute(
-                    self,
-                    input_parameters[0] if len(input_parameters) == 1 else torch.cat(input_parameters, dim=1),
-                    shots=shots or self.shots,
-                    return_probs=True
-                )
-                result = self.output_mapping(result)
-                self._result_cache[cache_key] = result
-
-                if return_amplitudes:
-                    return result, torch.zeros_like(result, dtype=torch.complex64)
-                return result
-            else:
-                # Regular cloud execution for trainable layers
-                result = self._cloud_processor.execute(
-                    self,
-                    input_parameters[0] if len(input_parameters) == 1 else torch.cat(input_parameters, dim=1),
-                    shots=shots or self.shots,
-                    return_probs=True
-                )
-                result = self.output_mapping(result)
-                if return_amplitudes:
-                    return result, torch.zeros_like(result, dtype=torch.complex64)
-                return result
-
         # Update current parameter values for potential export
         self._update_current_params()
 
-        # Original PyTorch SLOS path
+        # PyTorch SLOS execution path
         params = self.prepare_parameters(list(input_parameters))
 
         if type(self.computation_process.input_state) is torch.Tensor:
@@ -642,10 +530,6 @@ class QuantumLayer(nn.Module):
             return self.output_mapping(distribution), amplitudes
 
         return self.output_mapping(distribution)
-
-    def clear_cache(self):
-        """Clear the result cache for fixed quantum layers."""
-        self._result_cache.clear()
 
     def _prepare_input_encoding(
             self, x: torch.Tensor, prefix: str | None = None
@@ -877,9 +761,7 @@ class QuantumLayer(nn.Module):
 
         if self.index_photons is not None:
             base_str += f", index_photons={self.index_photons}"
-        if self._cloud_processor is not None:
-            base_str += ", cloud_deployed=True"
         if self._is_fixed:
-            base_str += f", fixed_layer=True, cache_size={len(self._result_cache)}"
+            base_str += f", fixed_layer=True"
 
         return base_str + ")"
