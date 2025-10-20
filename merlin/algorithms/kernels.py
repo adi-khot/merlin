@@ -13,23 +13,7 @@ from ..pcvl_pytorch.slos_torchscript import (
     build_slos_distribution_computegraph as build_slos_graph,
 )
 from ..sampling.autodiff import AutoDiffProcess
-
-dtype_to_torch: dict[object, torch.dtype] = {
-    "float": torch.float64,
-    "complex": torch.complex128,
-    "float64": torch.float64,
-    "float32": torch.float32,
-    "complex128": torch.complex128,
-    "complex64": torch.complex64,
-    torch.float64: torch.float64,
-    torch.float32: torch.float32,
-    torch.complex128: torch.complex128,
-    torch.complex64: torch.complex64,
-    np.float64: torch.float64,
-    np.float32: torch.float32,
-    np.complex128: torch.complex128,
-    np.complex64: torch.complex64,
-}
+from ..torch_utils.dtypes import to_torch_dtype
 
 
 class FeatureMap:
@@ -40,7 +24,8 @@ class FeatureMap:
     computes the associated unitary for quantum kernel methods.
 
     Args:
-        circuit: Circuit or builder containing the data-encoding gates.
+        circuit: Pre-compiled :class:`pcvl.Circuit` to encode features.
+        builder: Optional :class:`CircuitBuilder` to compile into a circuit.
         input_parameters: Parameter prefix(es) that host the classical data.
         dtype: Torch dtype used when constructing the unitary.
         device: Torch device on which unitaries are evaluated.
@@ -48,10 +33,11 @@ class FeatureMap:
 
     def __init__(
         self,
-        circuit: pcvl.Circuit | CircuitBuilder,
+        circuit: pcvl.Circuit | None = None,
+        *,
+        builder: CircuitBuilder | None = None,
         input_size: int,
         input_parameters: str | list[str] | None,
-        *,
         trainable_parameters: list[str] | None = None,
         dtype: str | torch.dtype = torch.float32,
         device: torch.device | None = None,
@@ -62,18 +48,23 @@ class FeatureMap:
 
         self._angle_encoding_specs: dict[str, dict[str, object]] = {}
 
-        if isinstance(circuit, CircuitBuilder):
-            builder_trainable = circuit.trainable_parameter_prefixes
-            builder_input = circuit.input_parameter_prefixes
-            self._angle_encoding_specs = circuit.angle_encoding_specs
-            circuit = circuit.to_pcvl_circuit(pcvl)
+        if circuit is not None and builder is not None:
+            raise ValueError("Provide either 'circuit' or 'builder', not both")
 
+        if builder is not None:
+            builder_trainable = builder.trainable_parameter_prefixes
+            builder_input = builder.input_parameter_prefixes
+            self._angle_encoding_specs = builder.angle_encoding_specs
+            circuit = builder.to_pcvl_circuit(pcvl)
+
+        if circuit is None:
+            raise ValueError("Either 'circuit' or 'builder' must be provided")
         self.circuit = circuit
         self.input_size = input_size
         if trainable_parameters is None:
             trainable_parameters = builder_trainable
         self.trainable_parameters = trainable_parameters or []
-        self.dtype = dtype_to_torch.get(dtype, torch.float32)
+        self.dtype = to_torch_dtype(dtype)
         self.device = device or torch.device("cpu")
         self.is_trainable = bool(trainable_parameters)
         self._encoder = encoder  # NEW
@@ -95,7 +86,7 @@ class FeatureMap:
             self.input_parameters = input_parameters
 
         self._circuit_graph = CircuitConverter(
-            circuit,
+            self.circuit,
             [self.input_parameters] + self.trainable_parameters,
             dtype=self.dtype,
             device=device,
@@ -366,7 +357,7 @@ class FeatureMap:
 
         builder = CircuitBuilder(n_modes=n_modes)
 
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
         input_modes = list(range(input_size))
 
         builder.add_angle_encoding(
@@ -377,15 +368,15 @@ class FeatureMap:
 
         trainable_parameters: list[str] | None
         if trainable:
-            builder.add_rotation_layer(trainable=True, name=trainable_prefix)
+            builder.add_rotations(trainable=True, name=trainable_prefix)
             trainable_parameters = [trainable_prefix]
         else:
             trainable_parameters = None
 
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
 
         return cls(
-            circuit=builder,
+            builder=builder,
             input_size=input_size,
             input_parameters=None,
             trainable_parameters=trainable_parameters,
@@ -483,7 +474,7 @@ class KernelCircuitBuilder:
             trainable_params = None
 
         builder = CircuitBuilder(n_modes=n_modes)
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
 
         if self._input_size > n_modes:
             raise ValueError(ANGLE_ENCODING_MODE_ERROR)
@@ -497,12 +488,12 @@ class KernelCircuitBuilder:
         )
 
         if self._trainable:
-            builder.add_rotation_layer(trainable=True, name=self._trainable_prefix)
+            builder.add_rotations(trainable=True, name=self._trainable_prefix)
 
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
 
         return FeatureMap(
-            circuit=builder,
+            builder=builder,
             input_size=self._input_size,
             input_parameters=None,
             trainable_parameters=trainable_params,
@@ -627,8 +618,7 @@ class FidelityKernel(torch.nn.Module):
         if dtype is None:
             self.dtype = feature_map.dtype
         else:
-            mapped = dtype_to_torch.get(dtype)
-            self.dtype = mapped if mapped is not None else feature_map.dtype
+            self.dtype = to_torch_dtype(dtype, default=feature_map.dtype)
         self.input_size = self.feature_map.input_size
 
         if self.feature_map.circuit.m != len(input_state):

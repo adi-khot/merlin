@@ -30,6 +30,7 @@ It provides a structured way to define a sequence of layers that adapt dynamical
   - ``n``: number of photons.
   - ``m``: number of modes.
   - ``state_injection``: Whether or not to enable state injection
+  - ``conditional_modes``: Modes on which the measure will be done (default value is the first mode)
 
 - Each feedforward layer is defined as a *collection of quantum layers* corresponding to the possible measurement outcomes.
   - Each successive layer acts on *one mode less*.
@@ -61,7 +62,7 @@ Example
    import torch
 
    # Initialize feedforward block
-   ffb = FeedForwardBlock(input_size=20, n=2, m=6, depth=3)
+   ffb = FeedforwardBlock(input_size=20, n=2, m=6, depth=3, conditional_modes=[2, 5])
 
    # You can define the mode to measure (conditional_mode)
    # By default, the input_size is divided into the first layers of the ff block,
@@ -113,6 +114,75 @@ Example
    print(ffb.input_size_ff_layer(1))  # [6, 6]
 
 
+
+----------------------------
+PoolingFeedforward in MerLin
+----------------------------
+Similarly to the FeedforwardBlock previously presented, the pooling feedforward creates a partial measurement that determines the configuration of the downstream circuit.
+However, this measure will modify the input state in the circuit instead of creating dynamic circuits. This object involves a measure made on some of the modes and a report of all the measured photons on the remaining modes of the circuit.
+
+**Key properties:**
+
+- Initialization specifies:
+
+  -  ``n_modes`` : number of modes before the pooling feedforward layer.
+  -  ``n_photons`` : number of photons.
+  - ``n_output_modes``: number of modes exiting the pooling feedforward layer.
+  - ``pooling_modes``: List of modes to aggregate together. The length of this list must be equal to the number of output modes
+  - ``no_bunching``: Whether bunched states are allowed are not (default is True i.e bunched states not allowed)
+This pooling layer doesn't contain any parameters, but pools some modes. This method is based on the pooling layer used in the Convolutional Neural Network, and is then very similar to it, the number of photons on every mode here corresponding to the values of the tensor in the CNN.
+
+
+----------------------------
+Example
+----------------------------
+
+.. code-block:: python
+
+   from MerLin import QuantumLayer, FeedforwardBlock
+   import torch
+
+   quantum_dim = 10
+   # Define Quantum Layer before pff layer
+   experiment = ML.Experiment(
+                circuit_type=ML.CircuitType.SERIES,
+                n_modes=16,
+                n_photons=4,
+                use_bandwidth_tuning=True
+            )
+    ansatz = ML.AnsatzFactory.create(
+        experiment=experiment,
+        input_size=quantum_dim,
+        output_size=quantum_dim * 2
+    )
+    q_layer_pre_pff = ML.QuantumLayer(input_size=quantum_dim, ansatz=ansatz)
+
+    # Define pff layer
+    pff = PoolingFeedForward(n_modes=16, n_photons=4, n_output_modes=8)
+
+    # Define Quantum Layer after pff layer
+    experiment = ML.Experiment(
+                circuit_type=ML.CircuitType.SERIES,
+                n_modes=8,
+                n_photons=4,
+                use_bandwidth_tuning=True
+            )
+    ansatz = ML.AnsatzFactory.create(
+        experiment=experiment,
+        input_size=0,
+        output_size=quantum_dim * 2
+    )
+    q_layer_post_pff = ML.QuantumLayer(input_size=quantum_dim, ansatz=ansatz)
+
+    # Example of a forward pass
+    x = torch.rand(quantum_dim)
+    #Get the amplitudes and not the output probabilities to perform the pooling
+    _, amplitudes = q_layer_pre_pff(x, return_amplitudes=True)
+    # Going from amplitudes in the space with 16 modes, 4 photons, to 8 modes, 4 photons
+    amplitudes = pff(amplitudes)
+    # Set input state : If we provide a tensor -> Every component of the tensor refers to the amplitude of a different fock state -> Entangled input state
+    q_layer_post_pff.set_input_state(amplitudes)
+    output = q_layer_post_pff()
 
 
 ----------------------------

@@ -37,6 +37,8 @@ from perceval.components import (
     Unitary,
 )
 
+from ..torch_utils.dtypes import resolve_float_complex
+
 SUPPORTED_COMPONENTS = (PS, BS, PERM, Unitary, Barrier)
 """Tuple of quantum components supported by CircuitConverter.
 
@@ -200,17 +202,9 @@ class CircuitConverter:
         Raises:
             TypeError: If dtype is not supported
         """
-        if dtype == torch.float32 or dtype == torch.complex64:
-            self.tensor_fdtype = torch.float32
-            self.tensor_cdtype = torch.complex64
-        elif dtype == torch.float64 or dtype == torch.complex128:
-            self.tensor_fdtype = torch.float64
-            self.tensor_cdtype = torch.complex128
-        else:
-            raise TypeError(
-                f"Unsupported dtype {dtype}. Supported dtypes are torch.float32, torch.float64, "
-                f"torch.complex64, and torch.complex128."
-            )
+        float_dtype, complex_dtype = resolve_float_complex(dtype)
+        self.tensor_fdtype = float_dtype
+        self.tensor_cdtype = complex_dtype
 
     def to(self, dtype: torch.dtype, device: str | torch.device):
         """Move the converter to a specific device and dtype.
@@ -233,17 +227,6 @@ class CircuitConverter:
             raise TypeError(
                 f"Expected a string or torch.device, but got {type(device).__name__}"
             )
-        if dtype not in (
-            torch.float32,
-            torch.float64,
-            torch.complex64,
-            torch.complex128,
-        ):
-            raise TypeError(
-                f"Unsupported dtype {dtype}. Supported dtypes are torch.float32, torch.float64, "
-                f"torch.complex64, and torch.complex128."
-            )
-
         self.set_dtype(dtype)
 
         for idx, (r, c) in enumerate(self.list_rct):

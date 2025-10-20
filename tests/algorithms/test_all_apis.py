@@ -72,20 +72,20 @@ def test_builder_api_pipeline_on_iris(iris_batch):
     features, labels = iris_batch
 
     builder = CircuitBuilder(n_modes=10)
-    builder.add_entangling_layer(depth=1)
+    builder.add_superpositions(depth=1)
     builder.add_angle_encoding(modes=list(range(features.shape[1])), name="input")
-    builder.add_rotation_layer(trainable=True, name="theta")
-    builder.add_entangling_layer(depth=1)
+    builder.add_rotations(trainable=True, name="theta")
+    builder.add_superpositions(depth=1)
 
     layer = QuantumLayer(
         input_size=features.shape[1],
-        circuit=builder,
+        builder=builder,
         n_photons=5,
         output_size=3,
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
         dtype=features.dtype,
     )
-    pcvl.pdisplay(layer.computation_process.circuit)
+    pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
     _check_training_step(layer, features, labels)
     _train_for_classification(layer, features, labels)
 
@@ -100,7 +100,7 @@ def test_simple_api_pipeline_on_iris(iris_batch):
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
         dtype=features.dtype,
     )
-    pcvl.pdisplay(layer.computation_process.circuit)
+    pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
     print(
         f"Nb of parameters = {sum(p.numel() for p in layer.parameters() if p.requires_grad)}"
     )
