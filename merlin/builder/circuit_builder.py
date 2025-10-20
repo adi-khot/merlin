@@ -4,8 +4,6 @@ Circuit builder for constructing quantum circuits declaratively.
 
 import math
 import numbers
-import warnings
-from copy import deepcopy
 from itertools import combinations
 from typing import Any
 
@@ -47,16 +45,9 @@ class CircuitBuilder:
         self._layer_counter = 0
         self._trainable_counter = 0
         self._input_counter = 0
-        self._copy_counter = 0
-        self._generic_counter = 0
+        self._entangling_layer_counter = 0
+        self._superposition_counter = 0
         self._entangling_counter = 0
-
-        # Section tracking for adjoint support
-        self._section_markers: list[Any] = []
-        self._current_section: dict[str, Any] | None = None
-
-        # Track components before any sections for "_all_" reference
-        self._pre_section_end_idx = 0
 
         self._trainable_prefixes: list[str] = []
         self._trainable_prefix_set: set[str] = set()
@@ -136,89 +127,46 @@ class CircuitBuilder:
         self._used_trainable_names.add(candidate)
         return candidate
 
-    def add_rotation(
+    def add_rotations(
         self,
-        target: int,
-        angle: float = 0.0,
-        trainable: bool = False,
-        name: str | None = None,
-    ) -> "CircuitBuilder":
-        """Add a single rotation.
-
-        The builder keeps rotations in an abstract form by appending a
-        :class:`~merlin.core.components.Rotation` entry to its internal
-        :class:`~merlin.core.circuit.Circuit`. The actual photonic primitive is
-        created later in :meth:`to_pcvl_circuit`, where each rotation is
-        materialised as a Perceval phase shifter ``pcvl.PS``. Fixed rotations use
-        the numeric ``angle`` provided here, while trainable ones are assigned a
-        symbolic ``pcvl.P`` that Perceval treats as an optimisable parameter.
-
-        Args:
-            target: Circuit mode index receiving the phase shifter.
-            angle: Initial numeric value used when the rotation is fixed.
-            trainable: Whether to expose the rotation angle as a learnable parameter.
-            name: Optional custom stem for the underlying parameter name.
-
-        Returns:
-            CircuitBuilder: ``self`` to allow method chaining.
-        """
-        role = ParameterRole.TRAINABLE if trainable else ParameterRole.FIXED
-
-        if role == ParameterRole.TRAINABLE:
-            if name is None:
-                base_name = f"theta_{self._trainable_counter}"
-                self._trainable_counter += 1
-            else:
-                base_name = name
-            custom_name = self._unique_trainable_name(base_name)
-        else:
-            custom_name = name
-
-        rotation = Rotation(
-            target=target, role=role, value=angle, custom_name=custom_name
-        )
-
-        self.circuit.add(rotation)
-
-        if role == ParameterRole.TRAINABLE:
-            self._register_trainable_prefix(custom_name)
-        elif role == ParameterRole.INPUT:
-            self._register_input_prefix(custom_name or name)
-        return self
-
-    def add_rotation_layer(
-        self,
-        modes: list[int] | ModuleGroup | None = None,
+        modes: int | list[int] | ModuleGroup | None = None,
         *,
         axis: str = "z",
         trainable: bool = False,
         as_input: bool = False,
+        angle: float | None = None,
         value: float | None = None,
         name: str | None = None,
         role: str | ParameterRole | None = None,
     ) -> "CircuitBuilder":
-        """Add a rotation layer across a set of modes.
+        """Add one or multiple rotations across the provided modes.
 
         Args:
-            modes: Modes (or module group) receiving the rotations; defaults to all modes.
-            axis: Axis of rotation to apply on each mode.
-            trainable: Promote every rotation in the layer to trainable parameters.
-            as_input: Mark the rotations as data-driven inputs (legacy convenience flag).
-            value: Default fixed value assigned when the layer is not trainable/input.
-            name: Optional stem used when generating parameter names per mode.
+            modes: Single mode, list of modes, module group or ``None`` (all modes).
+            axis: Axis of rotation for each inserted phase shifter.
+            trainable: Promote the rotations to trainable parameters (legacy flag).
+            as_input: Mark the rotations as input-driven parameters (legacy flag).
+            angle: Optional fixed value for the rotations (alias of ``value``).
+            value: Optional fixed value for the rotations (alias of ``angle``).
+            name: Optional stem used for generated parameter names.
             role: Explicit :class:`ParameterRole` taking precedence over other flags.
 
         Returns:
-            CircuitBuilder: ``self`` to facilitate fluent chaining.
+            CircuitBuilder: ``self`` for fluent chaining.
         """
-        if modes is None:
+        if isinstance(modes, ModuleGroup):
+            target_modes = list(modes.modes)
+        elif modes is None:
             target_modes = list(range(self.n_modes))
-        elif isinstance(modes, ModuleGroup):
-            target_modes = modes.modes
+        elif isinstance(modes, int):
+            target_modes = [modes]
         else:
-            target_modes = modes
+            target_modes = list(modes)
 
-        # Determine role (new interface takes precedence)
+        if not target_modes:
+            return self
+
+        resolved_role: ParameterRole
         if role is not None:
             if isinstance(role, str):
                 role_map = {
@@ -226,59 +174,59 @@ class CircuitBuilder:
                     "input": ParameterRole.INPUT,
                     "trainable": ParameterRole.TRAINABLE,
                 }
-                final_role = role_map.get(role, ParameterRole.FIXED)
+                resolved_role = role_map.get(role.lower(), ParameterRole.FIXED)
             else:
-                final_role = role
+                resolved_role = role
         elif as_input:
-            final_role = ParameterRole.INPUT
+            resolved_role = ParameterRole.INPUT
         elif trainable:
-            final_role = ParameterRole.TRAINABLE
+            resolved_role = ParameterRole.TRAINABLE
         else:
-            final_role = ParameterRole.FIXED
+            resolved_role = ParameterRole.FIXED
 
-        # Determine value
-        final_value = value if value is not None else 0.0
+        final_value = (
+            angle if angle is not None else (value if value is not None else 0.0)
+        )
 
-        for _idx, mode in enumerate(target_modes):
-            if mode >= self.n_modes:
+        for current_mode in target_modes:
+            if current_mode < 0 or current_mode >= self.n_modes:
                 continue
 
-            # Generate appropriate name based on role
             if name is not None:
-                # For input parameters with custom name, create simple indexed names
-                if final_role == ParameterRole.INPUT:
-                    # Use global input counter for unique naming
+                if resolved_role == ParameterRole.INPUT:
                     custom_name = f"{name}{self._input_counter + 1}"
                     self._input_counter += 1
-                elif final_role == ParameterRole.TRAINABLE:
-                    base_name = f"{name}_{mode}" if len(target_modes) > 1 else name
+                elif resolved_role == ParameterRole.TRAINABLE:
+                    base_name = (
+                        f"{name}_{current_mode}" if len(target_modes) > 1 else name
+                    )
                     custom_name = self._unique_trainable_name(base_name)
                 else:
-                    # Keep existing naming for non-input params
-                    custom_name = f"{name}_{mode}" if len(target_modes) > 1 else name
-            elif final_role == ParameterRole.INPUT:
-                # Default input naming: px1, px2, etc. - using global counter
+                    custom_name = (
+                        f"{name}_{current_mode}" if len(target_modes) > 1 else name
+                    )
+            elif resolved_role == ParameterRole.INPUT:
                 custom_name = f"px{self._input_counter + 1}"
                 self._input_counter += 1
-            elif final_role == ParameterRole.TRAINABLE:
-                base_name = f"theta_{self._trainable_counter}_{mode}"
+            elif resolved_role == ParameterRole.TRAINABLE:
+                base_name = f"theta_{self._trainable_counter}_{current_mode}"
                 self._trainable_counter += 1
                 custom_name = self._unique_trainable_name(base_name)
             else:
                 custom_name = None
 
             rotation = Rotation(
-                target=mode,
-                role=final_role,
+                target=current_mode,
+                role=resolved_role,
                 value=final_value,
                 axis=axis,
                 custom_name=custom_name,
             )
             self.circuit.add(rotation)
 
-            if final_role == ParameterRole.TRAINABLE:
+            if resolved_role == ParameterRole.TRAINABLE:
                 self._register_trainable_prefix(rotation.custom_name or name)
-            elif final_role == ParameterRole.INPUT:
+            elif resolved_role == ParameterRole.INPUT:
                 self._register_input_prefix(rotation.custom_name or name)
 
         self._layer_counter += 1
@@ -356,9 +304,7 @@ class CircuitBuilder:
                 target_modes[(emitted + offset) % len(target_modes)]
                 for offset in range(span)
             ]
-            self.add_rotation_layer(
-                modes=chunk_modes, role=ParameterRole.INPUT, name=name
-            )
+            self.add_rotations(modes=chunk_modes, role=ParameterRole.INPUT, name=name)
             emitted += span
 
         spec_list = self._angle_encoding_specs.setdefault(name, [])
@@ -396,21 +342,27 @@ class CircuitBuilder:
         factor = float(scale)
         return dict.fromkeys(feature_indices, factor)
 
-    def add_generic_interferometer(
+    def add_entangling_layer(
         self,
         modes: list[int] | None = None,
         *,
         trainable: bool = True,
+        model: str = "mzi",
         name: str | None = None,
+        trainable_inner: bool | None = None,
+        trainable_outer: bool | None = None,
     ) -> "CircuitBuilder":
-        """Add a generic interferometer spanning a range of modes.
+        """Add an entangling layer spanning a range of modes.
 
         Args:
             modes: Optional list describing the span. ``None`` targets all modes;
                 one element targets ``modes[0]`` through the final mode; two elements
                 target the inclusive range ``[modes[0], modes[1]]``.
             trainable: Whether internal phase shifters should be trainable.
+            model: ``\"mzi\"`` or ``\"bell\"`` to select the internal interferometer template.
             name: Optional prefix used for generated parameter names.
+            trainable_inner: Override for the internal (between-beam splitter) phase shifters.
+            trainable_outer: Override for the output phase shifters at the exit of the interferometer.
 
         Raises:
             ValueError: If the provided modes are invalid or span fewer than two modes.
@@ -431,21 +383,26 @@ class CircuitBuilder:
                 start, end = modes
             else:
                 raise ValueError(
-                    "`modes` must be None, a single index, or a two-element range for generic interferometers."
+                    "`modes` must be None, a single index, or a two-element range for entangling layers."
                 )
+        if not isinstance(model, str):
+            raise TypeError("model must be a string")
+        normalized_model = model.lower()
+        if normalized_model not in {"mzi", "bell"}:
+            raise ValueError("model must be either 'mzi' or 'bell'")
 
         if start > end:
             start, end = end, start
 
         if start < 0 or end >= self.n_modes:
-            raise ValueError("Generic interferometer span exceeds available modes")
+            raise ValueError("Entangling layer span exceeds available modes")
 
         span = end - start + 1
         if span < 2:
-            raise ValueError("Generic interferometer requires at least two modes")
+            raise ValueError("Entangling layer requires at least two modes")
 
         if name is None:
-            prefix = f"gi_{self._generic_counter}"
+            prefix = f"el_{self._entangling_layer_counter}"
         else:
             prefix = name
 
@@ -454,88 +411,160 @@ class CircuitBuilder:
             span=span,
             trainable=trainable,
             name_prefix=prefix,
+            model=normalized_model,
+            trainable_inner=trainable_inner,
+            trainable_outer=trainable_outer,
         )
 
         self.circuit.add(component)
 
-        if trainable:
+        if component.trainable:
             self._register_trainable_prefix(prefix)
 
-        self._generic_counter += 1
+        self._entangling_layer_counter += 1
         self._layer_counter += 1
         return self
 
-    def add_superposition(
+    def add_superpositions(
         self,
-        targets: tuple[int, int],
+        targets: tuple[int, int] | list[tuple[int, int]] | None = None,
+        *,
+        depth: int = 1,
         theta: float = 0.785398,
         phi: float = 0.0,
-        trainable_theta: bool = False,
-        trainable_phi: bool = False,
+        trainable: bool | None = None,
+        trainable_theta: bool | None = None,
+        trainable_phi: bool | None = None,
+        modes: list[int] | ModuleGroup | None = None,
         name: str | None = None,
     ) -> "CircuitBuilder":
-        """Add a beam splitter (superposition component).
+        """Add one or more superposition (beam splitter) components.
 
         Args:
-            targets: Pair of mode indices connected by the beam splitter.
-            theta: Fixed mixing angle used when ``trainable_theta`` is ``False``.
-            phi: Fixed relative phase applied when ``trainable_phi`` is ``False``.
-            trainable_theta: Promote the mixing angle to a trainable parameter.
-            trainable_phi: Promote the relative phase to a trainable parameter.
-            name: Optional stem used to generate parameter names for this component.
+            targets: Tuple or list of tuples describing explicit mode pairs. When
+                omitted, nearest neighbours over ``modes`` (or all modes) are used.
+            depth: Number of sequential passes to apply (``>=1``).
+            theta: Baseline mixing angle for fixed beam splitters.
+            phi: Baseline relative phase for fixed beam splitters.
+            trainable: Convenience flag to mark both ``theta`` and ``phi`` trainable.
+            trainable_theta: Whether the mixing angle should be trainable.
+            trainable_phi: Whether the relative phase should be trainable.
+            modes: Optional mode list/module group used when ``targets`` is omitted.
+            name: Optional stem used for generated parameter names.
 
         Returns:
-            CircuitBuilder: ``self`` to allow chaining additional builder calls.
+            CircuitBuilder: ``self`` for fluent chaining.
         """
-        theta_role = ParameterRole.TRAINABLE if trainable_theta else ParameterRole.FIXED
-        phi_role = ParameterRole.TRAINABLE if trainable_phi else ParameterRole.FIXED
+        if depth < 1:
+            raise ValueError("depth must be at least 1")
 
-        theta_name = f"{name}_theta" if name else None
-        phi_name = f"{name}_phi" if name else None
+        if targets is not None:
+            if isinstance(targets, tuple):
+                pair_list = [targets]
+            else:
+                pair_list = list(targets)
 
-        bs = BeamSplitter(
-            targets=targets,
-            theta_value=theta,
-            phi_value=phi,
-            theta_role=theta_role,
-            phi_role=phi_role,
-            theta_name=theta_name,
-            phi_name=phi_name,
+            resolved_pairs: list[tuple[int, int]] = []
+            for pair in pair_list:
+                if len(pair) != 2:
+                    raise ValueError("Each target must be a pair of mode indices")
+                left, right = pair
+                if left == right:
+                    continue
+                if (
+                    left < 0
+                    or right < 0
+                    or left >= self.n_modes
+                    or right >= self.n_modes
+                ):
+                    raise ValueError("Beam splitter targets must refer to valid modes")
+                resolved_pairs.append((left, right))
+
+            if not resolved_pairs:
+                return self
+
+            theta_flag = trainable if trainable is not None else False
+            phi_flag = trainable if trainable is not None else False
+
+            if trainable_theta is not None:
+                theta_flag = trainable_theta
+            if trainable_phi is not None:
+                phi_flag = trainable_phi
+
+            theta_role = ParameterRole.TRAINABLE if theta_flag else ParameterRole.FIXED
+            phi_role = ParameterRole.TRAINABLE if phi_flag else ParameterRole.FIXED
+
+            total_components = depth * len(resolved_pairs)
+            single_component = total_components == 1
+
+            if name is None:
+                # Keep legacy-friendly prefixes so downstream tooling can match "theta"/"phi".
+                theta_base = "theta_bs"
+                phi_base = "phi_bs"
+                self._superposition_counter += 1
+            else:
+                theta_base = f"{name}_theta"
+                phi_base = f"{name}_phi"
+
+            component_index = 0
+            for _depth_idx in range(depth):
+                for _pair_idx, pair in enumerate(resolved_pairs):
+                    suffix = "" if single_component else f"_{component_index}"
+                    theta_name = None
+                    phi_name = None
+
+                    if theta_role == ParameterRole.TRAINABLE:
+                        base_name = (
+                            theta_base if not suffix else f"{theta_base}{suffix}"
+                        )
+                        theta_name = self._unique_trainable_name(base_name)
+                        self._register_trainable_prefix(theta_name)
+
+                    if phi_role == ParameterRole.TRAINABLE:
+                        base_name = phi_base if not suffix else f"{phi_base}{suffix}"
+                        phi_name = self._unique_trainable_name(base_name)
+                        self._register_trainable_prefix(phi_name)
+
+                    bs = BeamSplitter(
+                        targets=pair,
+                        theta_value=theta,
+                        phi_value=phi,
+                        theta_role=theta_role,
+                        phi_role=phi_role,
+                        theta_name=theta_name,
+                        phi_name=phi_name,
+                    )
+                    self.circuit.add(bs)
+
+                    component_index += 1
+
+            return self
+
+        # Fallback: behave like an entangling block across a span of modes
+        if isinstance(modes, ModuleGroup):
+            mode_list = list(modes.modes)
+        elif modes is None:
+            mode_list = list(range(self.n_modes))
+        else:
+            mode_list = list(modes)
+
+        if len(mode_list) < 2:
+            return self
+
+        ent_trainable = (
+            trainable
+            if trainable is not None
+            else bool(trainable_theta or trainable_phi)
         )
 
-        self.circuit.add(bs)
+        block = EntanglingBlock(
+            targets=mode_list if modes is not None else "all",
+            depth=depth,
+            trainable=ent_trainable,
+            name_prefix=name,
+        )
 
-        if theta_role == ParameterRole.TRAINABLE:
-            self._register_trainable_prefix(theta_name or "theta")
-        elif theta_role == ParameterRole.INPUT:
-            self._register_input_prefix(theta_name or "theta")
-
-        if phi_role == ParameterRole.TRAINABLE:
-            self._register_trainable_prefix(phi_name or "phi")
-        elif phi_role == ParameterRole.INPUT:
-            self._register_input_prefix(phi_name or "phi")
-        return self
-
-    def add_entangling_layer(
-        self, depth: int = 1, trainable: bool = False, name: str | None = None
-    ) -> "CircuitBuilder":
-        """Add entangling layer(s).
-
-        When ``trainable`` is ``True`` the block is converted into parameterized beam
-        splitters during ``to_pcvl_circuit`` so that interferometric mixing can be
-        optimised. Generated parameters share a common prefix derived from ``name``.
-
-        Args:
-            depth: Number of successive nearest-neighbour passes to add.
-            trainable: Whether to expose the internal beam splitters as parameters.
-            name: Optional stem used for generated parameter names when trainable.
-
-        Returns:
-            CircuitBuilder: ``self`` for chaining additional builder calls.
-        """
-        block = EntanglingBlock(depth=depth, trainable=trainable, name_prefix=name)
-
-        if trainable:
+        if ent_trainable:
             base = name or f"eb{self._entangling_counter}"
             self._entangling_counter += 1
             prefix = self._unique_trainable_name(base)
@@ -545,241 +574,12 @@ class CircuitBuilder:
         self.circuit.add(block)
         return self
 
-    def begin_section(
-        self,
-        name: str,
-        compute_adjoint: bool = False,
-        reference: str | None = None,
-        share_trainable: bool = True,
-        share_input: bool = False,
-    ) -> "CircuitBuilder":
-        """
-        Mark the beginning of a circuit section.
-
-        Args:
-            name: Name of the section
-            compute_adjoint: Whether to compute the adjoint of this section
-            reference: Name of section to copy structure from (or "_all_" for all preceding)
-            share_trainable: Whether to share trainable parameters from reference
-            share_input: Whether to share input parameters from reference
-
-        Returns:
-            CircuitBuilder: ``self`` so builder calls can be chained.
-        """
-        if self._current_section is not None:
-            warnings.warn(
-                f"Section '{self._current_section['name']}' was not closed. Closing it now.",
-                stacklevel=2,
-            )
-            self.end_section()
-
-        # Update pre-section end index if this is the first section
-        if not self._section_markers and reference != "_all_":
-            self._pre_section_end_idx = len(self.circuit.components)
-
-        self._current_section = {
-            "name": name,
-            "compute_adjoint": compute_adjoint,
-            "reference": reference,
-            "share_trainable": share_trainable,
-            "share_input": share_input,
-            "start_idx": len(self.circuit.components),
-        }
-
-        # If referencing, copy components now
-        if reference:
-            self._copy_from_reference(reference)
-            # End section immediately after copying
-            self._current_section["end_idx"] = len(self.circuit.components)
-            self._section_markers.append(self._current_section)
-            self._current_section = None
-
-        return self
-
-    def add_adjoint_section(
-        self,
-        name: str,
-        reference: str,
-        share_trainable: bool = True,
-        share_input: bool = True,
-    ) -> "CircuitBuilder":
-        """Convenience method for adding adjoint of an existing section.
-
-        Args:
-            name: Name assigned to the new adjoint section.
-            reference: Existing section to mirror.
-            share_trainable: Whether to reuse the referenced trainable parameters.
-            share_input: Whether to reuse the referenced input parameters.
-
-        Returns:
-            CircuitBuilder: ``self`` for fluent chaining.
-        """
-        return self.begin_section(
-            name=name,
-            compute_adjoint=True,
-            reference=reference,
-            share_trainable=share_trainable,
-            share_input=share_input,
-        )
-
-    def _copy_from_reference(self, ref_name: str):
-        """Copy components from referenced section with parameter sharing rules.
-
-        Args:
-            ref_name: Name of the section (or ``"_all_"`` for the pre-section content) to copy.
-        """
-        if ref_name == "_all_":
-            # Copy everything before sections started
-            start_idx = 0
-            end_idx = self._pre_section_end_idx
-        else:
-            # Find the referenced section
-            ref_section = None
-            for section in self._section_markers:
-                if section["name"] == ref_name:
-                    ref_section = section
-                    break
-
-            if not ref_section:
-                raise ValueError(f"Section '{ref_name}' not found")
-
-            start_idx = ref_section["start_idx"]
-            end_idx = ref_section["end_idx"]
-
-        # Copy components with parameter transformation
-        for idx in range(start_idx, end_idx):
-            comp = self.circuit.components[idx]
-            new_comp = self._transform_component(
-                comp,
-                self._current_section["share_trainable"],
-                self._current_section["share_input"],
-            )
-            self.circuit.add(new_comp)
-
-    def _transform_component(self, comp, share_trainable, share_input):
-        """Transform a copied component according to sharing rules.
-
-        Args:
-            comp: Original component instance to duplicate.
-            share_trainable: Whether trainable parameters should be reused.
-            share_input: Whether input-parameter names should be reused.
-
-        Returns:
-            Any: Deep-copied component with adjusted parameter naming.
-        """
-        new_comp = deepcopy(comp)
-
-        if isinstance(comp, Rotation):
-            if comp.role == ParameterRole.TRAINABLE:
-                if not share_trainable:
-                    # Generate new trainable parameter name
-                    if comp.custom_name:
-                        new_comp.custom_name = (
-                            f"{comp.custom_name}_copy{self._copy_counter}"
-                        )
-                    else:
-                        new_comp.custom_name = f"theta_copy_{self._copy_counter}"
-                    self._copy_counter += 1
-                self._register_trainable_prefix(
-                    new_comp.custom_name or comp.custom_name
-                )
-            elif comp.role == ParameterRole.INPUT:
-                if not share_input:
-                    # Generate new input parameter name
-                    if comp.custom_name:
-                        base_name = comp.custom_name.rstrip("0123456789")
-                    else:
-                        base_name = "px"
-                    new_comp.custom_name = f"{base_name}{self._input_counter}"
-                    self._input_counter += 1
-                self._register_input_prefix(new_comp.custom_name or comp.custom_name)
-
-        elif isinstance(comp, BeamSplitter):
-            # Handle beam splitter parameter transformation
-            if comp.theta_role == ParameterRole.TRAINABLE and not share_trainable:
-                if comp.theta_name:
-                    new_comp.theta_name = f"{comp.theta_name}_copy{self._copy_counter}"
-                else:
-                    new_comp.theta_name = f"theta_bs_copy_{self._copy_counter}"
-                self._copy_counter += 1
-            if comp.theta_role == ParameterRole.TRAINABLE:
-                self._register_trainable_prefix(new_comp.theta_name or comp.theta_name)
-            elif comp.theta_role == ParameterRole.INPUT and not share_input:
-                if comp.theta_name:
-                    base_name = comp.theta_name.rstrip("0123456789")
-                else:
-                    base_name = "x_bs"
-                new_comp.theta_name = f"{base_name}{self._input_counter}"
-                self._input_counter += 1
-                self._register_input_prefix(new_comp.theta_name)
-            elif comp.theta_role == ParameterRole.INPUT:
-                self._register_input_prefix(comp.theta_name)
-
-            # Same for phi
-            if comp.phi_role == ParameterRole.TRAINABLE and not share_trainable:
-                if comp.phi_name:
-                    new_comp.phi_name = f"{comp.phi_name}_copy{self._copy_counter}"
-                else:
-                    new_comp.phi_name = f"phi_bs_copy_{self._copy_counter}"
-                self._copy_counter += 1
-            if comp.phi_role == ParameterRole.TRAINABLE:
-                self._register_trainable_prefix(new_comp.phi_name or comp.phi_name)
-            elif comp.phi_role == ParameterRole.INPUT and not share_input:
-                if comp.phi_name:
-                    base_name = comp.phi_name.rstrip("0123456789")
-                else:
-                    base_name = "x_phi"
-                new_comp.phi_name = f"{base_name}{self._input_counter}"
-                self._input_counter += 1
-                self._register_input_prefix(new_comp.phi_name)
-            elif comp.phi_role == ParameterRole.INPUT:
-                self._register_input_prefix(comp.phi_name)
-
-        # EntanglingBlock doesn't need special handling as its parameters
-        # are generated during compilation
-
-        return new_comp
-
-    def end_section(self) -> "CircuitBuilder":
-        """Mark the end of the current circuit section.
-
-        Returns:
-            CircuitBuilder: ``self`` so builder calls can be chained.
-        """
-        if self._current_section:
-            self._current_section["end_idx"] = len(self.circuit.components)
-            self._section_markers.append(self._current_section)
-            self._current_section = None
-        else:
-            warnings.warn("No section to end", stacklevel=2)
-        return self
-
     def build(self) -> Circuit:
-        """Build and return the circuit, finalising any open sections.
+        """Build and return the circuit.
 
         Returns:
-            Circuit: Circuit instance populated with components and metadata.
+            Circuit: Circuit instance populated with components.
         """
-        # Close any open section
-        if self._current_section is not None:
-            warnings.warn(
-                f"Section '{self._current_section['name']}' was not closed. Closing it now.",
-                stacklevel=2,
-            )
-            self.end_section()
-
-        # Finalize the circuit to ensure metadata is complete
-        return self.finalize_circuit()
-
-    def finalize_circuit(self):
-        """Ensure metadata reflects defined sections before returning the circuit.
-
-        Returns:
-            Circuit: Circuit with updated section metadata.
-        """
-        # Ensure 'sections' key is always added to metadata
-        self.circuit.metadata["sections"] = self._section_markers or []
-
         return self.circuit
 
     def to_pcvl_circuit(self, pcvl_module=None):
@@ -814,7 +614,7 @@ class CircuitBuilder:
                     phi = component.value
                 else:
                     custom_name = (
-                        component.custom_name or f"theta_{component.target}_{idx}"
+                        component.custom_name or f"phi_{component.target}_{idx}"
                     )
                     phi = pcvl_module.P(custom_name)
                 pcvl_circuit.add(component.target, pcvl_module.PS(phi))
@@ -868,30 +668,83 @@ class CircuitBuilder:
                     continue
 
                 prefix = component.name_prefix or f"gi_{idx}"
+                model = getattr(component, "model", "mzi")
 
-                def _mzi_factory(
-                    i: int, *, trainable: bool = component.trainable, base: str = prefix
-                ):
-                    """Build a Mach-Zehnder interferometer optionally parameterised per index."""
-                    if trainable:
-                        phi_inner = pcvl_module.P(f"{base}_li{i}")
-                        phi_outer = pcvl_module.P(f"{base}_lo{i}")
-                    else:
-                        phi_inner = 0.0
-                        phi_outer = 0.0
-                    return (
-                        pcvl_module.BS()
-                        // pcvl_module.PS(phi_inner)
-                        // pcvl_module.BS()
-                        // pcvl_module.PS(phi_outer)
+                if model == "mzi":
+
+                    def _mzi_factory(
+                        i: int,
+                        *,
+                        inner_trainable: bool = getattr(
+                            component, "trainable_inner", component.trainable
+                        ),
+                        outer_trainable: bool = getattr(
+                            component, "trainable_outer", component.trainable
+                        ),
+                        base: str = prefix,
+                    ):
+                        """Build a Mach-Zehnder interferometer optionally parameterised per index."""
+                        if inner_trainable:
+                            phi_inner = pcvl_module.P(f"{base}_li{i}")
+                        else:
+                            phi_inner = 0.0
+                        if outer_trainable:
+                            phi_outer = pcvl_module.P(f"{base}_lo{i}")
+                        else:
+                            phi_outer = 0.0
+                        return (
+                            pcvl_module.BS()
+                            // pcvl_module.PS(phi_inner)
+                            // pcvl_module.BS()
+                            // pcvl_module.PS(phi_outer)
+                        )
+
+                    gi = pcvl_module.GenericInterferometer(
+                        component.span,
+                        lambda i, factory=_mzi_factory: factory(i),
+                        shape=pcvl_module.InterferometerShape.RECTANGLE,
                     )
+                    pcvl_circuit.add(component.start_mode, gi)
 
-                gi = pcvl_module.GenericInterferometer(
-                    component.span,
-                    lambda i, factory=_mzi_factory: factory(i),
-                    shape=pcvl_module.InterferometerShape.RECTANGLE,
-                )
-                pcvl_circuit.add(component.start_mode, gi)
+                elif model == "bell":
+
+                    def _bell_factory(
+                        i: int,
+                        *,
+                        inner_trainable: bool = getattr(
+                            component, "trainable_inner", component.trainable
+                        ),
+                        outer_trainable: bool = getattr(
+                            component, "trainable_outer", component.trainable
+                        ),
+                        base: str = prefix,
+                    ):
+                        """Build a Mach-Zehnder interferometer optionally parameterised per index."""
+                        if inner_trainable:
+                            phi_inner = pcvl_module.P(f"{base}_li{i}")
+                        else:
+                            phi_inner = 0.0
+                        if outer_trainable:
+                            phi_outer = pcvl_module.P(f"{base}_lo{i}")
+                        else:
+                            phi_outer = 0.0
+
+                        circuit = pcvl_module.Circuit(2)
+                        circuit.add(0, pcvl_module.BS())
+                        circuit.add(0, pcvl_module.PS(phi_inner))
+                        circuit.add(1, pcvl_module.PS(phi_outer))
+                        circuit.add(0, pcvl_module.BS())
+
+                        return circuit
+
+                    gi = pcvl_module.GenericInterferometer(
+                        component.span,
+                        lambda i, factory=_bell_factory: factory(i),
+                        shape=pcvl_module.InterferometerShape.RECTANGLE,
+                    )
+                    pcvl_circuit.add(component.start_mode, gi)
+                else:
+                    raise ValueError(f"{model} not implemented yet")
 
             else:
                 # Components like Measurement are metadata only and do not map to a pcvl operation

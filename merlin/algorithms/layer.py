@@ -40,7 +40,6 @@ from ..builder.circuit_builder import (
     ANGLE_ENCODING_MODE_ERROR,
     CircuitBuilder,
 )
-from ..core.components import GenericInterferometer
 from ..core.process import ComputationProcessFactory
 from ..sampling.autodiff import AutoDiffProcess
 from ..sampling.strategies import OutputMappingStrategy
@@ -53,7 +52,7 @@ class QuantumLayer(nn.Module):
 
     This layer can be created either from:
     1. An Ansatz object (from AnsatzFactory) - for auto-generated circuits
-    2. Direct parameters - for custom circuits (backward compatible)
+    2. A :class:`CircuitBuilder` instance or a pre-compiled :class:`pcvl.Circuit`
 
     Args:
         index_photons (List[Tuple[int, int]], optional): List of tuples (min_mode, max_mode)
@@ -66,14 +65,17 @@ class QuantumLayer(nn.Module):
         self,
         input_size: int,
         output_size: int | None = None,
-        # Ansatz-based construction
+        # Ansatz-based construction - will be deprecated
         ansatz: Ansatz | None = None,
-        # Custom circuit construction (backward compatible)
-        circuit: pcvl.Circuit | CircuitBuilder | None = None,
-        input_state: list[int] | None = None,
-        n_photons: int | None = None,
+        # Builder-based construction
+        builder: CircuitBuilder | None = None,
+        # Custom circuit
+        circuit: pcvl.Circuit | None = None,
         trainable_parameters: list[str] = None,
         input_parameters: list[str] = None,
+        # For both custom circuits and builder
+        input_state: list[int] | None = None,
+        n_photons: int | None = None,
         # Common parameters
         output_mapping_strategy: OutputMappingStrategy = OutputMappingStrategy.LINEAR,
         device: torch.device | None = None,
@@ -92,38 +94,47 @@ class QuantumLayer(nn.Module):
         self.no_bunching = no_bunching
         self.index_photons = index_photons
 
-        builder_trainable: list[str] = []
-        builder_input: list[str] = []
+        if builder is not None and (
+            trainable_parameters is not None or input_parameters is not None
+        ):
+            raise ValueError(
+                "When providing a builder, do not also specify 'trainable_parameters' "
+                "or 'input_parameters'. Those prefixes are derived from the builder."
+            )
 
         self.angle_encoding_specs: dict[str, dict[str, Any]] = {}
+        resolved_circuit: pcvl.Circuit | None = None
+        trainable_parameters = (
+            list(trainable_parameters) if trainable_parameters else []
+        )
+        input_parameters = list(input_parameters) if input_parameters else []
 
-        # convert CircuitBuilder to pcvl.Circuit if needed, otherwise use Circuit
-        if isinstance(circuit, CircuitBuilder):
-            builder_trainable = circuit.trainable_parameter_prefixes
-            builder_input = circuit.input_parameter_prefixes
-            self.angle_encoding_specs = circuit.angle_encoding_specs
-            circuit = circuit.to_pcvl_circuit(pcvl)
+        if builder is not None:
+            if circuit is not None:
+                raise ValueError("Provide either 'circuit' or 'builder', not both")
+            trainable_parameters = list(builder.trainable_parameter_prefixes)
+            input_parameters = list(builder.input_parameter_prefixes)
+            self.angle_encoding_specs = builder.angle_encoding_specs
+            resolved_circuit = builder.to_pcvl_circuit(pcvl)
+        elif circuit is not None:
+            resolved_circuit = circuit
 
-        # Fix trainable and input parameters from builder or circuit, can also be empty lists
-        if trainable_parameters is None:
-            trainable_parameters = list(builder_trainable)
-        else:
-            trainable_parameters = list(trainable_parameters)
-
-        if input_parameters is None:
-            input_parameters = list(builder_input)
-        else:
-            input_parameters = list(input_parameters)
-
-        # Determine construction mode
-        # TODO: can be deprectated once Builder is fully supported
+        # Determine construction mode with deprecated ansatz or resolved circuit
+        # this if/elif loop can be removed for future releases because resolved_circuit will always be not None
         if ansatz is not None:
+            warnings.warn(
+                "The ansatz-based QuantumLayer construction is deprecated and will be "
+                "removed in a future release. Please migrate to builder-based circuits "
+                "using `builder=CircuitBuilder(...)`.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             self._init_from_ansatz(ansatz, output_size, output_mapping_strategy)
 
-        elif circuit is not None:
-            self.circuit = circuit
+        elif resolved_circuit is not None:
+            self.circuit = resolved_circuit
             self._init_from_custom_circuit(
-                circuit,
+                resolved_circuit,
                 input_state,
                 n_photons,
                 trainable_parameters,
@@ -132,7 +143,9 @@ class QuantumLayer(nn.Module):
                 output_mapping_strategy,
             )
         else:
-            raise ValueError("Either 'ansatz' or 'circuit' must be provided")
+            raise ValueError(
+                "Either 'ansatz', 'circuit', or 'builder' must be provided"
+            )
 
         # Setup sampling
         self.autodiff_process = AutoDiffProcess(sampling_method)
@@ -703,7 +716,6 @@ class QuantumLayer(nn.Module):
         input_size: int,
         n_params: int = 100,
         shots: int = 0,
-        reservoir_mode: bool = False,
         output_size: int | None = None,
         output_mapping_strategy: OutputMappingStrategy = OutputMappingStrategy.NONE,
         device: torch.device | None = None,
@@ -714,17 +726,18 @@ class QuantumLayer(nn.Module):
 
         The circuit is assembled via :class:`CircuitBuilder` with the following layout:
 
-        1. A fully trainable generic interferometer acting on all modes;
+        1. A fully trainable entangling layer acting on all modes;
         2. A full input encoding layer spanning all encoded features;
         3. A non-trainable entangling layer that redistributes encoded information;
-        4. Optional trainable rotation layers to reach the requested ``n_params`` budget;
+        4. Optional trainable Mach-Zehnder blocks (two parameters each) to reach the requested ``n_params`` budget;
         5. A final entangling layer prior to measurement.
 
         Args:
             input_size: Size of the classical input vector.
-            n_params: Number of trainable parameters to allocate across rotation layers.
+            n_params: Number of trainable parameters to allocate across the additional MZI blocks. Values
+                below the default entangling budget trigger a warning; values above it must differ by an even
+                amount because each added MZI exposes two parameters.
             shots: Number of sampling shots for stochastic evaluation.
-            reservoir_mode: Reserved for API compatibility (unused in builder mode).
             output_size: Optional classical output width.
             output_mapping_strategy: Strategy used to post-process the quantum distribution.
             device: Optional target device for tensors.
@@ -734,32 +747,22 @@ class QuantumLayer(nn.Module):
         Returns:
             QuantumLayer configured with the described architecture.
         """
-        _ = reservoir_mode  # Reserved for API compatibility; builder path ignores this flag.
-
         n_modes = 10
         n_photons = 5
 
         builder = CircuitBuilder(n_modes=n_modes)
 
-        # Trainable generic interferometer before encoding
-        builder.add_generic_interferometer(trainable=True, name="gi_simple")
-        generic_component = builder.circuit.components[-1]
-        generic_params = 0
-        if (
-            isinstance(generic_component, GenericInterferometer)
-            and generic_component.trainable
-            and generic_component.span >= 2
-        ):
-            mzi_count = generic_component.span * (generic_component.span - 1) // 2
-            generic_params = 2 * mzi_count
+        # Trainable entangling layer before encoding
+        builder.add_entangling_layer(trainable=True, name="gi_simple")
+        entangling_params = n_modes * (n_modes - 1)
 
         requested_params = max(int(n_params), 0)
-        if generic_params > requested_params:
+        if entangling_params > requested_params:
             warnings.warn(
-                "Generic interferometer introduces "
-                f"{generic_params} trainable parameters, exceeding the requested "
+                "Entangling layer introduces "
+                f"{entangling_params} trainable parameters, exceeding the requested "
                 f"budget of {requested_params}. The simple layer will expose "
-                f"{generic_params} trainable parameters.",
+                f"{entangling_params} trainable parameters.",
                 RuntimeWarning,
                 stacklevel=2,
             )
@@ -774,31 +777,40 @@ class QuantumLayer(nn.Module):
             subset_combinations=False,
         )
 
-        builder.add_entangling_layer(depth=1)
+        # Allocate additional trainable MZIs only if the budget exceeds the entangling layer
+        remaining = max(requested_params - entangling_params, 0)
+        if remaining % 2 != 0:
+            raise ValueError(
+                "Additional parameter budget must be even: each extra MZI exposes "
+                "two trainable parameters."
+            )
 
-        # Allocate additional trainable rotations only if the budget exceeds the interferometer
-        remaining = max(requested_params - generic_params, 0)
-        layer_idx = 0
-        added_rotation_params = 0
+        mzi_idx = 0
+        added_mzi_params = 0
 
         while remaining > 0:
-            prefix = f"theta_layer{layer_idx}"
-            if remaining >= n_modes:
-                builder.add_rotation_layer(trainable=True, name=prefix)
-                remaining -= n_modes
-                added_rotation_params += n_modes
-            else:
-                modes = list(range(remaining))
-                builder.add_rotation_layer(modes=modes, trainable=True, name=prefix)
-                added_rotation_params += remaining
-                remaining = 0
-            layer_idx += 1
+            if n_modes < 2:
+                raise ValueError("At least two modes are required to place an MZI.")
 
-        # Post-rotation entanglement
-        builder.add_entangling_layer(depth=1)
+            start_mode = mzi_idx % (n_modes - 1)
+            span_modes = [start_mode, start_mode + 1]
+            prefix = f"mzi_extra{mzi_idx}"
 
-        total_trainable = generic_params + added_rotation_params
-        expected_trainable = max(requested_params, generic_params)
+            builder.add_entangling_layer(
+                modes=span_modes,
+                trainable=True,
+                name=prefix,
+            )
+
+            remaining -= 2
+            added_mzi_params += 2
+            mzi_idx += 1
+
+        # Post-MZI entanglement
+        builder.add_superpositions()
+
+        total_trainable = entangling_params + added_mzi_params
+        expected_trainable = max(requested_params, entangling_params)
         if total_trainable != expected_trainable:
             raise ValueError(
                 "Constructed circuit exposes "
@@ -808,7 +820,7 @@ class QuantumLayer(nn.Module):
         return cls(
             input_size=input_size,
             output_size=output_size,
-            circuit=builder,
+            builder=builder,
             n_photons=n_photons,
             output_mapping_strategy=output_mapping_strategy,
             shots=shots,

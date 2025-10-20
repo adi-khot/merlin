@@ -33,9 +33,9 @@ def perceval_home(monkeypatch):
     monkeypatch.setenv("HOME", str(_PCVL_HOME))
 
 
-def test_rotation_layer_assigns_trainable_names_per_mode():
+def test_add_rotations_assigns_trainable_names_per_mode():
     builder = CircuitBuilder(n_modes=3)
-    builder.add_rotation_layer(trainable=True)
+    builder.add_rotations(trainable=True)
 
     rotations = builder.circuit.components
     assert len(rotations) == 3
@@ -48,9 +48,9 @@ def test_rotation_layer_assigns_trainable_names_per_mode():
         assert rotation.axis == "z"
 
 
-def test_rotation_layer_input_custom_prefix_uses_global_counter():
+def test_add_rotations_input_custom_prefix_uses_global_counter():
     builder = CircuitBuilder(n_modes=4)
-    builder.add_rotation_layer(modes=[1, 3], role=ParameterRole.INPUT, name="feature")
+    builder.add_rotations(modes=[1, 3], role=ParameterRole.INPUT, name="feature")
 
     rotations = builder.circuit.components
     assert [rotation.target for rotation in rotations] == [1, 3]
@@ -58,51 +58,11 @@ def test_rotation_layer_input_custom_prefix_uses_global_counter():
     assert all(rotation.role == ParameterRole.INPUT for rotation in rotations)
 
 
-def test_section_reference_copies_components_without_sharing_trainables():
-    builder = CircuitBuilder(n_modes=2)
-    builder.add_rotation_layer(trainable=True, name="theta")
-
-    builder.begin_section("first")
-    builder.add_superposition(
-        targets=(0, 1),
-        theta=0.25,
-        trainable_theta=True,
-        name="bs",
-    )
-    builder.end_section()
-
-    builder.begin_section("second", reference="first", share_trainable=False)
-
-    original, cloned = builder.circuit.components[-2:]
-    assert isinstance(original, BeamSplitter)
-    assert isinstance(cloned, BeamSplitter)
-    assert cloned is not original
-    assert cloned.theta_role == ParameterRole.TRAINABLE
-    assert cloned.theta_name == "bs_theta_copy0"
-    assert cloned.theta_value == pytest.approx(original.theta_value)
-
-
-def test_build_closes_open_sections_and_sets_metadata():
-    builder = CircuitBuilder(n_modes=1)
-    builder.begin_section("encoder", compute_adjoint=True)
-    builder.add_rotation(target=0)
-
-    with pytest.warns(UserWarning):
-        circuit = builder.build()
-    sections = circuit.metadata["sections"]
-    assert len(sections) == 1
-    section = sections[0]
-    assert section["name"] == "encoder"
-    assert section["compute_adjoint"] is True
-    assert section["start_idx"] == 0
-    assert section["end_idx"] == len(circuit.components)
-
-
 def test_complex_builder_pipeline_exports_pcvl_circuit():
     builder = CircuitBuilder(n_modes=3)
     builder.add_angle_encoding(name="input")
-    builder.add_entangling_layer(depth=1, name="ent")
-    builder.add_rotation(target=1, angle=0.25)
+    builder.add_superpositions(depth=1, name="ent")
+    builder.add_rotations(modes=1, angle=0.25)
 
     pcvl_circuit = builder.to_pcvl_circuit(pcvl)
     assert isinstance(pcvl_circuit, pcvl.Circuit)
@@ -126,7 +86,7 @@ def test_complex_builder_pipeline_exports_pcvl_circuit():
 
 def test_trainable_entangling_layer_generates_parameterised_mixers():
     builder = CircuitBuilder(n_modes=4)
-    builder.add_entangling_layer(depth=1, trainable=True, name="mix")
+    builder.add_superpositions(depth=1, trainable=True, name="mix")
 
     circuit = builder.to_pcvl_circuit(pcvl)
     param_names = {param.name for param in circuit.get_parameters()}
@@ -136,15 +96,33 @@ def test_trainable_entangling_layer_generates_parameterised_mixers():
     assert "mix" in builder.trainable_parameter_prefixes
 
 
+def test_pcvl_export_keeps_theta_and_phi_fallback_names_distinct():
+    builder = CircuitBuilder(n_modes=2)
+    builder.circuit.add(
+        BeamSplitter(
+            targets=(0, 1),
+            theta_role=ParameterRole.TRAINABLE,
+            phi_role=ParameterRole.TRAINABLE,
+        )
+    )
+
+    circuit = builder.to_pcvl_circuit(pcvl)
+    param_names = {param.name for param in circuit.get_parameters()}
+
+    assert any(name.startswith("theta_bs_") for name in param_names)
+    assert any(name.startswith("phi_bs_") for name in param_names)
+    assert len(param_names) == 2
+
+
 def test_to_pcvl_circuit_supports_gradient_backpropagation():
     builder = CircuitBuilder(n_modes=2)
-    builder.add_rotation_layer(trainable=True, name="theta")
-    builder.add_superposition(
+    builder.add_rotations(trainable=True, name="theta")
+    builder.add_superpositions(
         targets=(0, 1),
         trainable_theta=True,
         trainable_phi=True,
     )
-    builder.add_entangling_layer(depth=1)
+    builder.add_superpositions(depth=1)
 
     pcvl_circuit = builder.to_pcvl_circuit(pcvl)
 
@@ -173,12 +151,12 @@ def test_to_pcvl_circuit_supports_gradient_backpropagation():
 def test_builder_integrates_directly_with_quantum_layer():
     builder = CircuitBuilder(n_modes=3)
     builder.add_angle_encoding(name="input")
-    builder.add_rotation_layer(trainable=True, name="theta")
-    builder.add_entangling_layer(depth=1)
+    builder.add_rotations(trainable=True, name="theta")
+    builder.add_superpositions(depth=1)
 
     layer = QuantumLayer(
         input_size=3,
-        circuit=builder,
+        builder=builder,
         n_photons=1,
         output_size=3,
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
@@ -258,7 +236,7 @@ def test_angle_encoding_applies_scaling_in_quantum_layer():
 
     layer = QuantumLayer(
         input_size=3,
-        circuit=builder,
+        builder=builder,
         n_photons=1,
         output_size=3,
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
@@ -287,7 +265,7 @@ def test_angle_encoding_subset_combinations_in_quantum_layer():
 
     layer = QuantumLayer(
         input_size=3,
-        circuit=builder,
+        builder=builder,
         n_photons=1,
         output_size=3,
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
@@ -331,8 +309,8 @@ def test_angle_encoding_tracks_logical_indices_for_sparse_modes():
 def test_trainable_name_deduplication_for_rotation_layer():
     builder = CircuitBuilder(n_modes=2)
 
-    builder.add_rotation_layer(modes=[0, 1], trainable=True, name="theta")
-    builder.add_rotation_layer(modes=[0, 1], trainable=True, name="theta")
+    builder.add_rotations(modes=[0, 1], trainable=True, name="theta")
+    builder.add_rotations(modes=[0, 1], trainable=True, name="theta")
     pcvl.pdisplay(builder.to_pcvl_circuit(pcvl), output_format=pcvl.Format.TEXT)
     rotations = [
         comp for comp in builder.circuit.components if isinstance(comp, Rotation)
@@ -350,8 +328,8 @@ def test_trainable_name_deduplication_for_rotation_layer():
 def test_trainable_name_deduplication_for_single_rotation():
     builder = CircuitBuilder(n_modes=2)
 
-    builder.add_rotation(target=0, trainable=True, name="phi")
-    builder.add_rotation(target=1, trainable=True, name="phi")
+    builder.add_rotations(modes=0, trainable=True, name="phi")
+    builder.add_rotations(modes=1, trainable=True, name="phi")
 
     rotations = [
         comp for comp in builder.circuit.components if isinstance(comp, Rotation)
@@ -360,23 +338,24 @@ def test_trainable_name_deduplication_for_single_rotation():
     assert builder.trainable_parameter_prefixes == ["phi"]
 
 
-def test_generic_interferometer_defaults():
+def test_entangling_layer_defaults():
     builder = CircuitBuilder(n_modes=4)
-    builder.add_generic_interferometer()
+    builder.add_entangling_layer()
 
     component = builder.circuit.components[-1]
     assert isinstance(component, GenericInterferometer)
     assert component.start_mode == 0
     assert component.span == 4
     assert component.trainable is True
+    assert component.model == "mzi"
     assert any(
-        prefix.startswith("gi") for prefix in builder.trainable_parameter_prefixes
+        prefix.startswith("el") for prefix in builder.trainable_parameter_prefixes
     )
 
 
-def test_generic_interferometer_mode_range_and_non_trainable():
+def test_entangling_layer_mode_range_and_non_trainable():
     builder = CircuitBuilder(n_modes=5)
-    builder.add_generic_interferometer(modes=[2], trainable=False)
+    builder.add_entangling_layer(modes=[2], trainable=False)
 
     component = builder.circuit.components[-1]
     assert isinstance(component, GenericInterferometer)
@@ -385,28 +364,76 @@ def test_generic_interferometer_mode_range_and_non_trainable():
     assert component.trainable is False
     assert builder.trainable_parameter_prefixes == []
 
-    builder.add_generic_interferometer(modes=[1, 3], trainable=True, name="block")
+    builder.add_entangling_layer(modes=[1, 3], trainable=True, name="block")
     last = builder.circuit.components[-1]
     assert last.start_mode == 1 and last.span == 3
+    assert last.model == "mzi"
     assert "block" in builder.trainable_parameter_prefixes
 
 
-def test_generic_interferometer_invalid_modes():
+def test_entangling_layer_invalid_modes():
     builder = CircuitBuilder(n_modes=4)
 
     with pytest.raises(ValueError):
-        builder.add_generic_interferometer(modes=[5])
+        builder.add_entangling_layer(modes=[5])
 
     with pytest.raises(ValueError):
-        builder.add_generic_interferometer(modes=[1, 1])
+        builder.add_entangling_layer(modes=[1, 1])
 
     with pytest.raises(ValueError):
-        builder.add_generic_interferometer(modes=[0, 1, 2])
+        builder.add_entangling_layer(modes=[0, 1, 2])
 
 
-def test_generic_interferometer_to_pcvl_registers_parameters():
+def test_entangling_layer_invalid_model():
+    builder = CircuitBuilder(n_modes=3)
+    with pytest.raises(ValueError, match="model must be either 'mzi' or 'bell'"):
+        builder.add_entangling_layer(model="xyz")
+
+
+@pytest.mark.parametrize("model", ["mzi", "bell"])
+def test_entangling_layer_model_selection_to_pcvl(model):
     builder = CircuitBuilder(n_modes=4)
-    builder.add_generic_interferometer(name="bridge")
+    builder.add_entangling_layer(model=model, name="custom")
+
+    component = builder.circuit.components[-1]
+    assert component.model == model
+
+    pcvl_circuit = builder.to_pcvl_circuit(pcvl)
+    params = pcvl_circuit.get_parameters()
+    assert any(p.name.startswith("custom_li") for p in params)
+    assert any(p.name.startswith("custom_lo") for p in params)
+
+
+@pytest.mark.parametrize("model", ["mzi", "bell"])
+def test_entangling_layer_models_forward_backward(model):
+    builder = CircuitBuilder(n_modes=4)
+    builder.add_angle_encoding(modes=[0, 1, 2, 3], name="input")
+    builder.add_entangling_layer(model=model, trainable=True, name=f"{model}_ent")
+    builder.add_rotations(trainable=True, name="theta")
+    builder.add_superpositions(depth=1)
+
+    layer = QuantumLayer(
+        input_size=4,
+        builder=builder,
+        n_photons=1,
+        output_size=4,
+        output_mapping_strategy=OutputMappingStrategy.LINEAR,
+        dtype=torch.float32,
+    )
+
+    x = torch.rand(2, 4)
+    logits = layer(x)
+    loss = logits.sum()
+    loss.backward()
+
+    assert logits.shape == (2, 4)
+    grads = [p.grad for p in layer.parameters() if p.requires_grad]
+    assert any(g is not None and torch.any(g != 0) for g in grads)
+
+
+def test_entangling_layer_to_pcvl_registers_parameters():
+    builder = CircuitBuilder(n_modes=4)
+    builder.add_entangling_layer(name="bridge")
 
     pcvl_circuit = builder.to_pcvl_circuit(pcvl)
     params = pcvl_circuit.get_parameters()
@@ -414,14 +441,14 @@ def test_generic_interferometer_to_pcvl_registers_parameters():
     assert any(p.name.startswith("bridge_lo") for p in params)
 
 
-def test_generic_interferometer_layer_trains():
+def test_entangling_layer_layer_trains():
     builder = CircuitBuilder(n_modes=4)
     builder.add_angle_encoding(modes=[0, 1, 2, 3], name="input")
-    builder.add_generic_interferometer(trainable=True, name="gi")
+    builder.add_entangling_layer(trainable=True, name="gi")
 
     layer = QuantumLayer(
         input_size=4,
-        circuit=builder,
+        builder=builder,
         n_photons=1,
         output_size=4,
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
@@ -439,16 +466,16 @@ def test_generic_interferometer_layer_trains():
     )
 
 
-def test_generic_interferometer_with_additional_components_trains():
+def test_entangling_layer_with_additional_components_trains():
     builder = CircuitBuilder(n_modes=5)
     builder.add_angle_encoding(modes=[0, 1, 2, 3, 4], name="input")
-    builder.add_generic_interferometer(trainable=True, name="core", modes=[2])
-    builder.add_rotation_layer(trainable=True, name="theta")
-    builder.add_entangling_layer(depth=1)
+    builder.add_entangling_layer(trainable=True, name="core", modes=[2])
+    builder.add_rotations(trainable=True, name="theta")
+    builder.add_superpositions(depth=1)
 
     layer = QuantumLayer(
         input_size=5,
-        circuit=builder,
+        builder=builder,
         n_photons=1,
         output_size=5,
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
@@ -466,31 +493,33 @@ def test_generic_interferometer_with_additional_components_trains():
     assert any(g is not None and torch.any(g != 0) for g in grads)
 
 
-def test_builder_functionality_on_gpu():
+@pytest.mark.parametrize("model", ["mzi", "bell"])
+def test_entangling_layer_models_on_gpu(model):
     if not torch.cuda.is_available():
-        pytest.skip("CUDA is not available, skipping GPU test.")
+        pytest.skip("CUDA is not available, skipping GPU entangling-layer test.")
 
     device = torch.device("cuda")
-
-    builder = CircuitBuilder(n_modes=3)
-    builder.add_angle_encoding(name="input")
-    builder.add_rotation_layer(trainable=True, name="theta")
-    builder.add_entangling_layer(depth=1)
+    builder = CircuitBuilder(n_modes=4)
+    builder.add_angle_encoding(modes=[0, 1, 2, 3], name="input")
+    builder.add_entangling_layer(model=model, trainable=True, name=f"{model}_ent")
+    builder.add_rotations(trainable=True, name="theta")
+    builder.add_superpositions(depth=1)
 
     layer = QuantumLayer(
-        input_size=3,
-        circuit=builder,
+        input_size=4,
+        builder=builder,
         n_photons=1,
-        output_size=3,
+        output_size=4,
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
         dtype=torch.float32,
     ).to(device)
 
-    x = torch.rand(4, 3, device=device)
+    x = torch.rand(2, 4, device=device)
     logits = layer(x)
     loss = logits.sum()
     loss.backward()
 
-    assert logits.device.type == device.type and logits.device.type == x.device.type
-    assert logits.shape == (4, 3)
-    assert any(p.grad is not None for p in layer.parameters() if p.requires_grad)
+    assert logits.device == device
+    assert logits.shape == (2, 4)
+    grads = [p.grad for p in layer.parameters() if p.requires_grad]
+    assert any(g is not None and torch.any(g != 0) for g in grads if g is not None)

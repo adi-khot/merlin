@@ -297,12 +297,12 @@ class TestFeatureMapFactoryMethods:
     def test_from_circuit_builder_basic(self):
         """FeatureMap can be constructed directly from CircuitBuilder."""
         builder = CircuitBuilder(n_modes=4)
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
         builder.add_angle_encoding(modes=[0, 1], name="input")
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
 
         feature_map = FeatureMap(
-            circuit=builder,
+            builder=builder,
             input_size=2,
             input_parameters=None,
         )
@@ -313,13 +313,13 @@ class TestFeatureMapFactoryMethods:
     def test_from_circuit_builder_with_trainable_params(self):
         """FeatureMap inherits trainable parameters defined in CircuitBuilder."""
         builder = CircuitBuilder(n_modes=4)
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
         builder.add_angle_encoding(modes=[0, 1], name="input")
-        builder.add_rotation_layer(trainable=True, name="phi_")
-        builder.add_entangling_layer(depth=1)
+        builder.add_rotations(trainable=True, name="phi_")
+        builder.add_superpositions(depth=1)
 
         feature_map = FeatureMap(
-            circuit=builder,
+            builder=builder,
             input_size=2,
             input_parameters=None,
         )
@@ -337,7 +337,7 @@ class TestFeatureMapFactoryMethods:
         )
 
         feature_map = FeatureMap(
-            circuit=builder,
+            builder=builder,
             input_size=3,
             input_parameters=None,
         )
@@ -402,12 +402,12 @@ class TestFidelityKernelFactoryMethods:
     def test_from_feature_map_builder(self):
         """FidelityKernel can wrap a FeatureMap created from CircuitBuilder."""
         builder = CircuitBuilder(n_modes=4)
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
         builder.add_angle_encoding(modes=[0, 1], name="input")
-        builder.add_entangling_layer(depth=1)
+        builder.add_superpositions(depth=1)
 
         feature_map = FeatureMap(
-            circuit=builder,
+            builder=builder,
             input_size=2,
             input_parameters=None,
         )
@@ -579,13 +579,13 @@ class TestKernelCircuitBuilder:
         expected = torch.tensor([0.05, 0.1, 0.15], dtype=torch.float32)
         assert torch.allclose(encoded.detach(), expected, atol=1e-6)
 
-    def test_kernel_supports_generic_interferometer(self):
+    def test_kernel_supports_entangling_layer(self):
         builder = CircuitBuilder(n_modes=4)
-        builder.add_generic_interferometer(name="gi")
+        builder.add_entangling_layer(name="gi")
         builder.add_angle_encoding(modes=[0, 1, 2, 3], name="input")
 
         feature_map = FeatureMap(
-            circuit=builder,
+            builder=builder,
             input_size=4,
             input_parameters=None,
         )
@@ -655,11 +655,11 @@ class TestKernelConstructionConsistency:
         """Supported constructors yield kernels with matching structure."""
         # Manual builder-based kernel
         builder = CircuitBuilder(n_modes=4)
-        builder.add_entangling_layer(depth=1, name="phi_1_")
+        builder.add_superpositions(depth=1, name="phi_1_")
         builder.add_angle_encoding(modes=[0, 1], name="input")
-        builder.add_entangling_layer(depth=1, name="phi_2_")
+        builder.add_superpositions(depth=1, name="phi_2_")
         fm_manual = FeatureMap(
-            circuit=builder,
+            builder=builder,
             input_size=2,
             input_parameters=None,
         )
