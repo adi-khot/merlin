@@ -489,13 +489,19 @@ class QuantumLayer(nn.Module):
         # Builder circuits that define several encoders typically expose one logical tensor
         # to the user, while the converter expects separate tensors per prefix.
         if (
-            not self.auto_generation_mode
-            and len(prefixes) > 1
+            len(prefixes) > 1
             and len(input_parameters) == 1
         ):
             split_inputs = self._split_inputs_by_prefix(prefixes, input_parameters[0])
             if split_inputs is not None:
                 input_parameters = split_inputs
+
+        # Custom mode or multiple parameters
+        for idx, x in enumerate(input_parameters):
+            prefix = None
+            if prefixes:
+                prefix = prefixes[idx] if idx < len(prefixes) else prefixes[-1]
+            encoded = self._prepare_input_encoding(x, prefix)
             params.append(encoded)
 
         return params
