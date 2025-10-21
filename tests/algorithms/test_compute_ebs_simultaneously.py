@@ -1,14 +1,19 @@
+import perceval as pcvl
 import pytest
 import torch
-import perceval as pcvl
+
+from merlin import OutputMappingStrategy, QuantumLayer
 from merlin.core.process import ComputationProcess
-from merlin import QuantumLayer, OutputMappingStrategy
 
 
 def classical_method_ebs(layer, input_state):
     """Classical method for computing superposition states using individual state computations."""
     output_classical = torch.zeros(1, layer.output_size)
-    dtype = layer.computation_process.simulation_graph.prev_amplitudes.dtype if layer.computation_process.simulation_graph.prev_amplitudes is not None else torch.complex128
+    dtype = (
+        layer.computation_process.simulation_graph.prev_amplitudes.dtype
+        if layer.computation_process.simulation_graph.prev_amplitudes is not None
+        else torch.complex128
+    )
     output_classical = output_classical.to(dtype)
 
     for key, value in input_state.items():
@@ -18,7 +23,7 @@ def classical_method_ebs(layer, input_state):
             value * layer.computation_process.simulation_graph.prev_amplitudes
         )
 
-    distribution = output_classical.real ** 2 + output_classical.imag ** 2
+    distribution = output_classical.real**2 + output_classical.imag**2
 
     return distribution
 
@@ -34,7 +39,7 @@ class TestComputeEbsSimultaneously:
             pcvl.components.catalog["mzi phase last"].generate,
             shape=pcvl.InterferometerShape.RECTANGLE,
         )
-        
+
         # Create superposition input state
         self.input_state_tensor = torch.rand(2, 6, dtype=torch.float64)
         sum_values = self.input_state_tensor.abs().pow(2).sum(dim=1).sqrt().unsqueeze(1)
@@ -59,7 +64,7 @@ class TestComputeEbsSimultaneously:
         # Create computation process
         self.process = self.layer.computation_process
         self.process.input_state = self.input_state_tensor
-        
+
         # Create test parameters
         self.test_parameters = self.layer.prepare_parameters([])
 
@@ -69,12 +74,12 @@ class TestComputeEbsSimultaneously:
         result = self.process.compute_ebs_simultaneously(
             self.test_parameters, simultaneous_processes=1
         )
-        
+
         # Check output shape and dtype
         assert isinstance(result, torch.Tensor)
         assert result.dtype == torch.complex128  # Should be complex for float64 input
         assert len(result.shape) == 2
-        
+
         # Result should not be all zeros
         assert not torch.allclose(result, torch.zeros_like(result))
 
@@ -83,18 +88,18 @@ class TestComputeEbsSimultaneously:
         # Test with different simultaneous_processes values
         batch_sizes = [1, 2, 4]
         results = []
-        
+
         for batch_size in batch_sizes:
             result = self.process.compute_ebs_simultaneously(
                 self.test_parameters, simultaneous_processes=batch_size
             )
             results.append(result)
-        
+
         # All results should be the same regardless of batch size
         for i in range(1, len(results)):
-            assert torch.allclose(
-                results[0], results[i], rtol=1e-12, atol=1e-14
-            ), f"Results differ between batch_size=1 and batch_size={batch_sizes[i]}"
+            assert torch.allclose(results[0], results[i], rtol=1e-12, atol=1e-14), (
+                f"Results differ between batch_size=1 and batch_size={batch_sizes[i]}"
+            )
 
     def test_comparison_with_superposition_state(self):
         """Test that compute_ebs_simultaneously gives same results as compute_superposition_state."""
@@ -105,11 +110,13 @@ class TestComputeEbsSimultaneously:
         result_superposition = self.process.compute_superposition_state(
             self.test_parameters
         )
-        
+
         # Results should be identical (or very close due to numerical precision)
         assert torch.allclose(
             result_ebs, result_superposition, rtol=1e-12, atol=1e-14
-        ), "compute_ebs_simultaneously and compute_superposition_state give different results"
+        ), (
+            "compute_ebs_simultaneously and compute_superposition_state give different results"
+        )
 
     def test_edge_case_single_state(self):
         """Test with input state that has only one non-zero component."""
@@ -117,7 +124,7 @@ class TestComputeEbsSimultaneously:
         single_state = torch.zeros(1, 6, dtype=torch.float64)
         single_state[0, 0] = 1.0
         single_state[0, 1] = 1.0
-        
+
         process_single = ComputationProcess(
             circuit=self.circuit,
             input_state=single_state,
@@ -127,11 +134,11 @@ class TestComputeEbsSimultaneously:
             dtype=torch.float64,
             no_bunching=True,
         )
-        
+
         result = process_single.compute_ebs_simultaneously(
             self.test_parameters, simultaneous_processes=1
         )
-        
+
         # Should still produce valid output
         assert isinstance(result, torch.Tensor)
         assert not torch.allclose(result, torch.zeros_like(result))
@@ -149,12 +156,12 @@ class TestComputeEbsSimultaneously:
             dtype=torch.float32,
             no_bunching=True,
         )
-        
+
         params_f32 = [p.to(torch.float32) for p in self.test_parameters]
         result_f32 = process_f32.compute_ebs_simultaneously(
             params_f32, simultaneous_processes=2
         )
-        
+
         # Should be complex64 for float32 input
         assert result_f32.dtype == torch.complex64
 
@@ -181,28 +188,29 @@ class TestComputeEbsSimultaneously:
         result = self.process.compute_ebs_simultaneously(
             self.test_parameters, simultaneous_processes=100
         )
-        
+
         # Should give same result as smaller batch sizes
         result_small = self.process.compute_ebs_simultaneously(
             self.test_parameters, simultaneous_processes=1
         )
-        
-        assert torch.allclose(result, result_small, rtol=1e-12, atol=1e-14)
 
+        assert torch.allclose(result, result_small, rtol=1e-12, atol=1e-14)
 
     def test_gradient_flow(self):
         """Test that gradients flow through compute_ebs_simultaneously."""
         # Create parameters that require gradients
-        params_with_grad = [p.clone().detach().requires_grad_(True) for p in self.test_parameters]
-        
+        params_with_grad = [
+            p.clone().detach().requires_grad_(True) for p in self.test_parameters
+        ]
+
         result = self.process.compute_ebs_simultaneously(
             params_with_grad, simultaneous_processes=2
         )
-        
+
         # Compute a simple loss and backpropagate
         loss = result.abs().sum()
         loss.backward()
-        
+
         # Check that gradients were computed
         for param in params_with_grad:
             assert param.grad is not None
@@ -216,7 +224,7 @@ class TestComputeEbsSimultaneously:
         layer = self.layer
 
         # Run the QuantumLayer (uses compute_superposition_state internally)
-        #output_quantum_layer = benchmark(layer, batch=True, simultaneous_processes=6)
+        # output_quantum_layer = benchmark(layer, batch=True, simultaneous_processes=6)
         output_quantum_layer = benchmark(layer)
         # Run our batch method
         result_batch = self.process.compute_ebs_simultaneously(
@@ -237,7 +245,6 @@ class TestComputeEbsSimultaneously:
                 probs_batch,
             )
 
-
         # Results should be identical (or very close due to numerical precision)
         assert torch.allclose(
             output_quantum_layer[1], probs_batch[1], rtol=3e-4, atol=1e-7
@@ -252,13 +259,18 @@ class TestComputeEbsSimultaneously:
 
         # Create input state dictionary for classical method
         input_state_superposed = {
-            layer.computation_process.simulation_graph.mapped_keys[k]: self.input_state_tensor[0, k]
+            layer.computation_process.simulation_graph.mapped_keys[
+                k
+            ]: self.input_state_tensor[0, k]
             for k in range(len(self.input_state_tensor[0]))
-            if self.input_state_tensor[0, k].abs() > 1e-10  # Only include non-zero entries
+            if self.input_state_tensor[0, k].abs()
+            > 1e-10  # Only include non-zero entries
         }
 
         # Run classical method with benchmark
-        output_classical = benchmark(classical_method_ebs, layer, input_state_superposed)
+        output_classical = benchmark(
+            classical_method_ebs, layer, input_state_superposed
+        )
         self.process.input_state = self.input_state_tensor
         # Run batch method
         result_batch = self.process.compute_ebs_simultaneously(
@@ -269,10 +281,9 @@ class TestComputeEbsSimultaneously:
         probs_batch = result_batch.real**2 + result_batch.imag**2
 
         # Results should be identical (or very close due to numerical precision)
-        assert torch.allclose(
-            output_classical, probs_batch[0], rtol=3e-4, atol=1e-7
-        ), "Classical method and batch method give different results"
-
+        assert torch.allclose(output_classical, probs_batch[0], rtol=3e-4, atol=1e-7), (
+            "Classical method and batch method give different results"
+        )
 
     def test_batch_benchmark(self, benchmark):
         """Test that compute_ebs_simultaneously gives same results as QuantumLayer with superposition."""
@@ -285,8 +296,10 @@ class TestComputeEbsSimultaneously:
         output_quantum_layer = layer()
 
         # Run our batch method
-        result_batch = benchmark(self.process.compute_ebs_simultaneously,
-            self.test_parameters, simultaneous_processes=4
+        result_batch = benchmark(
+            self.process.compute_ebs_simultaneously,
+            self.test_parameters,
+            simultaneous_processes=4,
         )
 
         # Convert to probabilities for comparison
@@ -303,9 +316,7 @@ class TestComputeEbsSimultaneously:
                 probs_batch,
             )
 
-
         # Results should be identical (or very close due to numerical precision)
         assert torch.allclose(
             output_quantum_layer[1], probs_batch[1], rtol=3e-4, atol=1e-7
         ), "Batch method and QuantumLayer give different results"
-
