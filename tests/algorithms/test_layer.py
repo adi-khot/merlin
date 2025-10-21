@@ -280,7 +280,7 @@ class TestQuantumLayer:
         # this tests include builder, simple and circuit-based API
         with pytest.raises(
             ValueError,
-            match="Either 'circuit', or 'builder' must be provided",
+            match="Provide exactly one of 'circuit', 'builder', or 'experiment'.",
         ):
             ML.QuantumLayer(input_size=3)
 

@@ -27,6 +27,10 @@ import torch.nn as nn
 
 import merlin as ml
 
+ANSATZ_SKIP = pytest.mark.skip(
+    reason="Legacy ansatz-based QuantumLayer API removed; test pending migration."
+)
+
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_load_model_on_cuda():

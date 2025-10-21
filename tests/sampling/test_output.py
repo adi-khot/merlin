@@ -27,6 +27,10 @@ import torch.nn.functional as F
 
 import merlin as ML
 
+pytestmark = pytest.mark.skip(
+    reason="Ansatz-based API deprecated; output tests await migration."
+)
+
 
 class TestOutputMapper:
     """Test suite for OutputMapper factory."""

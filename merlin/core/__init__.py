@@ -29,23 +29,6 @@ from .generators import CircuitGenerator, CircuitType, StateGenerator, StatePatt
 from .photonicbackend import PhotonicBackend
 from .process import ComputationProcess, ComputationProcessFactory
 
-
-def __getattr__(name):
-    """Lazy import for backward compatibility"""
-    if name in ("Ansatz", "AnsatzFactory"):
-        import warnings
-
-        warnings.warn(
-            f"Importing {name} from merlin.core is deprecated. "
-            f"Use 'from merlin.builder.ansatz import {name}' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return locals()[name]
-
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 __all__ = [
     "PhotonicBackend",
     "AbstractComputationProcess",
@@ -60,6 +43,4 @@ __all__ = [
     "BeamSplitter",
     "EntanglingBlock",
     "Circuit",
-    "Ansatz",  # noqa: F401, F822
-    "AnsatzFactory",  # noqa: F401, F822
 ]
