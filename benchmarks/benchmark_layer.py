@@ -86,19 +86,21 @@ benchmark_runner = LayerBenchmarkRunner()
 @pytest.mark.parametrize("device", DEVICE_CONFIGS)
 def test_quantum_layer_forward_benchmark(benchmark, config: dict, device: str):
     """Benchmark quantum layer forward pass."""
-    experiment = ML.PhotonicBackend(
-        circuit_type=ML.CircuitType.PARALLEL_COLUMNS,
-        n_modes=config["n_modes"],
-        n_photons=config["n_photons"],
-    )
 
-    ansatz = ML.AnsatzFactory.create(
-        PhotonicBackend=experiment,
+    builder = ML.CircuitBuilder(n_modes=config["n_modes"])
+    builder.add_entangling_layer(trainable=True, name="U1")
+    builder.add_angle_encoding(
+        modes=list(range(config["input_size"])), name="input", subset_combinations=True
+    )
+    builder.add_entangling_layer(trainable=True, name="U2")
+
+    layer = ML.QuantumLayer(
         input_size=config["input_size"],
         output_size=config["output_size"],
+        n_photons=config["n_photons"],
+        builder=builder,
+        output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
     )
-
-    layer = ML.QuantumLayer(input_size=config["input_size"], ansatz=ansatz)
 
     # Create larger batch for meaningful timing
     batch_size = 32
@@ -122,19 +124,19 @@ def test_batched_computation_benchmark(
     benchmark, config: dict, batch_size: int, device: str
 ):
     """Benchmark batched quantum layer computation."""
-    experiment = ML.PhotonicBackend(
-        circuit_type=ML.CircuitType.SERIES,
-        n_modes=config["n_modes"],
-        n_photons=config["n_photons"],
-    )
 
-    ansatz = ML.AnsatzFactory.create(
-        PhotonicBackend=experiment,
+    builder = ML.CircuitBuilder(n_modes=config["n_modes"])
+    builder.add_entangling_layer(trainable=True, name="U1")
+    builder.add_angle_encoding(modes=list(range(config["input_size"])), name="input")
+    builder.add_entangling_layer(trainable=True, name="U2")
+
+    layer = ML.QuantumLayer(
         input_size=config["input_size"],
         output_size=config["output_size"],
+        n_photons=config["n_photons"],
+        builder=builder,
+        output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
     )
-
-    layer = ML.QuantumLayer(input_size=config["input_size"], ansatz=ansatz)
 
     x = torch.rand(batch_size, config["input_size"])
 
@@ -153,20 +155,21 @@ def test_batched_computation_benchmark(
 @pytest.mark.parametrize("device", DEVICE_CONFIGS)
 def test_gradient_computation_benchmark(benchmark, config: dict, device: str):
     """Benchmark gradient computation through quantum layer."""
-    experiment = ML.PhotonicBackend(
-        circuit_type=ML.CircuitType.PARALLEL_COLUMNS,
-        n_modes=config["n_modes"],
-        n_photons=config["n_photons"],
-        use_bandwidth_tuning=True,
-    )
 
-    ansatz = ML.AnsatzFactory.create(
-        PhotonicBackend=experiment,
+    builder = ML.CircuitBuilder(n_modes=config["n_modes"])
+    builder.add_entangling_layer(trainable=True, name="U1")
+    builder.add_angle_encoding(
+        modes=list(range(config["input_size"])), name="input", subset_combinations=True
+    )
+    builder.add_entangling_layer(trainable=True, name="U2")
+
+    layer = ML.QuantumLayer(
         input_size=config["input_size"],
         output_size=config["output_size"],
+        n_photons=config["n_photons"],
+        builder=builder,
+        output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
     )
-
-    layer = ML.QuantumLayer(input_size=config["input_size"], ansatz=ansatz)
 
     x = torch.rand(16, config["input_size"], requires_grad=True)
 
@@ -197,29 +200,28 @@ def test_gradient_computation_benchmark(benchmark, config: dict, device: str):
 @pytest.mark.parametrize("device", DEVICE_CONFIGS)
 def test_multiple_circuit_types_benchmark(benchmark, config: dict, device: str):
     """Benchmark different circuit types for quantum layers."""
-    circuit_types = [
-        ML.CircuitType.PARALLEL_COLUMNS,
-        ML.CircuitType.SERIES,
-        ML.CircuitType.PARALLEL,
-    ]
+    subset_combinations = [True, False]
 
     def test_all_circuit_types():
         results = []
 
-        for circuit_type in circuit_types:
-            experiment = ML.PhotonicBackend(
-                circuit_type=circuit_type,
-                n_modes=config["n_modes"],
-                n_photons=config["n_photons"],
+        for subset in subset_combinations:
+            builder = ML.CircuitBuilder(n_modes=config["n_modes"])
+            builder.add_entangling_layer(trainable=True, name="U1")
+            builder.add_angle_encoding(
+                modes=list(range(config["input_size"])),
+                name="input",
+                subset_combinations=subset,
             )
+            builder.add_entangling_layer(trainable=True, name="U2")
 
-            ansatz = ML.AnsatzFactory.create(
-                PhotonicBackend=experiment,
+            layer = ML.QuantumLayer(
                 input_size=config["input_size"],
                 output_size=config["output_size"],
+                n_photons=config["n_photons"],
+                builder=builder,
+                output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
             )
-
-            layer = ML.QuantumLayer(input_size=config["input_size"], ansatz=ansatz)
 
             x = torch.rand(16, config["input_size"])
             output = layer(x)
@@ -231,7 +233,7 @@ def test_multiple_circuit_types_benchmark(benchmark, config: dict, device: str):
     results = benchmark(test_all_circuit_types)
 
     # Validate all results
-    assert len(results) == len(circuit_types)
+    assert len(results) == len(subset_combinations)
     for result in results:
         expected_shape = (16, config["output_size"])
         assert benchmark_runner.validate_layer_output_correctness(
@@ -249,25 +251,26 @@ def test_output_mapping_strategies_benchmark(benchmark, config: dict, device: st
         ML.OutputMappingStrategy.MODGROUPING,
     ]
 
-    experiment = ML.PhotonicBackend(
-        circuit_type=ML.CircuitType.PARALLEL_COLUMNS,
-        n_modes=config["n_modes"],
-        n_photons=config["n_photons"],
-    )
-
     def test_all_strategies():
         results = []
 
         for strategy in strategies:
-            ansatz = ML.AnsatzFactory.create(
-                PhotonicBackend=experiment,
+            builder = ML.CircuitBuilder(n_modes=config["n_modes"])
+            builder.add_entangling_layer(trainable=True, name="U1")
+            builder.add_angle_encoding(
+                modes=list(range(config["input_size"])),
+                name="input",
+                subset_combinations=True,
+            )
+            builder.add_entangling_layer(trainable=True, name="U2")
+
+            layer = ML.QuantumLayer(
                 input_size=config["input_size"],
                 output_size=config["output_size"],
+                n_photons=config["n_photons"],
+                builder=builder,
                 output_mapping_strategy=strategy,
             )
-
-            layer = ML.QuantumLayer(input_size=config["input_size"], ansatz=ansatz)
-
             x = torch.rand(16, config["input_size"])
             output = layer(x)
             results.append(output)
@@ -292,15 +295,21 @@ class TestLayerPerformanceRegression:
 
     def test_forward_pass_performance_bounds(self):
         """Test that forward pass stays within reasonable time bounds."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=8, n_photons=3
-        )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=6, output_size=10
+        builder = ML.CircuitBuilder(n_modes=8)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(
+            modes=list(range(6)), name="input", subset_combinations=True
         )
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        layer = ML.QuantumLayer(input_size=6, ansatz=ansatz)
+        layer = ML.QuantumLayer(
+            input_size=6,
+            output_size=10,
+            n_photons=3,
+            builder=builder,
+            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+        )
 
         x = torch.rand(32, 6)
 
@@ -316,18 +325,21 @@ class TestLayerPerformanceRegression:
 
     def test_gradient_computation_performance_bounds(self):
         """Test that gradient computation stays within reasonable time bounds."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS,
-            n_modes=6,
+
+        builder = ML.CircuitBuilder(n_modes=6)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(
+            modes=list(range(4)), name="input", subset_combinations=True
+        )
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=4,
+            output_size=6,
             n_photons=2,
-            use_bandwidth_tuning=True,
+            builder=builder,
+            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
         )
-
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=4, output_size=6
-        )
-
-        layer = ML.QuantumLayer(input_size=4, ansatz=ansatz)
 
         x = torch.rand(16, 4, requires_grad=True)
 
@@ -377,15 +389,20 @@ def save_benchmark_results(
 if __name__ == "__main__":
     print("Running quantum layer benchmarks...")
 
-    experiment = ML.PhotonicBackend(
-        circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=6, n_photons=3
+    builder = ML.CircuitBuilder(n_modes=6)
+    builder.add_entangling_layer(trainable=True, name="U1")
+    builder.add_angle_encoding(
+        modes=list(range(4)), name="input", subset_combinations=True
     )
+    builder.add_entangling_layer(trainable=True, name="U2")
 
-    ansatz = ML.AnsatzFactory.create(
-        PhotonicBackend=experiment, input_size=4, output_size=8
+    layer = ML.QuantumLayer(
+        input_size=4,
+        output_size=8,
+        n_photons=3,
+        builder=builder,
+        output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
     )
-
-    layer = ML.QuantumLayer(input_size=4, ansatz=ansatz)
 
     print("Testing forward pass performance...")
     x = torch.rand(32, 4)
