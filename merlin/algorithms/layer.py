@@ -512,6 +512,7 @@ class QuantumLayer(nn.Module):
         # sometimes omit converter specs ->  we fall
         # back to their stored combination metadata to deduce tensor length.
         for prefix in input_prefixes:
+            # Counting parameters using their prefix
             param_count = self._feature_count_for_prefix(prefix) or 0
             if prefix in self.angle_encoding_specs:
                 combos = self.angle_encoding_specs[prefix].get("combinations", [])
