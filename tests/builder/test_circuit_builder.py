@@ -271,7 +271,6 @@ def test_angle_encoding_subset_combinations_in_quantum_layer():
         output_mapping_strategy=OutputMappingStrategy.LINEAR,
         dtype=torch.float32,
     )
-
     x = torch.tensor([[0.2, 0.3, 0.4]], dtype=torch.float32)
     encoded = layer.prepare_parameters([x])[-1]
 
@@ -519,7 +518,7 @@ def test_entangling_layer_models_on_gpu(model):
     loss = logits.sum()
     loss.backward()
 
-    assert logits.device == device
+    assert logits.device.type == device.type
     assert logits.shape == (2, 4)
     grads = [p.grad for p in layer.parameters() if p.requires_grad]
     assert any(g is not None and torch.any(g != 0) for g in grads if g is not None)
