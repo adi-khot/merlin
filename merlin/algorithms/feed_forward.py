@@ -325,7 +325,9 @@ class FeedForwardBlock(torch.nn.Module):
         accumulated_prob,
         intermediary,
         outputs,
-        depth=0,
+        *,
+        layer: QuantumLayer,
+        depth: int = 0,
         x=None,
     ):
         """
@@ -344,15 +346,19 @@ class FeedForwardBlock(torch.nn.Module):
             intermediary (dict): Stores intermediate probabilities.
             outputs (dict): Stores final output probabilities for all branches.
             depth (int): Current recursion depth.
+            layer (QuantumLayer): Quantum layer associated with current amplitudes.
             x (torch.Tensor, optional): Classical input features.
         """
         # Base case: end of tree reached
         if depth >= self.depth:
             fock_probs = remaining_amplitudes.abs().pow(2)
-            for i, key in enumerate(keys):
+            detection_probs = layer._detector_transform(fock_probs)
+            detection_keys = layer.get_output_keys()
+            for i, key in enumerate(detection_keys):
+                contribution = detection_probs[:, i] * accumulated_prob
                 if key not in outputs:
-                    outputs[key] = torch.zeros_like(accumulated_prob)
-                outputs[key] += accumulated_prob * fock_probs[:, i]
+                    outputs[key] = torch.zeros_like(contribution)
+                outputs[key] += contribution
             return
 
         # Generate all possible binary measurement outcomes
@@ -400,7 +406,8 @@ class FeedForwardBlock(torch.nn.Module):
                     new_prob,
                     intermediary,
                     outputs,
-                    depth + 1,
+                    layer=layer,
+                    depth=depth + 1,
                     x=x,
                 )
             else:
@@ -480,12 +487,23 @@ class FeedForwardBlock(torch.nn.Module):
         # Run the first quantum layer (root of the tree)
         input_size = min(self.input_size, self.m)
         layer = self.layers[()]
-        probs, amplitudes = layer(x[:, :input_size], return_amplitudes=True)
+        if input_size > 0:
+            probs, amplitudes = layer(x[:, :input_size], return_amplitudes=True)
+        else:
+            probs, amplitudes = layer(return_amplitudes=True)
         keys = layer.computation_process.simulation_graph.mapped_keys
 
         # Recursively propagate through all branches
         self.iterate_feedforward(
-            (), amplitudes, keys, 1.0, intermediary, outputs, 0, x=x
+            (),
+            amplitudes,
+            keys,
+            1.0,
+            intermediary,
+            outputs,
+            layer=layer,
+            depth=0,
+            x=x,
         )
         self.output_keys = outputs.keys()
         return torch.stack(list(outputs.values()), dim=1)

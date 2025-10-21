@@ -39,6 +39,7 @@ from ..builder.circuit_builder import (
 )
 from ..core.process import ComputationProcessFactory
 from ..sampling.autodiff import AutoDiffProcess
+from ..sampling.detectors import DetectorTransform, resolve_detectors
 from ..sampling.strategies import OutputMappingStrategy
 from ..torch_utils.torch_codes import OutputMapper
 
@@ -107,10 +108,17 @@ class QuantumLayer(nn.Module):
 
         self._validate_kwargs("__init__", kwargs)
 
-        self.device = device
+        self.device = torch.device(device) if device is not None else None
         self.dtype = dtype or torch.float32
         self.input_size = input_size
         self.no_bunching = no_bunching
+        self.experiment: pcvl.Experiment | None = None
+
+        self._detector_transform: DetectorTransform | None = None
+        self._detector_keys: list[tuple[int, ...]] = []
+        self._raw_output_keys: list[tuple[int, ...]] = []
+        self._detector_is_identity: bool = True
+        self._output_size: int = 0
 
         # ensure exclusivity of circuit/builder/experiment
         if (
@@ -135,7 +143,6 @@ class QuantumLayer(nn.Module):
                 not experiment.is_unitary
                 or experiment.post_select_fn is not None
                 or experiment.heralds
-                or experiment.in_heralds
             ):
                 raise ValueError(
                     "The provided experiment must be unitary, and must not have post-selection or heralding."
@@ -148,41 +155,44 @@ class QuantumLayer(nn.Module):
                     UserWarning,
                     stacklevel=2,
                 )
-            # TODO: handle "detectors" from experiment, currently ignored
-            if experiment.detectors:
-                warnings.warn(
-                    "The 'detectors' from the experiment are currently ignored.",
-                    UserWarning,
-                    stacklevel=2,
-                )
+            self.experiment = experiment
 
         self.angle_encoding_specs: dict[str, dict[str, Any]] = {}
 
         resolved_circuit: pcvl.Circuit | None = None
-        trainable_parameters = (
+        trainable_parameter_list = (
             list(trainable_parameters) if trainable_parameters else []
         )
-        input_parameters = list(input_parameters) if input_parameters else []
+        input_parameter_list = list(input_parameters) if input_parameters else []
 
         if builder is not None:
             if circuit is not None:
                 raise ValueError("Provide either 'circuit' or 'builder', not both")
-            trainable_parameters = list(builder.trainable_parameter_prefixes)
-            input_parameters = list(builder.input_parameter_prefixes)
+            trainable_parameter_list = list(builder.trainable_parameter_prefixes)
+            input_parameter_list = list(builder.input_parameter_prefixes)
             self.angle_encoding_specs = builder.angle_encoding_specs
             resolved_circuit = builder.to_pcvl_circuit(pcvl)
+            self.experiment = pcvl.Experiment(resolved_circuit)
         elif circuit is not None:
             resolved_circuit = circuit
+            self.experiment = pcvl.Experiment(resolved_circuit)
         elif experiment is not None:
             resolved_circuit = experiment.unitary_circuit()
+        else:
+            raise RuntimeError("Resolved circuit could not be determined.")
+
+        if self.experiment is None:
+            raise RuntimeError("Experiment must be initialised.")
 
         self.circuit = resolved_circuit
+        self._detectors = resolve_detectors(self.experiment, resolved_circuit.m)
+        self.detectors = self._detectors  # Backward compatibility alias
         self._init_from_custom_circuit(
             resolved_circuit,
             input_state,
             n_photons,
-            trainable_parameters,
-            input_parameters,
+            trainable_parameter_list,
+            input_parameter_list,
             output_size,
             output_mapping_strategy,
         )
@@ -211,16 +221,38 @@ class QuantumLayer(nn.Module):
         else:
             raise ValueError("Either input_state or n_photons must be provided")
 
+        resolved_n_photons = (
+            n_photons if n_photons is not None else sum(self.input_state)
+        )
+
         self.computation_process = ComputationProcessFactory.create(
             circuit=circuit,
             input_state=self.input_state,
             trainable_parameters=trainable_parameters,
             input_parameters=input_parameters,
-            n_photons=n_photons,
+            n_photons=resolved_n_photons,
             device=self.device,
             dtype=self.dtype,
             no_bunching=self.no_bunching,
         )
+
+        self.n_photons = self.computation_process.n_photons
+        raw_keys = list(self.computation_process.simulation_graph.mapped_keys)
+        self._raw_output_keys = []
+        for key in raw_keys:
+            if isinstance(key, torch.Tensor):
+                iterable = key.tolist()
+            else:
+                iterable = key
+            self._raw_output_keys.append(tuple(int(v) for v in iterable))
+        self._detector_transform = DetectorTransform(
+            self._raw_output_keys,
+            self._detectors,
+            dtype=self.dtype,
+            device=self.device,
+        )
+        self._detector_keys = self._detector_transform.output_keys
+        self._detector_is_identity = self._detector_transform.is_identity
 
         # Setup parameters
         self._setup_parameters_from_custom(trainable_parameters)
@@ -254,25 +286,27 @@ class QuantumLayer(nn.Module):
         self, output_size: int | None, output_mapping_strategy: OutputMappingStrategy
     ):
         """Setup output mapping for custom circuit construction."""
-        # Get distribution size
-        dummy_params = self._create_dummy_parameters()
-        distribution = self.computation_process.compute(dummy_params)
-        dist_size = distribution.shape[-1]
+        if self._detector_transform is None:
+            raise RuntimeError("Detector transform must be initialised before sizing.")
+
+        dist_size = self._detector_transform.output_size
 
         # Determine output size
         if output_size is None:
             if output_mapping_strategy == OutputMappingStrategy.NONE:
-                self.output_size = dist_size
+                resolved_output_size = dist_size
             else:
                 raise ValueError(
                     "output_size must be specified for non-NONE strategies"
                 )
         else:
-            self.output_size = output_size
+            resolved_output_size = output_size
+
+        self._output_size = resolved_output_size
 
         # Create output mapping
         self.output_mapping = OutputMapper.create_mapping(
-            output_mapping_strategy, dist_size, self.output_size
+            output_mapping_strategy, dist_size, self._output_size
         )
 
         # Ensure output mapping has correct dtype and device
@@ -396,7 +430,12 @@ class QuantumLayer(nn.Module):
         shots: int | None = None,
         return_amplitudes: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
-        """Forward pass through the quantum layer."""
+        """
+        Forward pass through the quantum layer.
+
+        When ``return_amplitudes`` is ``True`` the second element of the returned
+        tuple contains the complex amplitudes **before** detector application.
+        """
         # Prepare parameters
         params = self.prepare_parameters(list(input_parameters))
         # Get quantum output
@@ -436,6 +475,9 @@ class QuantumLayer(nn.Module):
                     ),
                     amplitudes,
                 )
+        if self._detector_transform is not None:
+            distribution = self._detector_transform(distribution)
+
         if apply_sampling and shots > 0:
             distribution = self.autodiff_process.sampling_noise.pcvl_sampler(
                 distribution, shots
@@ -462,26 +504,58 @@ class QuantumLayer(nn.Module):
 
     def to(self, *args, **kwargs):
         super().to(*args, **kwargs)
-        # Manually move any additional tensors
-        device = kwargs.get("device", None)
-        if device is None and len(args) > 0:
-            device = args[0]
-        if device is not None:
-            self.device = device
+
+        dtype_arg = kwargs.get("dtype")
+        device_arg = kwargs.get("device")
+
+        if dtype_arg is None and len(args) > 0 and isinstance(args[0], torch.dtype):
+            dtype_arg = args[0]
+        if device_arg is None and len(args) > 0:
+            first = args[0]
+            if isinstance(first, torch.device):
+                device_arg = first
+            elif isinstance(first, str):
+                device_arg = torch.device(first)
+
+        if dtype_arg is not None:
+            self.dtype = dtype_arg
+        if device_arg is not None:
+            self.device = (
+                device_arg
+                if isinstance(device_arg, torch.device)
+                else torch.device(device_arg)
+            )
             self.computation_process.simulation_graph = (
-                self.computation_process.simulation_graph.to(device)
+                self.computation_process.simulation_graph.to(self.device)
             )
-            self.computation_process.converter = self.computation_process.converter.to(
-                self.dtype, device
+
+        target_device = self.device if self.device is not None else torch.device("cpu")
+        self.computation_process.converter = self.computation_process.converter.to(
+            self.dtype, target_device
+        )
+
+        if hasattr(self.output_mapping, "weight"):
+            self.output_mapping = self.output_mapping.to(
+                dtype=self.dtype, device=target_device
             )
-            if hasattr(self.output_mapping, "weight"):
-                self.output_mapping = self.output_mapping.to(
-                    dtype=self.dtype, device=self.device
-                )
+
+        if self._detector_transform is not None:
+            self._detector_transform = self._detector_transform.to(*args, **kwargs)
+
         return self
 
     def get_output_keys(self):
-        return self.computation_process.simulation_graph.mapped_keys
+        if getattr(self, "_detector_transform", None) is None:
+            return self.computation_process.simulation_graph.mapped_keys
+        return (
+            self._raw_output_keys
+            if getattr(self, "_detector_is_identity", False)
+            else self._detector_keys
+        )
+
+    @property
+    def output_size(self) -> int:
+        return self._output_size
 
     @classmethod
     def simple(

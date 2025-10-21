@@ -1,4 +1,5 @@
 import itertools
+import warnings
 from collections.abc import Callable
 from typing import cast
 
@@ -13,6 +14,7 @@ from ..pcvl_pytorch.slos_torchscript import (
     build_slos_distribution_computegraph as build_slos_graph,
 )
 from ..sampling.autodiff import AutoDiffProcess
+from ..sampling.detectors import DetectorTransform, resolve_detectors
 from ..torch_utils.dtypes import to_torch_dtype
 
 
@@ -556,6 +558,7 @@ class FidelityKernel(torch.nn.Module):
     :param feature_map: Feature map object that encodes a given
         datapoint within its circuit
     :param input_state: Input state into circuit.
+    :param experiment: Optional Perceval experiment providing detector configuration.
     :param shots: Number of circuit shots. If `None`, the exact
         transition probabilities are returned. Default: `None`.
     :param sampling_method: Probability distributions are post-
@@ -599,6 +602,7 @@ class FidelityKernel(torch.nn.Module):
         feature_map: FeatureMap,
         input_state: list[int],
         *,
+        experiment: pcvl.Experiment | None = None,
         shots: int | None = None,
         sampling_method: str = "multinomial",
         no_bunching: bool = False,
@@ -613,7 +617,12 @@ class FidelityKernel(torch.nn.Module):
         self.sampling_method = sampling_method
         self.no_bunching = no_bunching
         self.force_psd = force_psd
-        self.device = device or feature_map.device
+        base_device = device if device is not None else feature_map.device
+        self.device = (
+            torch.device(base_device)
+            if base_device is not None
+            else torch.device("cpu")
+        )
         # Normalize to a torch.dtype
         if dtype is None:
             self.dtype = feature_map.dtype
@@ -629,6 +638,25 @@ class FidelityKernel(torch.nn.Module):
             for param_name, param in feature_map._training_dict.items():
                 self.register_parameter(param_name, param)
 
+        if experiment is not None:
+            if (
+                not experiment.is_unitary
+                or experiment.post_select_fn is not None
+                or experiment.heralds
+            ):
+                raise ValueError(
+                    "The provided experiment must be unitary, and must not have post-selection or heralding."
+                )
+            if experiment.min_photons_filter:
+                warnings.warn(
+                    "The 'min_photons_filter' from the experiment is currently ignored.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            self.experiment = experiment
+        else:
+            self.experiment = pcvl.Experiment(self.feature_map.circuit)
+
         if max(input_state) > 1 and no_bunching:
             raise ValueError(
                 f"Bunching must be enabled for an input state with"
@@ -641,6 +669,7 @@ class FidelityKernel(torch.nn.Module):
             )
 
         m, n = len(input_state), sum(input_state)
+        self._detectors = resolve_detectors(self.experiment, m)
 
         self._slos_graph = build_slos_graph(
             m=m,
@@ -653,6 +682,34 @@ class FidelityKernel(torch.nn.Module):
         # Find index of input state in output distribution
         keys = self._slos_graph.final_keys
         self._input_state_index = keys.index(tuple(input_state))
+        self._detector_transform = DetectorTransform(
+            keys,
+            self._detectors,
+            dtype=self.dtype,
+            device=self.device,
+        )
+        self._detector_is_identity = self._detector_transform.is_identity
+        detection_dim = self._detector_transform.output_size
+        weight_device = self.device or torch.device("cpu")
+        if self._detector_is_identity:
+            weights = torch.zeros(detection_dim, dtype=self.dtype, device=weight_device)
+            weights[self._input_state_index] = 1.0
+            self._input_detection_index = self._input_state_index
+        else:
+            matrix = self._detector_transform._matrix  # type: ignore[attr-defined]
+            row = matrix[self._input_state_index].to(dtype=self.dtype)
+            if self.device is not None:
+                row = row.to(self.device)
+            weights = row
+            nonzero = torch.nonzero(row > 1e-8, as_tuple=True)[0]
+            self._input_detection_index = None
+            if nonzero.numel() == 1 and torch.isclose(
+                row[nonzero[0]],
+                torch.tensor(1.0, dtype=row.dtype, device=row.device),
+                atol=1e-6,
+            ):
+                self._input_detection_index = int(nonzero[0].item())
+        self.register_buffer("_input_detection_weights", weights)
         # For sampling
         self._autodiff_process = AutoDiffProcess()
 
@@ -686,8 +743,11 @@ class FidelityKernel(torch.nn.Module):
         if x2 is not None and not isinstance(x2, torch.Tensor):
             x2 = torch.as_tensor(x2, dtype=self.dtype, device=self.device)
 
-        x1 = x1.reshape(-1, self.input_size)
-        x2 = x2.reshape(-1, self.input_size) if x2 is not None else None
+        if isinstance(x2, torch.Tensor) or x2 is None:
+            x1 = x1.reshape(-1, self.input_size)
+            x2 = x2.reshape(-1, self.input_size) if x2 is not None else None
+        else:
+            raise (TypeError("x2 is not None nor torch.Tensor"))
 
         # Check if we are constructing training matrix
         equal_inputs = self._check_equal_inputs(x1, x2)
@@ -697,10 +757,16 @@ class FidelityKernel(torch.nn.Module):
 
         len_x1 = len(x1)
         if x2 is not None:
-            U_adjoint = torch.stack([
-                self.feature_map.compute_unitary(x).transpose(0, 1).conj().to(x1.device)
-                for x in x2
-            ])
+            if isinstance(x2, torch.Tensor):
+                U_adjoint = torch.stack([
+                    self.feature_map.compute_unitary(x)
+                    .transpose(0, 1)
+                    .conj()
+                    .to(x1.device)
+                    for x in x2
+                ])
+            else:
+                raise (TypeError("x2 is not None nor torch.Tensor"))
 
             # Calculate circuit unitary for every pair of datapoints
             all_circuits = U_forward.unsqueeze(1) @ U_adjoint.unsqueeze(0)
@@ -717,17 +783,23 @@ class FidelityKernel(torch.nn.Module):
             )
             all_circuits = U_forward[upper_idx[0]] @ U_adjoint[upper_idx[1]]
 
-        # Distribution for every evaluated circuit
-        all_probs = self._slos_graph.compute(all_circuits, self.input_state)[1]
+        # Distribution for every evaluated circuit (before detection)
+        amplitudes = self._slos_graph.compute(all_circuits, self.input_state)[1]
+        probabilities = torch.abs(amplitudes).square()
+        detection_probs = self._detector_transform(probabilities)
 
         if self.shots > 0:
-            # Convert complex amplitudes to real probabilities for multinomial sampling
-            real_probs = torch.abs(all_probs).square()
-            all_probs = self._autodiff_process.sampling_noise.pcvl_sampler(
-                real_probs, self.shots, self.sampling_method
+            detection_probs = self._autodiff_process.sampling_noise.pcvl_sampler(
+                detection_probs, self.shots, self.sampling_method
             )
 
-        transition_probs = torch.abs(all_probs[:, self._input_state_index])
+        if self._input_detection_index is not None:
+            transition_probs = detection_probs[:, self._input_detection_index]
+        else:
+            weights = self._input_detection_weights.to(
+                dtype=detection_probs.dtype, device=detection_probs.device
+            )
+            transition_probs = detection_probs @ weights
 
         if x2 is None:
             # Copy transition probs to upper & lower diagonal
@@ -745,8 +817,13 @@ class FidelityKernel(torch.nn.Module):
                 kernel_matrix = self._project_psd(kernel_matrix)
 
         else:
-            transition_probs = transition_probs.to(dtype=self.dtype, device=x1.device)
-            kernel_matrix = transition_probs.reshape(len_x1, len(x2))
+            if isinstance(x2, torch.Tensor):
+                transition_probs = transition_probs.to(
+                    dtype=self.dtype, device=x1.device
+                )
+                kernel_matrix = transition_probs.reshape(len_x1, len(x2))
+            else:
+                raise (TypeError("x2 is not None nor torch.Tensor"))
 
             if self.force_psd and equal_inputs:
                 # Symmetrize the matrix
@@ -786,15 +863,24 @@ class FidelityKernel(torch.nn.Module):
         U_adjoint = self.feature_map.compute_unitary(x2_t)
         U_adjoint = U_adjoint.conj().T
 
-        probs = self._slos_graph.compute(U @ U_adjoint, self.input_state)[1]
+        amplitudes = self._slos_graph.compute(U @ U_adjoint, self.input_state)[1]
+        probabilities = torch.abs(amplitudes).square()
+        detection_probs = self._detector_transform(probabilities)
 
         if self.shots > 0:
-            # Convert complex amplitudes to real probabilities for multinomial sampling
-            real_probs = torch.abs(probs).square()
-            probs = self._autodiff_process.sampling_noise.pcvl_sampler(
-                real_probs, self.shots, self.sampling_method
+            detection_probs = self._autodiff_process.sampling_noise.pcvl_sampler(
+                detection_probs, self.shots, self.sampling_method
             )
-        return torch.abs(probs[0, self._input_state_index]).item()
+
+        if self._input_detection_index is not None:
+            value = detection_probs[0, self._input_detection_index]
+        else:
+            weights = self._input_detection_weights.to(
+                dtype=detection_probs.dtype, device=detection_probs.device
+            )
+            value = detection_probs @ weights
+            value = value[0]
+        return value.item()
 
     @classmethod
     def simple(

@@ -25,6 +25,7 @@
 from typing import TYPE_CHECKING
 
 from .autodiff import AutoDiffProcess
+from .detectors import DetectorTransform, resolve_detectors
 from .process import SamplingProcess
 from .strategies import OutputMappingStrategy
 
@@ -65,4 +66,6 @@ __all__ = [
     "LexGroupingMapper",  # noqa: F401, F822
     "ModGroupingMapper",  # noqa: F401, F822
     "OutputMapper",  # noqa: F401, F822
+    "DetectorTransform",
+    "resolve_detectors",
 ]

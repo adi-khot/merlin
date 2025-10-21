@@ -24,9 +24,11 @@
 Tests for the FeedForward class.
 """
 
+import perceval as pcvl
 import pytest
 import torch
 
+import merlin as ML
 from merlin.algorithms.feed_forward import (
     FeedForwardBlock,
     PoolingFeedForward,
@@ -128,6 +130,101 @@ class TestFeedForwardBlock:
         print(keys)
         assert isinstance(keys, list)
         assert len(keys) > 0
+
+    def test_feedforward_respects_detector_configuration(self):
+        """FeedForward should honour detector transforms from embedded quantum layers."""
+        circuit = pcvl.Circuit(2)
+        circuit.add((0, 1), pcvl.BS())
+        circuit.add(0, pcvl.PS(pcvl.P("phi")))
+
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.threshold()
+        experiment.detectors[1] = pcvl.Detector.threshold()
+
+        layer = ML.QuantumLayer(
+            input_size=1,
+            experiment=experiment,
+            input_state=[1, 0],
+            input_parameters=["phi"],
+            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+        )
+
+        ff = FeedForwardBlock(input_size=1, n=1, m=2, depth=0, conditional_modes=[0])
+        ff.layers[()] = layer
+        ff.input_segments[()] = (0, 1)
+
+        x = torch.zeros(2, 1)
+        output = ff(x)
+
+        assert output.shape == (2, len(layer.get_output_keys()))
+        assert torch.allclose(output.sum(dim=1), torch.ones(2), atol=1e-6)
+
+        feedforward_keys = [tuple(key) for key in ff.get_output_keys()]
+        layer_keys = [tuple(key) for key in layer.get_output_keys()]
+        assert feedforward_keys == layer_keys
+        assert all(value in (0, 1) for key in feedforward_keys for value in key)
+
+    def test_feedforward_with_pnr_detectors_matches_default(self):
+        """PNR detectors should reproduce the no-detector behaviour."""
+        circuit = pcvl.Circuit(2)
+        circuit.add((0, 1), pcvl.BS())
+
+        base_layer = ML.QuantumLayer(
+            input_size=0,
+            circuit=circuit,
+            input_state=[1, 1],
+            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+            no_bunching=False,
+        )
+
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.pnr()
+        experiment.detectors[1] = pcvl.Detector.pnr()
+
+        detector_layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 1],
+            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+            no_bunching=False,
+        )
+
+        ff = FeedForwardBlock(input_size=0, n=2, m=2, depth=0, conditional_modes=[0])
+        ff.layers[()] = detector_layer
+        ff.input_segments[()] = (0, 0)
+
+        probs_base = base_layer()
+        x = torch.rand(3, 0)
+        probs_ff = ff(x)
+        expected = probs_base.expand_as(probs_ff)
+        assert torch.allclose(probs_ff, expected, atol=1e-6)
+
+    def test_feedforward_with_interleaved_detectors(self):
+        """FeedForward should support probabilistic interleaved detectors."""
+        circuit = pcvl.Circuit(2)
+        circuit.add((0, 1), pcvl.BS())
+
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.ppnr(n_wires=2)
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 0],
+            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+        )
+
+        ff = FeedForwardBlock(input_size=0, n=1, m=2, depth=0, conditional_modes=[0])
+        ff.layers[()] = layer
+        ff.input_segments[()] = (0, 0)
+
+        x = torch.rand(4, 0)
+        output = ff(x)
+        assert torch.allclose(
+            output.sum(dim=1), torch.ones_like(output[:, 0]), atol=1e-6
+        )
+        assert torch.all(output >= 0)
+        assert len(ff.get_output_keys()) == output.shape[-1]
 
 
 @pytest.mark.skipif(

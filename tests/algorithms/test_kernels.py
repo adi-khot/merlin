@@ -469,6 +469,63 @@ class TestFidelityKernelFactoryMethods:
 
         assert kernel.input_state == custom_input_state
 
+    def test_fidelity_kernel_with_threshold_detectors(self):
+        """FidelityKernel should respect detector configuration from the experiment."""
+
+        feature_map = FeatureMap.simple(
+            input_size=1,
+            n_modes=2,
+            n_photons=1,
+            trainable=False,
+        )
+
+        experiment = pcvl.Experiment(feature_map.circuit)
+        experiment.detectors[0] = pcvl.Detector.threshold()
+        experiment.detectors[1] = pcvl.Detector.threshold()
+
+        kernel = FidelityKernel(
+            feature_map=feature_map,
+            input_state=[1, 0],
+            experiment=experiment,
+        )
+
+        data = torch.tensor([[0.0], [1.0]], dtype=kernel.dtype)
+        K = kernel(data, data)
+
+        assert K.shape == (2, 2)
+        assert torch.allclose(
+            torch.diag(K), torch.ones(2, dtype=kernel.dtype), atol=1e-6
+        )
+
+    def test_fidelity_kernel_with_mixed_detectors(self):
+        """FidelityKernel can combine PNR and threshold detectors seamlessly."""
+
+        feature_map = FeatureMap.simple(
+            input_size=1,
+            n_modes=3,
+            n_photons=1,
+            trainable=False,
+        )
+
+        experiment = pcvl.Experiment(feature_map.circuit)
+        experiment.detectors[0] = pcvl.Detector.pnr()
+        experiment.detectors[1] = pcvl.Detector.threshold()
+        experiment.detectors[2] = pcvl.Detector.threshold()
+
+        kernel = FidelityKernel(
+            feature_map=feature_map,
+            input_state=[1, 0, 0],
+            experiment=experiment,
+        )
+
+        data = torch.tensor([[0.0], [0.5], [1.0]], dtype=kernel.dtype)
+        K = kernel(data, data)
+
+        assert K.shape == (3, 3)
+        diag = torch.diag(K)
+        assert torch.allclose(diag, torch.ones_like(diag), atol=1e-6)
+        assert torch.allclose(K, K.T.conj(), atol=1e-6)
+
 
 class TestKernelCircuitBuilder:
     """Test the KernelCircuitBuilder fluent interface."""
