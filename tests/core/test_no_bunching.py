@@ -183,9 +183,8 @@ class TestNoBunchingFunctionality:
             input_state = StateGenerator.generate_state(
                 n_modes, n_photons, StatePattern.PERIODIC
             )
-
             q_layer = QuantumLayer(
-                input_size=2,
+                input_size=3,
                 circuit=circuit,
                 input_state=input_state,
                 trainable_parameters=["phi_"],

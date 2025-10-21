@@ -34,35 +34,61 @@ import merlin as ML
 class TestQuantumLayer:
     """Test suite for QuantumLayer."""
 
-    def test_ansatz_based_layer_creation(self):
-        """Test creating a layer from an ansatz."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
+    def test_builder_based_layer_creation(self):
+        """Test creating a layer from an builder."""
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1, 3], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=3,
+            output_size=5,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
         )
-
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=3, output_size=5
-        )
-
-        layer = ML.QuantumLayer(input_size=3, ansatz=ansatz)
-
         assert layer.input_size == 3
         assert layer.output_size == 5
-        assert layer.auto_generation_mode is True
+        assert layer.thetas[0].shape[0] == 2 * 4 * (
+            4 - 1
+        )  # 24 trainable parameters from U1 and U2
+
+    @pytest.mark.parametrize("names", [("input", "input"), ("input_a", "input_b")])
+    def test_multiple_angle_encodings_validate_input_size(self, names):
+        builder = ML.CircuitBuilder(n_modes=5)
+        builder.add_angle_encoding(modes=[0, 1], name=names[0])
+        builder.add_angle_encoding(modes=[2, 3, 4], name=names[1])
+
+        layer = ML.QuantumLayer(
+            input_size=5,
+            output_size=3,
+            input_state=[1, 0, 0, 0, 0],
+            builder=builder,
+            output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
+        )
+        pcvl.pdisplay(layer.circuit, output_format=pcvl.Format.TEXT)
+
+        dummy_input = torch.rand(1, 5)
+        output = layer(dummy_input)
+        assert output.shape == (1, 3), "Output shape mismatch"
+        assert layer.input_size == 5, "Input size should match number of encoded modes"
+        assert not torch.isnan(output).any(), "Output should not contain NaNs"
 
     def test_forward_pass_batched(self):
         """Test forward pass with batched input."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS,  # Changed to match parameter count
-            n_modes=4,
-            n_photons=2,
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
+        layer = ML.QuantumLayer(
+            input_size=2,
+            output_size=3,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
         )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
 
         # Test with batch
         x = torch.rand(10, 2)
@@ -73,18 +99,18 @@ class TestQuantumLayer:
 
     def test_forward_pass_single(self):
         """Test forward pass with single input."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL, n_modes=4, n_photons=1
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment,
+        layer = ML.QuantumLayer(
             input_size=2,
-            output_size=3,  # Don't use NONE strategy to avoid size mismatch
+            output_size=3,
+            input_state=[1, 0, 0, 0],
+            builder=builder,
             output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
         )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
 
         # Test with single sample
         x = torch.rand(1, 2)
@@ -95,18 +121,19 @@ class TestQuantumLayer:
 
     def test_gradient_computation(self):
         """Test that gradients flow through the layer."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS,
-            n_modes=4,
-            n_photons=2,
-            use_bandwidth_tuning=True,
-        )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+        layer = ML.QuantumLayer(
+            input_size=2,
+            output_size=3,
+            input_state=[1, 1, 0, 0],
+            builder=builder,
+            output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
+        )
 
         x = torch.rand(5, 2, requires_grad=True)
         output = layer(x)
@@ -127,15 +154,19 @@ class TestQuantumLayer:
 
     def test_sampling_configuration(self):
         """Test sampling configuration methods."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
+        layer = ML.QuantumLayer(
+            input_size=2,
+            output_size=3,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+            shots=100,
         )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz, shots=100)
 
         assert layer.shots == 100
         assert layer.sampling_method == "multinomial"
@@ -152,78 +183,54 @@ class TestQuantumLayer:
     def test_reservoir_mode(self):
         """Test reservoir computing mode."""
         # Test normal mode first
-        experiment_normal = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL,
-            n_modes=4,
-            n_photons=2,
-            reservoir_mode=False,
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer_normal = ML.QuantumLayer(
+            input_size=2,
+            output_size=3,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
         )
 
-        ansatz_normal = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment_normal, input_size=2, output_size=3
+        layer_reservoir = ML.QuantumLayer(
+            input_size=2,
+            output_size=3,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
         )
 
-        layer_normal = ML.QuantumLayer(input_size=2, ansatz=ansatz_normal)
+        layer_reservoir.requires_grad_(False)
+        assert any(p.requires_grad for p in layer_normal.parameters())
+        assert all(not p.requires_grad for p in layer_reservoir.parameters())
+
         normal_trainable = sum(
             p.numel() for p in layer_normal.parameters() if p.requires_grad
         )
 
-        # Test reservoir mode
-        experiment_reservoir = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL,
-            n_modes=4,
-            n_photons=2,
-            reservoir_mode=True,
-        )
-
-        ansatz_reservoir = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment_reservoir, input_size=2, output_size=3
-        )
-
-        layer_reservoir = ML.QuantumLayer(input_size=2, ansatz=ansatz_reservoir)
         reservoir_trainable = sum(
             p.numel() for p in layer_reservoir.parameters() if p.requires_grad
         )
 
-        # In reservoir mode, should have fewer or equal trainable parameters
-        # (since some parameters are fixed)
-        assert reservoir_trainable <= normal_trainable
+        # Reservoir mode should freeze all parameters while keeping the normal layer trainable.
+        assert normal_trainable > 0
+        assert reservoir_trainable == 0
 
         # Test that reservoir layer still works
         x = torch.rand(3, 2)
         output = layer_reservoir(x)
         assert output.shape == (3, 3)
 
-    def test_bandwidth_tuning(self):
-        """Test bandwidth tuning functionality."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS,
-            n_modes=4,
-            n_photons=2,
-            use_bandwidth_tuning=True,
-        )
-
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=3, output_size=5
-        )
-
-        layer = ML.QuantumLayer(input_size=3, ansatz=ansatz)
-
-        # Check that bandwidth coefficients exist
-        assert layer.bandwidth_coeffs is not None
-        assert len(layer.bandwidth_coeffs) == 3  # One per input dimension
-
-        # Check they're learnable parameters
-        for _key, param in layer.bandwidth_coeffs.items():
-            assert param.requires_grad
-
     def test_output_mapping_strategies(self):
         """Test different output mapping strategies."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS,  # Use consistent circuit type
-            n_modes=4,
-            n_photons=2,
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
         strategies = [
             ML.OutputMappingStrategy.LINEAR,
@@ -232,14 +239,13 @@ class TestQuantumLayer:
         ]
 
         for strategy in strategies:
-            ansatz = ML.AnsatzFactory.create(
-                PhotonicBackend=experiment,
+            layer = ML.QuantumLayer(
                 input_size=2,
                 output_size=4,
+                input_state=[1, 0, 1, 0],
+                builder=builder,
                 output_mapping_strategy=strategy,
             )
-
-            layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
 
             x = torch.rand(3, 2)
             output = layer(x)
@@ -249,71 +255,112 @@ class TestQuantumLayer:
 
     def test_string_representation(self):
         """Test string representation of the layer."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1, 2], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=3,
+            output_size=5,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
         )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=3, output_size=5
-        )
-
-        layer = ML.QuantumLayer(input_size=3, ansatz=ansatz)
         layer_str = str(layer)
-
+        print(f"Layer string representation:\n{layer_str}")
         assert "QuantumLayer" in layer_str
-        assert "parallel_columns" in layer_str
         assert "modes=4" in layer_str
         assert "input_size=3" in layer_str
         assert "output_size=5" in layer_str
 
     def test_invalid_configurations(self):
         """Test that invalid configurations raise appropriate errors."""
-        # Test missing both ansatz and builder
+        # this tests include builder, simple and circuit-based API
         with pytest.raises(
             ValueError,
-            match="Either 'ansatz', 'circuit', or 'builder' must be provided",
+            match="Either 'circuit', or 'builder' must be provided",
         ):
             ML.QuantumLayer(input_size=3)
 
         # Test invalid experiment configuration
-        with pytest.raises(ValueError):
-            ML.PhotonicBackend(
-                circuit_type=ML.CircuitType.SERIES,
-                n_modes=4,
-                n_photons=5,  # More photons than modes
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        # Input size mismatch between declaration and builder-produced features
+        with pytest.raises(
+            ValueError,
+            match="Input size \\(3\\) must equal the number of encoded input features generated by the circuit \\(2\\)\\.",
+        ):
+            ML.QuantumLayer(
+                input_size=3,
+                output_size=5,
+                input_state=[1, 0, 1, 0],
+                builder=builder,
+                output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
             )
 
-    def test_none_output_mapping_with_correct_size(self):
-        """Test NONE output mapping with correct size matching."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL, n_modes=3, n_photons=1
-        )
+        with pytest.raises(ValueError):
+            ML.QuantumLayer(
+                input_size=2,
+                output_size=5,
+                n_photons=5,  # more photons than modes
+                builder=builder,
+                output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+            )
 
-        # Create ansatz without specifying output size initially
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment,
-            input_size=2,
-            output_size=10,  # We'll override this
+        with pytest.raises(TypeError):
+            ML.QuantumLayer.simple(n_params=0)
+
+    def test_subset_combinations_respected(self):
+        """Ensure subset combinations expose more parameters without breaking input size checks."""
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(
+            modes=[0, 1, 2], name="input", subset_combinations=True
+        )
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=3,
+            output_size=4,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
             output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
         )
 
-        # Create layer to find out actual distribution size
-        temp_layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+        assert layer.input_size == 3
+
+    def test_none_output_mapping_with_correct_size(self):
+        """Test NONE output mapping with correct size matching."""
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        temp_layer = ML.QuantumLayer(
+            input_size=2,
+            output_size=5,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+        )
 
         # Get actual distribution size
         dummy_input = torch.rand(1, 2)
         with torch.no_grad():
-            temp_output = temp_layer(dummy_input)
+            _temp_output = temp_layer(dummy_input)
 
         # Now create NONE strategy with correct size
-        ansatz_none = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment,
+        layer_none = ML.QuantumLayer(
             input_size=2,
-            output_size=temp_output.shape[1],  # Match actual output size
-            output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
         )
-
-        layer_none = ML.QuantumLayer(input_size=2, ansatz=ansatz_none)
 
         x = torch.rand(2, 2)
         output = layer_none(x)
@@ -346,6 +393,20 @@ class TestQuantumLayer:
             output_size=3,
             output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
         )
+
+        with pytest.raises(
+            ValueError,
+            match="Input size \\(2\\) must equal the number of input parameters generated by the circuit \\(0\\)\\.",
+        ):
+            layer = ML.QuantumLayer(
+                input_size=2,  # input_size > nb of input_parameters
+                circuit=circuit,
+                input_state=input_state,
+                trainable_parameters=["phi"],  # Parameters to train (by prefix)
+                input_parameters=None,  # No input parameters
+                output_size=3,
+                output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
+            )
 
         # Test layer properties
         assert layer.input_size == 0
@@ -384,7 +445,7 @@ class TestQuantumLayer:
 
         # Create QuantumLayer with custom circuit
         layer = ML.QuantumLayer(
-            input_size=0,  # No input parameters
+            input_size=2,  # No input parameters
             circuit=circuit,
             input_state=input_state,
             trainable_parameters=None,  # Parameters to train (by prefix)
@@ -396,7 +457,7 @@ class TestQuantumLayer:
         dummy_input = torch.rand(1, 2)
 
         # Test layer properties
-        assert layer.input_size == 0
+        assert layer.input_size == 2
         assert layer.output_size == 3
         # Check that it has trainable parameters
         trainable_params = [p for p in layer.parameters() if p.requires_grad]

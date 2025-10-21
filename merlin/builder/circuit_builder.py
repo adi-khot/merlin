@@ -283,6 +283,8 @@ class CircuitBuilder:
         scale_map = self._normalize_angle_scale(scale, feature_indices)
 
         combos: list[tuple[int, ...]] = []
+        # When subset_combinations is enabled we enumerate every logical feature subset
+        # (up to max_order); each subset translates into a dedicated rotation parameter.
         if subset_combinations and feature_indices:
             max_subset_order = len(feature_indices) if max_order is None else max_order
             max_subset_order = max(1, min(max_subset_order, len(feature_indices)))
@@ -308,6 +310,8 @@ class CircuitBuilder:
             emitted += span
 
         spec_list = self._angle_encoding_specs.setdefault(name, [])
+        # Persist the logical feature groupings so downstream encoders know which raw
+        # features to aggregate when reconstructing this angle encoding.
         spec_list.extend(combos)
 
         stored_scale = self._angle_encoding_scales.setdefault(name, {})
