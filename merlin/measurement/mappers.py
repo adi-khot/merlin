@@ -209,7 +209,9 @@ class AmplitudeVector(nn.Module):
             x = x.unsqueeze(0)
         n_batch, n_amplitudes = x.shape
         if not torch.allclose(
-            torch.sum(x.abs() ** 2, dim=1), torch.ones(n_batch), atol=1e-6
+            torch.sum(x.abs() ** 2, dim=1),
+            torch.ones(n_batch, device=x.device),
+            atol=1e-6,
         ):
             warnings.warn(
                 "The given input to this mapper is not a valid Fock state amplitudes tensor. It will be returned as is, but cannot be interpreted as an amplitude state vector.",

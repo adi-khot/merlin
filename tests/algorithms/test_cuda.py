@@ -52,7 +52,7 @@ def test_load_model_on_cuda():
         torch.device("cuda")
     )
     assert layer.device == torch.device("cuda")
-    assert model.device == torch.device("cuda")
+    assert next(model.parameters()).device.type == "cuda"
     if len(layer.thetas) > 0:
         assert layer.thetas[0].device == torch.device("cuda", index=0)
     assert layer.computation_process.converter.device == torch.device("cuda")
@@ -84,7 +84,7 @@ def test_switch_model_to_cuda():
         torch.device("cpu")
     )
     assert layer.device == torch.device("cpu")
-    assert model.device == torch.device("cpu")
+    assert next(model.parameters()).device.type == "cpu"
     layer = layer.to(torch.device("cuda"))
     model = model.to(torch.device("cuda"))
     _ = layer()
