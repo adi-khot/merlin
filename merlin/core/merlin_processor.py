@@ -1,15 +1,20 @@
 """
 MerlinProcessor: PyTorch-friendly quantum processor with full async RPC semantics.
 
+Optimal design changes:
+- Traversal treats any module with `merlin_leaf == True` as an execution leaf
+  (never recurses into its children like nn.Identity).
+- Execution policy is delegated to the leaf:
+    * If `should_offload(processor, shots)` exists → use it
+    * Else fall back to legacy `_is_quantum_layer` (export_config & not force_simulation)
+- If not offloading → call the leaf's own forward() locally (not an identity passthrough)
+
 Key design points:
 - Single async surface: forward_async(module, x, *, shots=..., timeout=...) -> Future[Tensor]
 - Always return Tensors (no raw Perceval dicts leak out)
-- Offloads *all* QuantumLayer instances in order (e.g., in nn.Sequential)
-- Futures are ergonomic: fut.cancel_remote(), fut.status(), fut.job_ids
-- Sync forward(...) just waits on forward_async with proper timeout semantics
-
-IMPORTANT: `shots` is now a PER-CALL parameter (passed to forward/forward_async/resume),
-not a processor-constructor setting.
+- Offloads allowed QuantumLayer instances in order (e.g., in nn.Sequential)
+- Futures: fut.cancel_remote(), fut.status(), fut.job_ids
+- Sync forward(...) waits on forward_async with timeout semantics
 """
 
 import time
@@ -34,10 +39,9 @@ class MerlinProcessor:
     Returns raw probability distributions without output mapping.
     """
 
-    # Cloud platform constraints
     MAX_BATCH_SIZE: int = 32
     DEFAULT_MAX_SHOTS: int = 100_000
-    DEFAULT_SHOTS_PER_CALL: int = 10_000  # used if backend can't do 'probs' and shots=None
+    DEFAULT_SHOTS_PER_CALL: int = 10_000
 
     def __init__(
         self,
@@ -101,19 +105,6 @@ class MerlinProcessor:
         shots: Optional[int] = None,
         timeout: Optional[float] = None,
     ) -> torch.Tensor:
-        """
-        Synchronous forward pass (RPC sync style).
-        Returns Tensor. Offloads *all* QuantumLayer instances in order.
-
-        Args:
-            module: your nn.Module (can be a QuantumLayer or a model with multiple layers)
-            input:  (B, D) tensor
-            shots:  per-call shots. If backend command is not 'probs' and shots is None,
-                    a default of DEFAULT_SHOTS_PER_CALL is used.
-            timeout: per-call overall timeout; 0/None means wait indefinitely.
-
-        On timeout, performs a remote cancel of the in-flight job before raising TimeoutError.
-        """
         timeout = self.default_timeout if timeout is None else timeout
         fut = self.forward_async(module, input, shots=shots, timeout=timeout)
         if timeout in (None, 0):
@@ -137,23 +128,6 @@ class MerlinProcessor:
         shots: Optional[int] = None,
         timeout: Optional[float] = None,
     ) -> Future:
-        """
-        Asynchronous forward pass (RPC async style).
-        Returns a Future that resolves to a Tensor.
-
-        Args:
-            module: your nn.Module (can be a QuantumLayer or a model with multiple layers)
-            input:  (B, D) tensor
-            shots:  per-call shots. If backend command is not 'probs' and shots is None,
-                    a default of DEFAULT_SHOTS_PER_CALL is used.
-            timeout: per-call overall timeout; 0/None means wait indefinitely.
-
-        The returned Future has extra convenience attributes:
-          - fut.cancel_remote() -> requests remote cancel on the job currently in flight (if any)
-                                   and completes the Future with CancelledError even if pre-submit.
-          - fut.status()        -> dict with lightweight status of the current stage
-          - fut.job_ids         -> list of remote job ids for each offloaded quantum layer (in order)
-        """
         if module.training:
             raise RuntimeError("Remote quantum execution requires `.eval()` mode. Call `module.eval()` before forward.")
 
@@ -182,7 +156,6 @@ class MerlinProcessor:
                         cancel()
                 except Exception:
                     pass
-            # COMPLETE FUTURE EVEN IF NO JOB YET (pre-submit cancel)
             if not fut.done():
                 try:
                     from concurrent.futures import CancelledError
@@ -211,7 +184,6 @@ class MerlinProcessor:
                 x = input
                 batch = x.shape[0]
                 for layer in layers:
-                    # Handle cancel BEFORE any job submission
                     if state["cancel_requested"]:
                         if not fut.done():
                             try:
@@ -222,7 +194,20 @@ class MerlinProcessor:
                             fut.set_exception(CancelledError("Remote call was cancelled"))
                         return
 
-                    if self._is_quantum_layer(layer):
+                    # Decide offload policy
+                    should_offload = None
+                    if hasattr(layer, "should_offload") and callable(getattr(layer, "should_offload")):
+                        try:
+                            should_offload = bool(layer.should_offload(self.remote_processor, shots))
+                        except Exception:
+                            # defensive: fall back to legacy rule if policy accessor raises
+                            should_offload = None
+
+                    if should_offload is None:
+                        # legacy fallback (export_config & not force_simulation)
+                        should_offload = self._is_quantum_layer(layer)
+
+                    if should_offload:
                         job = self._submit_quantum_layer(layer, x, shots)
                         state["current_job"] = job
                         job_id = getattr(job, "id", None) or getattr(job, "job_id", None)
@@ -255,9 +240,7 @@ class MerlinProcessor:
                                 except Exception:
                                     pass
                                 if not fut.done():
-                                    fut.set_exception(
-                                        TimeoutError("Remote call timed out (remote cancel issued)")
-                                    )
+                                    fut.set_exception(TimeoutError("Remote call timed out (remote cancel issued)"))
                                 return
 
                             s = getattr(job, "status", None)
@@ -282,7 +265,9 @@ class MerlinProcessor:
 
                             time.sleep(sleep_ms / 1000.0)
                             sleep_ms = min(sleep_ms * 2, 400)
+
                     else:
+                        # NOT offloading → EXECUTE the leaf locally (call its forward), not its children.
                         with torch.no_grad():
                             x = layer(x)
 
@@ -310,30 +295,13 @@ class MerlinProcessor:
         dtype: Optional[torch.dtype] = None,
         timeout: Optional[float] = None,
     ) -> Future:
-        """
-        Resume a single remote Perceval job by id and return a Future[Tensor] with mapped results.
-        Mirrors a single QuantumLayer offload stage.
-
-        Args:
-            job_id:     cloud job identifier to resume
-            layer:      the QuantumLayer the job corresponds to (for mapping/layout)
-            batch_size: batch size originally submitted
-            shots:      per-call shots (only used if results aren't 'probs' and require normalization)
-            device/dtype: optional final casting
-            timeout:    0/None -> wait indefinitely
-
-        The returned Future has:
-          - fut.cancel_remote()
-          - fut.status()
-          - fut.job_ids  (a singleton list with [job_id] if available)
-        """
         timeout = self.default_timeout if timeout is None else timeout
 
         fut: Future = Future()
         state = {
             "cancel_requested": False,
-            "current_job": None,       # type: Optional[RemoteJob]
-            "current_status": None,    # type: Optional[Dict[str, Any]]
+            "current_job": None,
+            "current_status": None,
             "job_ids": [],
         }
 
@@ -439,7 +407,6 @@ class MerlinProcessor:
     # ---------------- Perceval integration (per-layer) ----------------
 
     def _submit_quantum_layer(self, layer: Any, input_data: torch.Tensor, shots: Optional[int]) -> RemoteJob:
-        """Submit a quantum layer for remote execution with full parameter mapping."""
         if input_data.is_cuda:
             input_data = input_data.cpu()
 
@@ -456,7 +423,7 @@ class MerlinProcessor:
 
             layer_processor = RemoteProcessor(
                 name=self.remote_processor.name,
-                token=None  # Already authenticated via RemoteConfig
+                token=None
             )
             layer_processor.set_circuit(config["circuit"])
 
@@ -485,7 +452,6 @@ class MerlinProcessor:
                     circuit_params[param_name] = 0.0
             sampler.add_iteration(circuit_params=circuit_params)
 
-        # Prefer 'probs' if available (no shots needed)
         if "probs" in self.available_commands:
             job = sampler.probs.execute_async()
         elif "sample_count" in self.available_commands:
@@ -506,12 +472,12 @@ class MerlinProcessor:
     def _iter_layers_in_order(self, module: nn.Module) -> Iterable[nn.Module]:
         """
         Depth-first, left-to-right traversal that yields *execution* leaves.
-        IMPORTANT:
-          - If a module is a QuantumLayer (export_config present), treat it as a LEAF
-            and DO NOT recurse into its children (e.g., its internal output_mapping).
-          - Otherwise, recurse into children until leaves (nn modules with no children).
+
+        RULE:
+          - If a module declares `merlin_leaf == True`, treat it as a LEAF and DO NOT recurse.
+          - Otherwise, recurse into children until we reach nn.Modules with no children.
         """
-        if self._is_quantum_layer(module):
+        if getattr(module, "merlin_leaf", False):
             yield module
             return
 
@@ -671,9 +637,6 @@ class MerlinProcessor:
             return tuple(state_str)
         return ()
 
-    def _is_quantum_layer(self, module: Any) -> bool:
-        return hasattr(module, "export_config") and callable(module.export_config)
-
     # ---------------- Platform & diagnostics ----------------
 
     @property
@@ -699,3 +662,15 @@ class MerlinProcessor:
 
     def clear_job_history(self) -> None:
         self._job_history = []
+
+    # ---------------- Legacy compatibility ----------------
+
+    def _is_quantum_layer(self, module: Any) -> bool:
+        """
+        Back-compat rule for offload decision if a layer doesn't provide `should_offload`:
+          - If module.force_simulation is True -> False (simulate locally).
+          - Else -> offload iff export_config exists (capability check).
+        """
+        if getattr(module, "force_simulation", False):
+            return False
+        return hasattr(module, "export_config") and callable(getattr(module, "export_config"))
