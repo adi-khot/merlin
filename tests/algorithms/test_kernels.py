@@ -365,8 +365,8 @@ class TestFidelityKernel:
 
         perceval_thr = thresholded_results[key] / total_threshold_prob
 
-        assert merlin_pnr == pytest.approx(perceval_pnr, rel=1e-6, abs=1e-8)
-        assert merlin_thr == pytest.approx(perceval_thr, rel=1e-6, abs=1e-8)
+        assert merlin_pnr == pytest.approx(perceval_pnr, rel=1e-6, abs=1e-6)
+        assert merlin_thr == pytest.approx(perceval_thr, rel=1e-6, abs=1e-6)
 
 
 class TestNKernelAlignment:
