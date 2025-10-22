@@ -147,9 +147,9 @@ Quantum circuits produce probability distributions over possible photon configur
 .. code-block:: python
 
     # Common measurement strategies
-    ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION  # Default: full Fock distribution
-    ML.MeasurementStrategy.MODEEXPECTATIONS   # Per-mode photon statistics
-    ML.MeasurementStrategy.AMPLITUDEVECTOR       # Complex amplitudes (simulation only)
+    ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION  # Default: full Fock distribution
+    ML.MeasurementStrategy.MODE_EXPECTATIONS   # Per-mode photon statistics
+    ML.MeasurementStrategy.AMPLITUDE_VECTOR       # Complex amplitudes (simulation only)
 
 To reduce the dimensionality of the Fock distribution after measurement, compose your layer with
 :class:`~merlin.utils.grouping.mappers.LexGrouping` or :class:`~merlin.utils.grouping.mappers.ModGrouping`.
@@ -172,7 +172,7 @@ The **QuantumLayer** combines all these concepts into a PyTorch-compatible inter
         trainable_parameters=["theta"],                            # Which parameters to train
         input_parameters=["px"],                                   # Encoding parameters
         input_state=[1, 0, 1, 0, 1, 0],                            # Initial photon state
-        measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
     )
 
     # Optional: down-sample the Fock distribution to 3 features
@@ -201,7 +201,7 @@ For most users, Merlin provides a simplified interface that handles these comple
     # Creates quantum layer automatically
     quantum_layer = experiment.create_layer(
         input_size=4,
-        measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
     )
 
     post_processing = nn.Sequential(
@@ -238,7 +238,7 @@ Here's how all these concepts work together in practice:
 
             quantum_core = experiment.create_layer(
                 input_size=4,
-                measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+                measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
             )
             self.quantum = nn.Sequential(
                 quantum_core,
@@ -265,7 +265,7 @@ Design Guidelines
 
 When choosing configurations, consider these general principles:
 
-**Start Simple**: Begin with default settings (SERIES ansatz, ``MEASUREMENTDISTRIBUTION`` measurement plus a linear head) and adjust based on performance.
+**Start Simple**: Begin with default settings (SERIES ansatz, ``MEASUREMENT_DISTRIBUTION`` measurement plus a linear head) and adjust based on performance.
 
 **Match Complexity to Problem**:
 

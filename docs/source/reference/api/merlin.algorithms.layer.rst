@@ -62,7 +62,7 @@ Example: Declarative builder API
         input_size=4,
         builder=builder,
         n_photons=3,  # is equivalent to input_state=[1,1,1,0,0,0]
-        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
     )
 
     model = nn.Sequential(
@@ -123,7 +123,7 @@ Example: Manual Perceval circuit (more control)
         input_state=[1, 0, 1, 0, 1, 0],
         trainable_parameters=["theta"],
         input_parameters=["input"],
-        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
     )
 
     model = nn.Sequential(

@@ -111,7 +111,7 @@ class BosonSampler:
             circuit=self.circuit,
             n_photons=self.n,
             trainable_parameters=trainable_parameters,
-            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
             device=self.device,
             dtype=torch.float32,
             shots=1000,

@@ -41,7 +41,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=1,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
         x = torch.rand(2, 2, requires_grad=True)
         output = layer(x)
@@ -69,7 +69,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=1,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
         x = torch.rand(2, 2, requires_grad=True)
         output = layer(x)
@@ -86,7 +86,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_state=input_state,
             trainable_parameters=[],
             input_parameters=["px"],
-            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
             no_bunching=True,
         )
         x = torch.rand(2, 2, requires_grad=True)
@@ -107,7 +107,7 @@ class TestQuantumLayerMeasurementStrategy:
                 output_size=20,
                 n_photons=1,
                 builder=builder,
-                measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+                measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
             )
 
     def test_linear_equivalent(self):
@@ -121,7 +121,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=1,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
         linear = torch.nn.Linear(layer.output_size, 2)
         x = torch.rand(5, 2, requires_grad=True)
@@ -148,7 +148,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_state=input_state,
             trainable_parameters=[],
             input_parameters=["px"],
-            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
             no_bunching=True,
         )
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 2))
@@ -172,7 +172,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=n_photons,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MODEEXPECTATIONS,
+            measurement_strategy=ML.MeasurementStrategy.MODE_EXPECTATIONS,
         )
         x = torch.rand(2, 2, requires_grad=True)
         output = layer(x)
@@ -196,7 +196,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=n_photons,
             builder=builder,
-            measurement_strategy=MeasurementStrategy.MODEEXPECTATIONS,
+            measurement_strategy=MeasurementStrategy.MODE_EXPECTATIONS,
             no_bunching=True,
         )
         output = layer(x)
@@ -216,7 +216,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             input_state=[2, 1, 0],
             builder=builder,
-            measurement_strategy=MeasurementStrategy.MODEEXPECTATIONS,
+            measurement_strategy=MeasurementStrategy.MODE_EXPECTATIONS,
             no_bunching=False,
         )
         output = layer(x)
@@ -242,7 +242,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=n_photons,
             builder=builder,
-            measurement_strategy=MeasurementStrategy.MODEEXPECTATIONS,
+            measurement_strategy=MeasurementStrategy.MODE_EXPECTATIONS,
         )
         assert layer.output_size == n_modes
         output = layer(x)
@@ -262,7 +262,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_state=input_state,
             trainable_parameters=[],
             input_parameters=["px"],
-            measurement_strategy=MeasurementStrategy.MODEEXPECTATIONS,
+            measurement_strategy=MeasurementStrategy.MODE_EXPECTATIONS,
             no_bunching=True,
         )
         x = torch.rand(2, 2, requires_grad=True)
@@ -282,7 +282,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=1,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.AMPLITUDEVECTOR,
+            measurement_strategy=ML.MeasurementStrategy.AMPLITUDE_VECTOR,
         )
         x = torch.rand(2, 2, requires_grad=True)
         output = layer(x)
@@ -310,7 +310,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=1,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.AMPLITUDEVECTOR,
+            measurement_strategy=ML.MeasurementStrategy.AMPLITUDE_VECTOR,
         )
         x = torch.rand(2, 2, requires_grad=True)
         output = layer(x)
@@ -330,7 +330,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_state=input_state,
             trainable_parameters=[],
             input_parameters=["px"],
-            measurement_strategy=MeasurementStrategy.AMPLITUDEVECTOR,
+            measurement_strategy=MeasurementStrategy.AMPLITUDE_VECTOR,
             no_bunching=True,
         )
         x = torch.rand(2, 2, requires_grad=True)

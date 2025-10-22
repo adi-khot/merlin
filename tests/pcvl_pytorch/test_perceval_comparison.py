@@ -91,7 +91,7 @@ class TestPercevalComparison:
             n_photons=self.N_PHOTONS,
             input_parameters=["φ"],
             trainable_parameters=[],
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
             shots=0,
         )
 

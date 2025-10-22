@@ -128,7 +128,7 @@ def benchmark_bs(MODES=8, PHOTONS=4, BS=32, TYPE=torch.float32, set_hp=False):
         input_state=input_state,
         trainable_parameters=[],
         input_parameters=["phase", "theta"],
-        measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         device=device,
         no_bunching=True,
     )

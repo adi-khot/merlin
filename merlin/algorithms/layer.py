@@ -97,7 +97,7 @@ class QuantumLayer(nn.Module):
         trainable_parameters: list[str] | None = None,
         input_parameters: list[str] | None = None,
         # Common parameters
-        measurement_strategy: MeasurementStrategy = MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+        measurement_strategy: MeasurementStrategy = MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         shots: int = 0,
@@ -300,17 +300,17 @@ class QuantumLayer(nn.Module):
         dist_size = distribution.shape[-1]
 
         # Determine output size
-        if measurement_strategy == MeasurementStrategy.MEASUREMENTDISTRIBUTION:
-            self.output_size = dist_size
-        elif measurement_strategy == MeasurementStrategy.MODEEXPECTATIONS:
+        if measurement_strategy == MeasurementStrategy.MEASUREMENT_DISTRIBUTION:
+            self._output_size = dist_size
+        elif measurement_strategy == MeasurementStrategy.MODE_EXPECTATIONS:
             if type(self.circuit) is pcvl.Circuit:
-                self.output_size = self.circuit.m
+                self._output_size = self.circuit.m
             elif type(self.circuit) is CircuitBuilder:
-                self.output_size = self.circuit.n_modes
+                self._output_size = self.circuit.n_modes
             else:
                 raise TypeError(f"Unknown circuit type: {type(self.circuit)}")
-        elif measurement_strategy == MeasurementStrategy.AMPLITUDEVECTOR:
-            self.output_size = dist_size
+        elif measurement_strategy == MeasurementStrategy.AMPLITUDE_VECTOR:
+            self._output_size = dist_size
         else:
             raise TypeError(f"Unknown measurement_strategy: {measurement_strategy}")
 
@@ -599,8 +599,13 @@ class QuantumLayer(nn.Module):
             )
         return self
 
-    def get_output_keys(self):
+    @property
+    def state_keys(self):
         return self.computation_process.simulation_graph.mapped_keys
+
+    @property
+    def output_size(self):
+        return self._output_size
 
     @classmethod
     def simple(
@@ -714,7 +719,7 @@ class QuantumLayer(nn.Module):
             input_size=input_size,
             builder=builder,
             n_photons=n_photons,
-            measurement_strategy=MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
             shots=shots,
             no_bunching=no_bunching,
             device=device,
@@ -732,9 +737,13 @@ class QuantumLayer(nn.Module):
                 self.add_module("post_processing", post_processing)
                 self.circuit = quantum_layer.circuit
                 if hasattr(post_processing, "output_size"):
-                    self.output_size = post_processing.output_size  # type: ignore[attr-defined]
+                    self._output_size = post_processing.output_size  # type: ignore[attr-defined]
                 else:
-                    self.output_size = quantum_layer.output_size
+                    self._output_size = quantum_layer.output_size
+
+            @property
+            def output_size(self):
+                return self._output_size
 
             def forward(self, x: torch.Tensor) -> torch.Tensor:
                 return self.post_processing(self.quantum_layer(x))

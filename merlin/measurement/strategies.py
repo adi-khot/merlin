@@ -28,7 +28,7 @@ from enum import Enum
 class MeasurementStrategy(Enum):
     """Strategy for measuring quantum states or counts and possibly apply mapping to classical outputs."""
 
-    MEASUREMENTDISTRIBUTION = "measurementdistribution"
-    MODEEXPECTATIONS = "modeexpectations"
-    AMPLITUDEVECTOR = "amplitudevector"
+    MEASUREMENT_DISTRIBUTION = "measurementdistribution"
+    MODE_EXPECTATIONS = "modeexpectations"
+    AMPLITUDE_VECTOR = "amplitudevector"
     CUSTOMOBSERVABLE = "customobservable"

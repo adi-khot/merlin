@@ -66,15 +66,15 @@ class OutputMapper:
         Raises:
             ValueError: If strategy is unknown
         """
-        if strategy == MeasurementStrategy.MEASUREMENTDISTRIBUTION:
+        if strategy == MeasurementStrategy.MEASUREMENT_DISTRIBUTION:
             return MeasurementDistribution()
-        elif strategy == MeasurementStrategy.MODEEXPECTATIONS:
+        elif strategy == MeasurementStrategy.MODE_EXPECTATIONS:
             if keys is None:
                 raise ValueError(
                     "When using ModeExpectations measurement strategy, keys must be provided."
                 )
             return ModeExpectations(no_bunching, keys)
-        elif strategy == MeasurementStrategy.AMPLITUDEVECTOR:
+        elif strategy == MeasurementStrategy.AMPLITUDE_VECTOR:
             return AmplitudeVector()
         elif strategy == MeasurementStrategy.CUSTOMOBSERVABLE:
             return CustomObservable()

@@ -47,7 +47,7 @@ class TestQuantumLayer:
             input_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
         assert layer.input_size == 3
         assert layer.thetas[0].shape[0] == 2 * 4 * (
@@ -64,7 +64,7 @@ class TestQuantumLayer:
             input_size=5,
             input_state=[1, 0, 0, 0, 0],
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
         pcvl.pdisplay(layer.circuit, output_format=pcvl.Format.TEXT)
 
@@ -87,7 +87,7 @@ class TestQuantumLayer:
             input_size=2,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
 
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
@@ -110,7 +110,7 @@ class TestQuantumLayer:
             input_size=2,
             input_state=[1, 0, 0, 0],
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
 
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
@@ -134,7 +134,7 @@ class TestQuantumLayer:
             input_size=2,
             input_state=[1, 1, 0, 0],
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
 
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
@@ -167,7 +167,7 @@ class TestQuantumLayer:
             input_size=2,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
             shots=100,
         )
 
@@ -197,7 +197,7 @@ class TestQuantumLayer:
             input_size=2,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
         model_normal = torch.nn.Sequential(
             layer_normal, torch.nn.Linear(layer_normal.output_size, 3)
@@ -207,7 +207,7 @@ class TestQuantumLayer:
             input_size=2,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
         model_reservoir = torch.nn.Sequential(
             layer_reservoir, torch.nn.Linear(layer_reservoir.output_size, 3)
@@ -243,15 +243,15 @@ class TestQuantumLayer:
 
         configs = [
             {
-                "measurement_strategy": ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+                "measurement_strategy": ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
                 "grouping_policy": None,
             },
             {
-                "measurement_strategy": ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+                "measurement_strategy": ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
                 "grouping_policy": ML.LexGrouping,
             },
             {
-                "measurement_strategy": ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+                "measurement_strategy": ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
                 "grouping_policy": ML.ModGrouping,
             },
         ]
@@ -302,7 +302,7 @@ class TestQuantumLayer:
             input_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
 
         layer_str = str(layer)
@@ -335,7 +335,7 @@ class TestQuantumLayer:
                 input_size=3,
                 input_state=[1, 0, 1, 0],
                 builder=builder,
-                measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+                measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
             )
 
         with pytest.raises(ValueError):
@@ -344,7 +344,7 @@ class TestQuantumLayer:
                 output_size=5,
                 n_photons=5,  # more photons than modes
                 builder=builder,
-                measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+                measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
             )
 
         with pytest.raises(TypeError):
@@ -363,7 +363,7 @@ class TestQuantumLayer:
             input_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
 
         assert layer.input_size == 3
@@ -379,7 +379,7 @@ class TestQuantumLayer:
             input_size=2,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.AMPLITUDEVECTOR,
+            measurement_strategy=ML.MeasurementStrategy.AMPLITUDE_VECTOR,
         )
 
         # Get actual distribution size
@@ -392,7 +392,7 @@ class TestQuantumLayer:
             input_size=2,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.AMPLITUDEVECTOR,
+            measurement_strategy=ML.MeasurementStrategy.AMPLITUDE_VECTOR,
         )
 
         x = torch.rand(2, 2)
@@ -425,7 +425,7 @@ class TestQuantumLayer:
             input_state=input_state,
             trainable_parameters=["phi"],  # Parameters to train (by prefix)
             input_parameters=[],  # No input parameters
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
 
         output_size = math.comb(3, sum(input_state))  # Calculate output size
@@ -439,7 +439,7 @@ class TestQuantumLayer:
                 input_state=input_state,
                 trainable_parameters=["phi"],  # Parameters to train (by prefix)
                 input_parameters=None,  # No input parameters
-                measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+                measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
             )
 
         # Test layer properties
@@ -484,7 +484,7 @@ class TestQuantumLayer:
             input_state=input_state,
             trainable_parameters=[],  # No trainable parameters
             input_parameters=["phi"],  # No input parameters
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
         )
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 

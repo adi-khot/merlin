@@ -14,7 +14,7 @@ The legacy output mapping strategy enum has been removed. This page explains how
 Measurement Strategies
 ======================
 
-MEASUREMENTDISTRIBUTION
+MEASUREMENT_DISTRIBUTION
 -----------------------
 
 Produces the probability of observing each Fock state. If the simulation returns amplitudes, Merlin turns them into probabilities via :math:`|a|^2`.
@@ -24,7 +24,7 @@ Produces the probability of observing each Fock state. If the simulation returns
     ansatz = ML.AnsatzFactory.create(
         PhotonicBackend=experiment,
         input_size=4,
-        measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
     )
     quantum_layer = ML.QuantumLayer(input_size=4, ansatz=ansatz)
 
@@ -40,7 +40,7 @@ Extensions:
 - Add ``torch.nn.Linear`` or any classical layer after the quantum layer to map the probabilities to logits/regression targets.
 - Combine with :class:`~merlin.utils.grouping.mappers.LexGrouping` or :class:`~merlin.utils.grouping.mappers.ModGrouping` when you need fewer output features and don't want to increase the number of parameters.
 
-MODEEXPECTATIONS
+MODE_EXPECTATIONS
 ----------------
 
 Marginalises the Fock distribution to per-mode statistics. Provide the list of accessible Fock states (``keys``) to initialise the mapper once, then feed batches of amplitudes or probabilities.
@@ -51,7 +51,7 @@ Marginalises the Fock distribution to per-mode statistics. Provide the list of a
     ansatz = ML.AnsatzFactory.create(
         PhotonicBackend=experiment,
         input_size=2,
-        measurement_strategy=ML.MeasurementStrategy.MODEEXPECTATIONS,
+        measurement_strategy=ML.MeasurementStrategy.MODE_EXPECTATIONS,
         no_bunching=True,  # Return per-mode “probability of at least one photon”
     )
 
@@ -62,7 +62,7 @@ Key properties:
 - ``no_bunching=False`` returns the expected photon count per mode.
 - Output size always equals the number of modes implied by ``keys``.
 
-AMPLITUDEVECTOR
+AMPLITUDE_VECTOR
 ---------------
 
 Returns the complex amplitudes directly. This strategy is only meaningful in simulation, because amplitudes cannot be measured or obtained on hardware.
@@ -72,7 +72,7 @@ Returns the complex amplitudes directly. This strategy is only meaningful in sim
     ansatz = ML.AnsatzFactory.create(
         PhotonicBackend=experiment,
         input_size=3,
-        measurement_strategy=ML.MeasurementStrategy.AMPLITUDEVECTOR,
+        measurement_strategy=ML.MeasurementStrategy.AMPLITUDE_VECTOR,
     )
 
 Use this strategy for debugging, algorithmic research, or when a classical routine manipulates complex amplitudes directly. The output is a complex tensor normalised to unit norm (within numerical precision).
@@ -87,7 +87,7 @@ Placeholder for future support of user-defined observables. Instantiating the st
 Grouping Modules
 ================
 
-Grouping modules reshape the output of :class:`~merlin.measurement.strategies.MeasurementStrategy.MEASUREMENTDISTRIBUTION` into smaller feature sets while preserving differentiability.
+Grouping modules reshape the output of :class:`~merlin.measurement.strategies.MeasurementStrategy.MEASUREMENT_DISTRIBUTION` into smaller feature sets while preserving differentiability.
 
 LexGrouping
 -----------
@@ -148,7 +148,7 @@ Chaining Measurement and Grouping
     ansatz = ML.AnsatzFactory.create(
         PhotonicBackend=experiment,
         input_size=2,
-        measurement_strategy=ML.MeasurementStrategy.MEASUREMENTDISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
     )
 
     quantum_layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
@@ -164,10 +164,10 @@ Migrating from OutputMappingStrategy
 
 Legacy name → new pipeline:
 
-- ``OutputMappingStrategy.NONE`` → ``MeasurementStrategy.MEASUREMENTDISTRIBUTION``
-- ``OutputMappingStrategy.LINEAR`` → ``MeasurementStrategy.MEASUREMENTDISTRIBUTION`` followed by a torch.nn.Linear layer
-- ``OutputMappingStrategy.LEXGROUPING`` or ``GROUPING`` → ``MeasurementStrategy.MEASUREMENTDISTRIBUTION`` + :class:`~merlin.utils.grouping.mappers.LexGrouping`
-- ``OutputMappingStrategy.MODGROUPING`` → ``MeasurementStrategy.MEASUREMENTDISTRIBUTION`` + :class:`~merlin.utils.grouping.mappers.ModGrouping`
+- ``OutputMappingStrategy.NONE`` → ``MeasurementStrategy.MEASUREMENT_DISTRIBUTION``
+- ``OutputMappingStrategy.LINEAR`` → ``MeasurementStrategy.MEASUREMENT_DISTRIBUTION`` followed by a torch.nn.Linear layer
+- ``OutputMappingStrategy.LEXGROUPING`` or ``GROUPING`` → ``MeasurementStrategy.MEASUREMENT_DISTRIBUTION`` + :class:`~merlin.utils.grouping.mappers.LexGrouping`
+- ``OutputMappingStrategy.MODGROUPING`` → ``MeasurementStrategy.MEASUREMENT_DISTRIBUTION`` + :class:`~merlin.utils.grouping.mappers.ModGrouping`
 
 Selection Cheat Sheet
 =====================
@@ -180,16 +180,16 @@ Selection Cheat Sheet
      - Recommended Pipeline
      - Notes
    * - Classification / Regression
-     - ``MEASUREMENTDISTRIBUTION`` + classical head
+     - ``MEASUREMENT_DISTRIBUTION`` + classical head
      - Obtain logits or arbitrary ranges with ``nn.Linear`` or deeper networks.
    * - Structured probability outputs
-     - ``MEASUREMENTDISTRIBUTION`` + ``LexGrouping`` / ``ModGrouping``
+     - ``MEASUREMENT_DISTRIBUTION`` + ``LexGrouping`` / ``ModGrouping``
      - Preserves probability mass while reducing dimensionality.
    * - Hardware-friendly analytics
-     - ``MODEEXPECTATIONS`` (``no_bunching`` to taste)
+     - ``MODE_EXPECTATIONS`` (``no_bunching`` to taste)
      - Outputs one feature per mode, easy to interpret.
    * - Algorithm debugging
-     - ``AMPLITUDEVECTOR``
+     - ``AMPLITUDE_VECTOR``
      - Complex amplitudes, simulation only.
 
 Validation Tips
