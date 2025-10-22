@@ -76,7 +76,7 @@ class OutputMapper:
             return ModeExpectations(no_bunching, keys)
         elif strategy == MeasurementStrategy.AMPLITUDE_VECTOR:
             return AmplitudeVector()
-        elif strategy == MeasurementStrategy.CUSTOMOBSERVABLE:
+        elif strategy == MeasurementStrategy.CUSTOM_OBSERVABLE:
             return CustomObservable()
         else:
             raise ValueError(f"Unknown measurement strategy: {strategy}")

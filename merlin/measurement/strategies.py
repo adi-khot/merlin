@@ -31,4 +31,4 @@ class MeasurementStrategy(Enum):
     MEASUREMENT_DISTRIBUTION = "measurementdistribution"
     MODE_EXPECTATIONS = "modeexpectations"
     AMPLITUDE_VECTOR = "amplitudevector"
-    CUSTOMOBSERVABLE = "customobservable"
+    CUSTOM_OBSERVABLE = "customobservable"
