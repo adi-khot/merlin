@@ -152,7 +152,9 @@ class QuantumLayer(nn.Module):
         self.angle_encoding_specs: dict[str, dict[str, Any]] = {}
 
         resolved_circuit: pcvl.Circuit | None = None
-        trainable_parameters = list(trainable_parameters) if trainable_parameters else []
+        trainable_parameters = (
+            list(trainable_parameters) if trainable_parameters else []
+        )
         input_parameters = list(input_parameters) if input_parameters else []
 
         if builder is not None:
@@ -410,7 +412,9 @@ class QuantumLayer(nn.Module):
         offset = 0
         for count in counts:
             end = offset + count
-            slices.append(tensor[..., offset:end] if tensor.dim() > 1 else tensor[offset:end])
+            slices.append(
+                tensor[..., offset:end] if tensor.dim() > 1 else tensor[offset:end]
+            )
             offset = end
         return slices
 
@@ -440,7 +444,9 @@ class QuantumLayer(nn.Module):
             x_batch = x
             squeeze = False
         else:
-            raise ValueError(f"Angle encoding expects 1D or 2D tensors, got shape {tuple(x.shape)}")
+            raise ValueError(
+                f"Angle encoding expects 1D or 2D tensors, got shape {tuple(x.shape)}"
+            )
 
         if not combos:
             encoded = x_batch * torch.pi
@@ -461,7 +467,11 @@ class QuantumLayer(nn.Module):
             value = (selected * scale_tensor).sum(dim=1, keepdim=True)
             encoded_cols.append(value)
 
-        encoded = torch.cat(encoded_cols, dim=1) if encoded_cols else x_batch.new_zeros((x_batch.shape[0], 0))
+        encoded = (
+            torch.cat(encoded_cols, dim=1)
+            if encoded_cols
+            else x_batch.new_zeros((x_batch.shape[0], 0))
+        )
         return encoded.squeeze(0) if squeeze else encoded
 
     def set_input_state(self, input_state):
@@ -485,7 +495,11 @@ class QuantumLayer(nn.Module):
                 input_parameters = split_inputs
 
         for idx, x in enumerate(input_parameters):
-            prefix = prefixes[idx] if prefixes and idx < len(prefixes) else (prefixes[-1] if prefixes else None)
+            prefix = (
+                prefixes[idx]
+                if prefixes and idx < len(prefixes)
+                else (prefixes[-1] if prefixes else None)
+            )
             encoded = self._prepare_input_encoding(x, prefix)
             params.append(encoded)
 
@@ -519,17 +533,23 @@ class QuantumLayer(nn.Module):
             if valid_entries.any():
                 distribution = torch.where(
                     valid_entries,
-                    distribution / torch.where(valid_entries, sum_probs, torch.ones_like(sum_probs)),
+                    distribution
+                    / torch.where(valid_entries, sum_probs, torch.ones_like(sum_probs)),
                     distribution,
                 )
                 amplitudes = torch.where(
                     valid_entries,
-                    amplitudes / torch.where(valid_entries, sum_probs.sqrt(), torch.ones_like(sum_probs)),
+                    amplitudes
+                    / torch.where(
+                        valid_entries, sum_probs.sqrt(), torch.ones_like(sum_probs)
+                    ),
                     amplitudes,
                 )
 
         if apply_sampling and shots > 0:
-            distribution = self.autodiff_process.sampling_noise.pcvl_sampler(distribution, shots)
+            distribution = self.autodiff_process.sampling_noise.pcvl_sampler(
+                distribution, shots
+            )
 
         if return_amplitudes:
             return self.output_mapping(distribution), amplitudes
@@ -543,7 +563,9 @@ class QuantumLayer(nn.Module):
         if method is not None:
             valid = ["multinomial", "binomial", "gaussian"]
             if method not in valid:
-                raise ValueError(f"Invalid sampling method: {method}. Valid options are: {valid}")
+                raise ValueError(
+                    f"Invalid sampling method: {method}. Valid options are: {valid}"
+                )
             self.sampling_method = method
 
     def to(self, *args, **kwargs):
@@ -553,10 +575,16 @@ class QuantumLayer(nn.Module):
             device = args[0]
         if device is not None:
             self.device = device
-            self.computation_process.simulation_graph = self.computation_process.simulation_graph.to(device)
-            self.computation_process.converter = self.computation_process.converter.to(self.dtype, device)
+            self.computation_process.simulation_graph = (
+                self.computation_process.simulation_graph.to(device)
+            )
+            self.computation_process.converter = self.computation_process.converter.to(
+                self.dtype, device
+            )
             if hasattr(self.output_mapping, "weight"):
-                self.output_mapping = self.output_mapping.to(dtype=self.dtype, device=self.device)
+                self.output_mapping = self.output_mapping.to(
+                    dtype=self.dtype, device=self.device
+                )
         return self
 
     def get_output_keys(self):
@@ -579,7 +607,9 @@ class QuantumLayer(nn.Module):
         if self.experiment is not None:
             exported_circuit = self.experiment.unitary_circuit()
         else:
-            exported_circuit = self.circuit.copy() if hasattr(self.circuit, "copy") else self.circuit
+            exported_circuit = (
+                self.circuit.copy() if hasattr(self.circuit, "copy") else self.circuit
+            )
 
         spec_mappings = getattr(self.computation_process.converter, "spec_mappings", {})
         torch_params: dict[str, torch.Tensor] = {
@@ -606,7 +636,9 @@ class QuantumLayer(nn.Module):
             "output_size": self.output_size,
             "input_state": getattr(self, "input_state", None),
             "n_modes": exported_circuit.m,
-            "n_photons": sum(getattr(self, "input_state", []) or []) if hasattr(self, "input_state") else None,
+            "n_photons": sum(getattr(self, "input_state", []) or [])
+            if hasattr(self, "input_state")
+            else None,
             "trainable_parameters": list(self.trainable_parameters),
             "input_parameters": list(self.input_parameters),
             "no_bunching": bool(self.no_bunching),
