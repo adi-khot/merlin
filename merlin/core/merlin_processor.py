@@ -55,7 +55,9 @@ class MerlinProcessor:
         timeout: float = 60.0,
     ):
         if not isinstance(remote_processor, RemoteProcessor):
-            raise TypeError(f"Expected pcvl.RemoteProcessor, got {type(remote_processor)}")
+            raise TypeError(
+                f"Expected pcvl.RemoteProcessor, got {type(remote_processor)}"
+            )
 
         self.remote_processor = remote_processor
         self.backend_name = getattr(remote_processor, "name", "unknown")
@@ -119,7 +121,9 @@ class MerlinProcessor:
             if time.time() >= end:
                 with suppress(Exception):
                     fut.cancel_remote()
-                raise TimeoutError(f"Operation timed out after {timeout} seconds (remote cancel issued)")
+                raise TimeoutError(
+                    f"Operation timed out after {timeout} seconds (remote cancel issued)"
+                )
             time.sleep(0.01)
         return fut.value()
 
@@ -132,7 +136,9 @@ class MerlinProcessor:
         timeout: float | None = None,
     ) -> Future:
         if module.training:
-            raise RuntimeError("Remote quantum execution requires `.eval()` mode. Call `module.eval()` before forward.")
+            raise RuntimeError(
+                "Remote quantum execution requires `.eval()` mode. Call `module.eval()` before forward."
+            )
 
         timeout = self.default_timeout if timeout is None else timeout
         original_device = input.device
@@ -143,9 +149,9 @@ class MerlinProcessor:
         fut: Future = Future()
         state = {
             "cancel_requested": False,
-            "current_job": None,       # type: RemoteJob | None
-            "current_status": None,    # type: dict[str, Any] | None
-            "job_ids": [],             # list of job ids in order
+            "current_job": None,  # type: RemoteJob | None
+            "current_status": None,  # type: dict[str, Any] | None
+            "job_ids": [],  # list of job ids in order
         }
 
         # ---- helpers attached to the Future ----
@@ -161,8 +167,10 @@ class MerlinProcessor:
                 try:
                     from concurrent.futures import CancelledError
                 except Exception:  # pragma: no cover - very unlikely
+
                     class CancelledError(RuntimeError):  # type: ignore[override]
                         pass
+
                 fut.set_exception(CancelledError("Remote call was cancelled"))
 
         def _status():
@@ -173,14 +181,16 @@ class MerlinProcessor:
                 return {"state": "IDLE", "progress": 0.0, "message": None}
             return dict(js)
 
-        fut.cancel_remote = _cancel_remote               # type: ignore[attr-defined]
-        fut.status = _status                             # type: ignore[attr-defined]
-        fut.job_ids = state["job_ids"]                   # type: ignore[attr-defined]
+        fut.cancel_remote = _cancel_remote  # type: ignore[attr-defined]
+        fut.status = _status  # type: ignore[attr-defined]
+        fut.job_ids = state["job_ids"]  # type: ignore[attr-defined]
 
         # ---- background worker ----
         def _run_pipeline():
             try:
-                deadline = None if timeout in (None, 0) else (time.time() + float(timeout))
+                deadline = (
+                    None if timeout in (None, 0) else (time.time() + float(timeout))
+                )
 
                 x = input
                 batch = x.shape[0]
@@ -190,16 +200,24 @@ class MerlinProcessor:
                             try:
                                 from concurrent.futures import CancelledError
                             except Exception:  # pragma: no cover
+
                                 class CancelledError(RuntimeError):  # type: ignore[override]
                                     pass
-                            fut.set_exception(CancelledError("Remote call was cancelled"))
+
+                            fut.set_exception(
+                                CancelledError("Remote call was cancelled")
+                            )
                         return
 
                     # Decide offload policy
                     should_offload = None
-                    if hasattr(layer, "should_offload") and callable(layer.should_offload):
+                    if hasattr(layer, "should_offload") and callable(
+                        layer.should_offload
+                    ):
                         try:
-                            should_offload = bool(layer.should_offload(self.remote_processor, shots))
+                            should_offload = bool(
+                                layer.should_offload(self.remote_processor, shots)
+                            )
                         except Exception:  # pragma: no cover - defensive
                             should_offload = None
 
@@ -210,7 +228,9 @@ class MerlinProcessor:
                     if should_offload:
                         job = self._submit_quantum_layer(layer, x, shots)
                         state["current_job"] = job
-                        job_id = getattr(job, "id", None) or getattr(job, "job_id", None)
+                        job_id = getattr(job, "id", None) or getattr(
+                            job, "job_id", None
+                        )
                         if job_id is not None:
                             state["job_ids"].append(job_id)
 
@@ -225,9 +245,13 @@ class MerlinProcessor:
                                     try:
                                         from concurrent.futures import CancelledError
                                     except Exception:  # pragma: no cover
+
                                         class CancelledError(RuntimeError):  # type: ignore[override]
                                             pass
-                                    fut.set_exception(CancelledError("Remote call was cancelled"))
+
+                                    fut.set_exception(
+                                        CancelledError("Remote call was cancelled")
+                                    )
                                 return
 
                             if deadline is not None and time.time() >= deadline:
@@ -236,25 +260,35 @@ class MerlinProcessor:
                                     with suppress(Exception):
                                         cancel()
                                 if not fut.done():
-                                    fut.set_exception(TimeoutError("Remote call timed out (remote cancel issued)"))
+                                    fut.set_exception(
+                                        TimeoutError(
+                                            "Remote call timed out (remote cancel issued)"
+                                        )
+                                    )
                                 return
 
                             s = getattr(job, "status", None)
                             state["current_status"] = {
                                 "state": getattr(s, "state", None) if s else None,
                                 "progress": getattr(s, "progress", None) if s else None,
-                                "message": getattr(s, "stop_message", None) if s else None,
+                                "message": getattr(s, "stop_message", None)
+                                if s
+                                else None,
                             }
 
                             if getattr(job, "is_failed", False):
                                 msg = state["current_status"].get("message")
                                 if not fut.done():
-                                    fut.set_exception(RuntimeError(f"Remote call failed: {msg}"))
+                                    fut.set_exception(
+                                        RuntimeError(f"Remote call failed: {msg}")
+                                    )
                                 return
 
                             if getattr(job, "is_complete", False):
                                 raw = job.get_results()
-                                x = self._process_batch_results(raw, batch, layer, shots)
+                                x = self._process_batch_results(
+                                    raw, batch, layer, shots
+                                )
                                 state["current_job"] = None
                                 state["current_status"] = None
                                 break
@@ -313,8 +347,10 @@ class MerlinProcessor:
                 try:
                     from concurrent.futures import CancelledError
                 except Exception:  # pragma: no cover
+
                     class CancelledError(RuntimeError):  # type: ignore[override]
                         pass
+
                 fut.set_exception(CancelledError("Remote call was cancelled"))
 
         def _status():
@@ -325,9 +361,9 @@ class MerlinProcessor:
                 return {"state": "IDLE", "progress": 0.0, "message": None}
             return dict(js)
 
-        fut.cancel_remote = _cancel_remote          # type: ignore[attr-defined]
-        fut.status = _status                        # type: ignore[attr-defined]
-        fut.job_ids = state["job_ids"]              # type: ignore[attr-defined]
+        fut.cancel_remote = _cancel_remote  # type: ignore[attr-defined]
+        fut.status = _status  # type: ignore[attr-defined]
+        fut.job_ids = state["job_ids"]  # type: ignore[attr-defined]
 
         def _monitor():
             try:
@@ -336,7 +372,9 @@ class MerlinProcessor:
                 jid = getattr(job, "id", None) or getattr(job, "job_id", None) or job_id
                 state["job_ids"].append(jid)
 
-                deadline = None if timeout in (None, 0) else (time.time() + float(timeout))
+                deadline = (
+                    None if timeout in (None, 0) else (time.time() + float(timeout))
+                )
                 sleep_ms = 50
 
                 while True:
@@ -349,9 +387,13 @@ class MerlinProcessor:
                             try:
                                 from concurrent.futures import CancelledError
                             except Exception:  # pragma: no cover
+
                                 class CancelledError(RuntimeError):  # type: ignore[override]
                                     pass
-                            fut.set_exception(CancelledError("Remote call was cancelled"))
+
+                            fut.set_exception(
+                                CancelledError("Remote call was cancelled")
+                            )
                         return
 
                     if deadline is not None and time.time() >= deadline:
@@ -360,7 +402,11 @@ class MerlinProcessor:
                             with suppress(Exception):
                                 cancel()
                         if not fut.done():
-                            fut.set_exception(TimeoutError("Remote call timed out (remote cancel issued)"))
+                            fut.set_exception(
+                                TimeoutError(
+                                    "Remote call timed out (remote cancel issued)"
+                                )
+                            )
                         return
 
                     s = getattr(job, "status", None)
@@ -373,7 +419,9 @@ class MerlinProcessor:
                     if getattr(job, "is_failed", False):
                         msg = state["current_status"].get("message")
                         if not fut.done():
-                            fut.set_exception(RuntimeError(f"Remote call failed: {msg}"))
+                            fut.set_exception(
+                                RuntimeError(f"Remote call failed: {msg}")
+                            )
                         return
 
                     if getattr(job, "is_complete", False):
@@ -396,7 +444,9 @@ class MerlinProcessor:
 
     # ---------------- Perceval integration (per-layer) ----------------
 
-    def _submit_quantum_layer(self, layer: Any, input_data: torch.Tensor, shots: int | None) -> RemoteJob:
+    def _submit_quantum_layer(
+        self, layer: Any, input_data: torch.Tensor, shots: int | None
+    ) -> RemoteJob:
         if input_data.is_cuda:
             input_data = input_data.cpu()
 
@@ -423,7 +473,9 @@ class MerlinProcessor:
                 n_photons = sum(config["input_state"])
                 layer_processor.min_detected_photons_filter(n_photons)
 
-            sampler = Sampler(layer_processor, max_shots_per_call=self.max_shots_per_call)
+            sampler = Sampler(
+                layer_processor, max_shots_per_call=self.max_shots_per_call
+            )
             self._layer_cache[layer_id] = (sampler, config, layer_processor)
         else:
             sampler, config, layer_processor = self._layer_cache[layer_id]
@@ -518,7 +570,10 @@ class MerlinProcessor:
                     probs = torch.zeros(dist_size)
 
                     if state_counts:
-                        if getattr(layer, "no_bunching", False) and valid_states is not None:
+                        if (
+                            getattr(layer, "no_bunching", False)
+                            and valid_states is not None
+                        ):
                             filtered_counts = {}
                             for state_str, count in state_counts.items():
                                 state_tuple = self._parse_perceval_state(state_str)
@@ -531,7 +586,9 @@ class MerlinProcessor:
                             continue
 
                         first_value = next(iter(state_counts.values()))
-                        is_probability = isinstance(first_value, float) and first_value <= 1.0
+                        is_probability = (
+                            isinstance(first_value, float) and first_value <= 1.0
+                        )
                         total = 1.0 if is_probability else sum(state_counts.values())
 
                         for state_str, value in state_counts.items():
@@ -539,7 +596,11 @@ class MerlinProcessor:
                             if state_to_index and state_tuple in state_to_index:
                                 idx = state_to_index[state_tuple]
                                 if idx < dist_size:
-                                    probs[idx] = value if is_probability else (value / total if total > 0 else 0)
+                                    probs[idx] = (
+                                        value
+                                        if is_probability
+                                        else (value / total if total > 0 else 0)
+                                    )
 
                         prob_sum = probs.sum()
                         if prob_sum > 0 and abs(float(prob_sum) - 1.0) > 1e-6:
@@ -555,21 +616,37 @@ class MerlinProcessor:
         return torch.stack(output_tensors[:batch_size])
 
     def _get_state_mapping(self, layer: Any) -> tuple[int, dict | None, set | None]:
-        if hasattr(layer, "computation_process") and hasattr(layer.computation_process, "simulation_graph"):
+        if hasattr(layer, "computation_process") and hasattr(
+            layer.computation_process, "simulation_graph"
+        ):
             graph = layer.computation_process.simulation_graph
 
             if hasattr(graph, "final_keys") and graph.final_keys:
                 dist_size = len(graph.final_keys)
-                state_to_index = {state: idx for idx, state in enumerate(graph.final_keys)}
-                valid_states = set(graph.final_keys) if getattr(layer, "no_bunching", False) else None
+                state_to_index = {
+                    state: idx for idx, state in enumerate(graph.final_keys)
+                }
+                valid_states = (
+                    set(graph.final_keys)
+                    if getattr(layer, "no_bunching", False)
+                    else None
+                )
             else:
                 n_modes = layer.circuit.m if hasattr(layer, "circuit") else graph.m
-                n_photons = sum(layer.input_state) if hasattr(layer, "input_state") else graph.n_photons
+                n_photons = (
+                    sum(layer.input_state)
+                    if hasattr(layer, "input_state")
+                    else graph.n_photons
+                )
 
                 if getattr(layer, "no_bunching", False):
                     dist_size = comb(n_modes, n_photons)
-                    valid_states = set(self._generate_no_bunching_states(n_modes, n_photons))
-                    state_to_index = {state: idx for idx, state in enumerate(sorted(valid_states))}
+                    valid_states = set(
+                        self._generate_no_bunching_states(n_modes, n_photons)
+                    )
+                    state_to_index = {
+                        state: idx for idx, state in enumerate(sorted(valid_states))
+                    }
                 else:
                     dist_size = comb(n_modes + n_photons - 1, n_photons)
                     state_to_index = None
@@ -581,8 +658,12 @@ class MerlinProcessor:
 
                 if getattr(layer, "no_bunching", False):
                     dist_size = comb(n_modes, n_photons)
-                    valid_states = set(self._generate_no_bunching_states(n_modes, n_photons))
-                    state_to_index = {state: idx for idx, state in enumerate(sorted(valid_states))}
+                    valid_states = set(
+                        self._generate_no_bunching_states(n_modes, n_photons)
+                    )
+                    state_to_index = {
+                        state: idx for idx, state in enumerate(sorted(valid_states))
+                    }
                 else:
                     dist_size = comb(n_modes + n_photons - 1, n_photons)
                     state_to_index = None
@@ -594,7 +675,9 @@ class MerlinProcessor:
 
         return dist_size, state_to_index, valid_states
 
-    def _generate_no_bunching_states(self, n_modes: int, n_photons: int) -> list[tuple[int, ...]]:
+    def _generate_no_bunching_states(
+        self, n_modes: int, n_photons: int
+    ) -> list[tuple[int, ...]]:
         valid_states: list[tuple[int, ...]] = []
 
         def generate_states(current: list[int], remaining: int, start: int):
