@@ -120,7 +120,7 @@ class MerlinProcessor:
         while not fut.done():
             if time.time() >= end:
                 with suppress(Exception):
-                    fut.cancel_remote()
+                    fut.cancel_remote()  # type: ignore[attr-defined]
                 raise TimeoutError(
                     f"Operation timed out after {timeout} seconds (remote cancel issued)"
                 )
