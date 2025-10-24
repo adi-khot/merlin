@@ -483,6 +483,10 @@ class QuantumLayer(nn.Module):
                 distribution, shots
             )
         if return_amplitudes:
+            warnings.warn(
+                "The returned amplitudes correspond to pre-detection states (before applying any perceval.Detector)",
+                stacklevel=2,
+            )
             return self.output_mapping(distribution), amplitudes
         # Apply output mapping
 

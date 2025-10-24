@@ -526,6 +526,36 @@ class TestFidelityKernelFactoryMethods:
         assert torch.allclose(diag, torch.ones_like(diag), atol=1e-6)
         assert torch.allclose(K, K.T.conj(), atol=1e-6)
 
+    def test_fidelity_kernel_with_ppnr_detectors(self):
+        """FidelityKernel supports partially projected number-resolving detectors."""
+
+        feature_map = FeatureMap.simple(
+            input_size=1,
+            n_modes=3,
+            n_photons=1,
+            trainable=False,
+        )
+
+        experiment = pcvl.Experiment(feature_map.circuit)
+        experiment.detectors[0] = pcvl.Detector.ppnr(n_wires=2, max_detections=1)
+        experiment.detectors[1] = pcvl.Detector.pnr()
+        experiment.detectors[2] = pcvl.Detector.pnr()
+
+        kernel = FidelityKernel(
+            feature_map=feature_map,
+            input_state=[1, 0, 0],
+            experiment=experiment,
+        )
+
+        data = torch.tensor([[0.0], [0.6]], dtype=kernel.dtype)
+        K = kernel(data, data)
+
+        assert K.shape == (2, 2)
+        diag = torch.diag(K)
+        assert torch.allclose(diag, torch.ones_like(diag), atol=1e-6)
+        assert torch.allclose(K, K.T.conj(), atol=1e-6)
+        assert torch.all(K >= 0)
+
 
 class TestKernelCircuitBuilder:
     """Test the KernelCircuitBuilder fluent interface."""

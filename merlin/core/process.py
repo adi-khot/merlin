@@ -24,6 +24,8 @@
 Quantum computation processes and factories.
 """
 
+import warnings
+
 import perceval as pcvl
 import torch
 
@@ -103,6 +105,11 @@ class ComputationProcess(AbstractComputationProcess):
             input_state = self.input_state
 
         keys, amplitudes = self.simulation_graph.compute(unitary, input_state)
+
+        # Save keys and amplitudes
+        self.keys = keys
+        self.amplitudes = amplitudes
+
         return amplitudes
 
     def compute_superposition_state(
@@ -164,7 +171,7 @@ class ComputationProcess(AbstractComputationProcess):
 
         prev_state_index, prev_state = state_list.pop(0)
 
-        _, amplitude = self.simulation_graph.compute(unitary, prev_state)
+        keys, amplitude = self.simulation_graph.compute(unitary, prev_state)
         amplitudes = torch.zeros(
             (self.input_state.shape[-1], len(self.simulation_graph.mapped_keys)),
             dtype=amplitude.dtype,
@@ -185,6 +192,10 @@ class ComputationProcess(AbstractComputationProcess):
 
         final_amplitudes = input_state @ amplitudes
 
+        # Save keys and amplitudes
+        self.keys = keys
+        self.amplitudes = final_amplitudes
+
         return final_amplitudes
 
     def compute_with_keys(self, parameters: list[torch.Tensor]):
@@ -195,7 +206,20 @@ class ComputationProcess(AbstractComputationProcess):
         # Compute output distribution using the input state
         keys, amplitudes = self.simulation_graph.compute(unitary, self.input_state)
 
+        # Save keys and amplitudes
+        self.keys = keys
+        self.amplitudes = amplitudes
+
         return keys, amplitudes
+
+    def get_keys_and_amplitudes(self):
+        if self.keys is None or self.amplitudes is None:
+            warnings.warn(
+                "Keys or amplitudes not yet acquired. Run any computation method beforehand.",
+                stacklevel=2,
+            )
+        else:
+            return self.keys, self.amplitudes
 
 
 class ComputationProcessFactory:

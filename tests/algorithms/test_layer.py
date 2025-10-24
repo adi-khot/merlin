@@ -38,15 +38,6 @@ ANSATZ_SKIP = pytest.mark.skip(
 class TestQuantumLayer:
     """Test suite for QuantumLayer."""
 
-    @staticmethod
-    def _experiment_with_detectors(
-        circuit: pcvl.Circuit, detectors: list[pcvl.Detector]
-    ) -> pcvl.Experiment:
-        experiment = pcvl.Experiment(circuit)
-        for mode, detector in enumerate(detectors):
-            experiment.detectors[mode] = detector
-        return experiment
-
     def test_experiment_unitary_initialization(self):
         """QuantumLayer should accept a unitary experiment."""
 
@@ -102,10 +93,9 @@ class TestQuantumLayer:
 
         circuit = pcvl.Circuit(2)
         circuit.add((0, 1), pcvl.BS())
-        experiment = self._experiment_with_detectors(
-            circuit,
-            [pcvl.Detector.threshold(), pcvl.Detector.threshold()],
-        )
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.threshold()
+        experiment.detectors[1] = pcvl.Detector.threshold()
 
         layer = ML.QuantumLayer(
             input_size=0,
@@ -122,9 +112,8 @@ class TestQuantumLayer:
 
     def test_threshold_detectors_single_mode_two_photons(self):
         circuit = pcvl.Circuit(1)
-        experiment = self._experiment_with_detectors(
-            circuit, [pcvl.Detector.threshold()]
-        )
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.threshold()
 
         layer = ML.QuantumLayer(
             input_size=0,
@@ -143,14 +132,10 @@ class TestQuantumLayer:
 
     def test_threshold_detectors_preserve_binary_outcomes(self):
         circuit = pcvl.Circuit(3)
-        experiment = self._experiment_with_detectors(
-            circuit,
-            [
-                pcvl.Detector.threshold(),
-                pcvl.Detector.threshold(),
-                pcvl.Detector.threshold(),
-            ],
-        )
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.threshold()
+        experiment.detectors[1] = pcvl.Detector.threshold()
+        experiment.detectors[2] = pcvl.Detector.threshold()
 
         layer = ML.QuantumLayer(
             input_size=0,
@@ -181,9 +166,10 @@ class TestQuantumLayer:
             no_bunching=False,
         )
 
-        experiment = self._experiment_with_detectors(
-            circuit, [pcvl.Detector.pnr(), pcvl.Detector.pnr()]
-        )
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.pnr()
+        experiment.detectors[1] = pcvl.Detector.pnr()
+
         detector_layer = ML.QuantumLayer(
             input_size=0,
             experiment=experiment,
@@ -201,10 +187,10 @@ class TestQuantumLayer:
 
     def test_pnr_detectors_multi_photon_identity(self):
         circuit = pcvl.Circuit(3)
-        experiment = self._experiment_with_detectors(
-            circuit,
-            [pcvl.Detector.pnr() for _ in range(3)],
-        )
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.pnr()
+        experiment.detectors[1] = pcvl.Detector.pnr()
+        experiment.detectors[2] = pcvl.Detector.pnr()
 
         layer = ML.QuantumLayer(
             input_size=0,
@@ -221,9 +207,8 @@ class TestQuantumLayer:
 
     def test_interleaved_detectors_single_mode(self):
         circuit = pcvl.Circuit(1)
-        experiment = self._experiment_with_detectors(
-            circuit, [pcvl.Detector.ppnr(n_wires=1)]
-        )
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.ppnr(n_wires=1)
 
         layer = ML.QuantumLayer(
             input_size=0,
@@ -236,16 +221,12 @@ class TestQuantumLayer:
         assert torch.allclose(output.sum(dim=1), torch.ones_like(output[:, 0]))
         assert len(layer.get_output_keys()) >= 1
 
-    def test_interleaved_detectors_multi_mode_probabilities(self):
+    def test_interleaved_detectors_single_mode_with_pnr(self):
         circuit = pcvl.Circuit(2)
         circuit.add((0, 1), pcvl.BS())
-        experiment = self._experiment_with_detectors(
-            circuit,
-            [
-                pcvl.Detector.ppnr(n_wires=1, max_detections=2),
-                pcvl.Detector.pnr(),
-            ],
-        )
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.ppnr(n_wires=1, max_detections=2)
+        experiment.detectors[1] = pcvl.Detector.pnr()
 
         layer = ML.QuantumLayer(
             input_size=0,
@@ -262,17 +243,55 @@ class TestQuantumLayer:
         assert all(value in (0, 1, 2) for key in keys for value in key[:1])
         assert all(value in (0, 1, 2, 3, 4) for key in keys for value in key[1:])
 
+    def test_interleaved_detectors_multi_mode(self):
+        circuit = pcvl.Circuit(4)
+        circuit.add((0, 1), pcvl.BS())
+        circuit.add((1, 2), pcvl.BS())
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.pnr()
+        experiment.detectors[1] = pcvl.Detector.ppnr(n_wires=3, max_detections=2)
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[4, 0, 0, 0],
+            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+            no_bunching=False,
+        )
+        output = layer()
+        assert torch.allclose(output.sum(dim=1), torch.ones_like(output[:, 0]))
+        assert output.shape[-1] == len(layer.get_output_keys())
+        assert torch.all(output >= 0)
+
+        keys = [tuple(key) for key in layer.get_output_keys()]
+        assert keys
+        assert all(len(key) == 4 for key in keys)
+        assert all(0 <= key[0] <= 4 for key in keys)
+        assert all(0 <= key[1] <= 2 for key in keys)
+        assert any(key[0] > 0 for key in keys)
+        assert any(sum(key[1:]) > 0 for key in keys)
+
+    def test_interleaved_detectors_more_wires_than_modes(self):
+        circuit = pcvl.Circuit(2)
+        circuit.add((0, 1), pcvl.BS())
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.ppnr(n_wires=3, max_detections=2)
+        # TODO this does not raise an error, to fix
+
+        ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 0],
+            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+        )
+
     def test_mixed_detectors_identity_distribution(self):
         circuit = pcvl.Circuit(4)
-        experiment = self._experiment_with_detectors(
-            circuit,
-            [
-                pcvl.Detector.pnr(),
-                pcvl.Detector.pnr(),
-                pcvl.Detector.threshold(),
-                pcvl.Detector.threshold(),
-            ],
-        )
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.pnr()
+        experiment.detectors[1] = pcvl.Detector.pnr()
+        experiment.detectors[2] = pcvl.Detector.threshold()
+        experiment.detectors[3] = pcvl.Detector.threshold()
 
         layer = ML.QuantumLayer(
             input_size=0,
@@ -295,15 +314,11 @@ class TestQuantumLayer:
         circuit = pcvl.Circuit(4)
         circuit.add((0, 1), pcvl.BS())
         circuit.add((1, 2), pcvl.BS())
-        experiment = self._experiment_with_detectors(
-            circuit,
-            [
-                pcvl.Detector.pnr(),
-                pcvl.Detector.pnr(),
-                pcvl.Detector.threshold(),
-                pcvl.Detector.threshold(),
-            ],
-        )
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.pnr()
+        experiment.detectors[1] = pcvl.Detector.pnr()
+        experiment.detectors[2] = pcvl.Detector.threshold()
+        experiment.detectors[3] = pcvl.Detector.threshold()
 
         layer = ML.QuantumLayer(
             input_size=0,
@@ -371,6 +386,125 @@ class TestQuantumLayer:
         assert all(value in (0, 1) for key in keys for value in key[:2])
         assert any(key[2] == 2 for key in keys)
 
+    def test_experiment_layer_matches_perceval_pnr(self):
+        circuit = pcvl.Circuit(2)
+        circuit.add((0, 1), pcvl.BS())
+        circuit.add(0, pcvl.PS(torch.pi / 3))
+
+        input_state = [1, 1]
+
+        experiment = pcvl.Experiment(circuit)
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=input_state,
+            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+            no_bunching=False,
+        )
+
+        output = layer().squeeze(0)
+        keys = [tuple(key) for key in layer.get_output_keys()]
+        assert output.shape[0] == len(keys)
+
+        experiment_reference = pcvl.Experiment(circuit)
+        processor = pcvl.Processor("SLOS", experiment_reference)
+        processor.with_input(pcvl.BasicState(input_state))
+
+        raw_results = processor.probs()["results"]
+        probability_map = {
+            tuple(int(v) for v in state): float(prob)
+            for state, prob in raw_results.items()
+        }
+
+        reference = torch.tensor(
+            [probability_map.get(key, 0.0) for key in keys],
+            dtype=output.dtype,
+        )
+
+        assert torch.allclose(output, reference, atol=1e-6)
+
+    def test_experiment_layer_matches_perceval_threshold(self):
+        circuit = pcvl.Circuit(2)
+        circuit.add((0, 1), pcvl.BS())
+        circuit.add(1, pcvl.PS(torch.pi / 4))
+
+        input_state = [1, 1]
+
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.threshold()
+        experiment.detectors[1] = pcvl.Detector.threshold()
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=input_state,
+            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+            no_bunching=False,
+        )
+
+        output = layer().squeeze(0)
+        keys = [tuple(key) for key in layer.get_output_keys()]
+        assert output.shape[0] == len(keys)
+
+        processor = pcvl.Processor("SLOS", experiment)
+        processor.with_input(pcvl.BasicState(input_state))
+        processor.min_detected_photons_filter(1)
+
+        raw_results = processor.probs()["results"]
+        probability_map = {
+            tuple(int(v) for v in state): float(prob)
+            for state, prob in raw_results.items()
+        }
+
+        reference = torch.tensor(
+            [probability_map.get(key, 0.0) for key in keys],
+            dtype=output.dtype,
+        )
+
+        assert torch.allclose(output, reference, atol=1e-6)
+
+    def test_experiment_layer_matches_perceval(self):
+        circuit = pcvl.Circuit(3)
+        circuit.add((0, 1), pcvl.BS())
+        circuit.add(1, pcvl.PS(torch.pi / 4))
+        circuit.add((1, 2), pcvl.BS())
+
+        input_state = [1, 1, 0]
+
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.pnr()
+        experiment.detectors[1] = pcvl.Detector.threshold()
+        experiment.detectors[2] = pcvl.Detector.threshold()
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=input_state,
+            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+            no_bunching=False,
+        )
+
+        output = layer().squeeze(0)
+        keys = [tuple(key) for key in layer.get_output_keys()]
+        assert output.shape[0] == len(keys)
+
+        processor = pcvl.Processor("SLOS", experiment)
+        processor.with_input(pcvl.BasicState(input_state))
+        processor.min_detected_photons_filter(1)
+
+        raw_results = processor.probs()["results"]
+        probability_map = {
+            tuple(int(v) for v in state): float(prob)
+            for state, prob in raw_results.items()
+        }
+
+        reference = torch.tensor(
+            [probability_map.get(key, 0.0) for key in keys],
+            dtype=output.dtype,
+        )
+
+        assert torch.allclose(output, reference, atol=1e-6)
+
     def test_detector_choice_adjusts_output_size(self):
         circuit = pcvl.Circuit(3)
         circuit.add((0, 1), pcvl.BS())
@@ -388,9 +522,11 @@ class TestQuantumLayer:
         pnr_output_size = pnr_layer.output_size
         assert pnr_output_size == len(pnr_layer.get_output_keys())
 
-        experiment = self._experiment_with_detectors(
-            circuit, [pcvl.Detector.threshold() for _ in range(3)]
-        )
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.threshold()
+        experiment.detectors[1] = pcvl.Detector.threshold()
+        experiment.detectors[2] = pcvl.Detector.threshold()
+
         threshold_layer = ML.QuantumLayer(
             input_size=0,
             experiment=experiment,
@@ -402,6 +538,39 @@ class TestQuantumLayer:
         threshold_output_size = threshold_layer.output_size
         assert threshold_output_size == len(threshold_layer.get_output_keys())
         assert threshold_output_size < pnr_output_size
+
+    def test_detector_autograd_compatibility(self):
+        """Detector transforms must preserve autograd support."""
+
+        circuit = pcvl.Circuit(2)
+        circuit.add(0, pcvl.PS(pcvl.P("theta_1")))
+        circuit.add(0, pcvl.BS())
+        circuit.add(0, pcvl.PS(pcvl.P("phi")))
+        circuit.add(0, pcvl.BS())
+        circuit.add(0, pcvl.PS(pcvl.P("theta_2")))
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.threshold()
+        experiment.detectors[1] = pcvl.Detector.threshold()
+
+        layer = ML.QuantumLayer(
+            input_size=1,
+            experiment=experiment,
+            input_state=[1, 0],
+            input_parameters=["phi"],
+            trainable_parameters=["theta"],
+            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+        )
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 1))
+
+        x = torch.linspace(0.0, 0.5, steps=4, requires_grad=True)
+        output = model(x.unsqueeze(1))
+        target = torch.ones_like(output)
+        loss = torch.sum(target - output)
+        loss.backward()
+
+        assert model[1].weight.grad is not None
+        assert x.grad is not None
+        assert not torch.isnan(x.grad).any()
 
     @ANSATZ_SKIP
     def test_ansatz_based_layer_creation(self):
