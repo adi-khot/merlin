@@ -1,15 +1,7 @@
-merlin.utils.grouping package
-=============================
+merlin.utils.grouping module
+============================
 
 .. automodule:: merlin.utils.grouping
    :members:
    :undoc-members:
    :show-inheritance:
-
-Submodules
-----------
-
-.. toctree::
-   :maxdepth: 4
-
-   merlin.utils.grouping.mappers

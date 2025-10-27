@@ -13,7 +13,7 @@ from ..pcvl_pytorch.locirc_to_tensor import CircuitConverter
 from ..pcvl_pytorch.slos_torchscript import (
     build_slos_distribution_computegraph as build_slos_graph,
 )
-from ..utils.torch_utils.dtypes import to_torch_dtype
+from ..utils.dtypes import to_torch_dtype
 
 
 class FeatureMap:

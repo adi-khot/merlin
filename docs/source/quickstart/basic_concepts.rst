@@ -152,7 +152,7 @@ Quantum circuits produce probability distributions or amplitudes (in simulation)
     ML.MeasurementStrategy.AMPLITUDES       # Complex amplitudes (simulation only)
 
 To reduce the dimensionality of the Fock distribution after measurement, compose your layer with a grouping
-:class:`~merlin.utils.grouping.mappers.LexGrouping` or :class:`~merlin.utils.grouping.mappers.ModGrouping`.
+:class:`~merlin.utils.grouping.LexGrouping` or :class:`~merlin.utils.grouping.ModGrouping`.
 
 **Key Concept**: Measurement strategy bridges the gap between quantum measurements and classical outputs. The choice affects both the interpretability and expressivity of your quantum layer.
 

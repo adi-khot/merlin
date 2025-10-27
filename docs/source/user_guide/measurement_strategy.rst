@@ -7,7 +7,7 @@ Measurement Strategy Guide
 Merlin now exposes quantum-to-classical conversion through two orthogonal concepts:
 
 - :class:`~merlin.measurement.strategies.MeasurementStrategy` selects how results are extracted from the quantum simulation or hardware backend.
-- :class:`~merlin.utils.grouping.mappers.LexGrouping` and :class:`~merlin.utils.grouping.mappers.ModGrouping` provide optional post-processing of outputs (see :doc:`./grouping`).
+- :class:`~merlin.utils.grouping.LexGrouping` and :class:`~merlin.utils.grouping.ModGrouping` provide optional post-processing of outputs (see :doc:`./grouping`).
 
 PROBABILITIES
 -----------------------
@@ -36,7 +36,7 @@ Characteristics:
 Extensions:
 
 - Add ``torch.nn.Linear`` or any classical layer after the quantum layer to map the probabilities to logits/regression targets.
-- Combine with :class:`~merlin.utils.grouping.mappers.LexGrouping` or :class:`~merlin.utils.grouping.mappers.ModGrouping` when you need fewer output features and don't want to increase the number of parameters.
+- Combine with :class:`~merlin.utils.grouping.LexGrouping` or :class:`~merlin.utils.grouping.ModGrouping` when you need fewer output features and don't want to increase the number of parameters.
 
 MODE_EXPECTATIONS
 ----------------
@@ -90,8 +90,8 @@ Legacy name → new pipeline:
 
 - ``OutputMappingStrategy.NONE`` → ``MeasurementStrategy.PROBABILITIES``
 - ``OutputMappingStrategy.LINEAR`` → ``MeasurementStrategy.PROBABILITIES`` followed by a torch.nn.Linear layer
-- ``OutputMappingStrategy.LEXGROUPING`` or ``GROUPING`` → ``MeasurementStrategy.PROBABILITIES`` + :class:`~merlin.utils.grouping.mappers.LexGrouping`
-- ``OutputMappingStrategy.MODGROUPING`` → ``MeasurementStrategy.PROBABILITIES`` + :class:`~merlin.utils.grouping.mappers.ModGrouping`
+- ``OutputMappingStrategy.LEXGROUPING`` or ``GROUPING`` → ``MeasurementStrategy.PROBABILITIES`` + :class:`~merlin.utils.grouping.LexGrouping`
+- ``OutputMappingStrategy.MODGROUPING`` → ``MeasurementStrategy.PROBABILITIES`` + :class:`~merlin.utils.grouping.ModGrouping`
 
 Selection Cheat Sheet
 =====================

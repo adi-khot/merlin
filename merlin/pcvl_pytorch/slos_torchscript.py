@@ -434,7 +434,7 @@ class SLOSComputeGraph:
             self.mapping_function = lambda x: x
 
     def compute(
-        self, unitary: torch.Tensor, input_state: list[int] | torch.Tensor
+        self, unitary: torch.Tensor, input_state: list[int]
     ) -> tuple[list[tuple[int, ...]], torch.Tensor]:
         """
         Compute the probability distribution using the pre-built graph.
@@ -443,40 +443,24 @@ class SLOSComputeGraph:
             unitary (torch.Tensor): Single unitary matrix [m x m] or batch of unitaries [b x m x m].\
                 The unitary should be provided in the complex dtype corresponding to the graph's dtype.\
                 For example, for torch.float32, use torch.cfloat; for torch.float64, use torch.cdouble.
-            input_state (list[int] | torch.Tensor): If it is a list, it is of shape [m] representing the Fock state. If it is a tensor
-
+                input_state (list[int]): Input_state of length self.m with self.n_photons in the input state
         Returns:
             Tuple[List[Tuple[int, ...]], torch.Tensor]:
                 - List of tuples representing output Fock state configurations
-                - Probability amplitudes distribution tensor
+                - Amplitudes distribution tensor
         """
         if len(unitary.shape) == 2:
             unitary = unitary.unsqueeze(0)  # Add batch dimension [1 x m x m]
         else:
             pass
-        if type(input_state) is torch.Tensor:
-            if torch.any(input_state < 0) or torch.any(
-                torch.sum(input_state, dim=1) == 0
-            ):
-                raise ValueError("Photon numbers cannot be negative or all zeros")
-            if not torch.allclose(
-                torch.sum(input_state.abs() ** 2, dim=1),
-                torch.ones(
-                    input_state.shape[0],
-                    device=input_state.device,
-                    dtype=input_state.dtype,
-                ),
-            ):
-                raise ValueError(
-                    "Sum of squared norm of amplitude vectors (input_state when its type is torch.Tensor) must equal 1"
-                )
-        elif type(input_state) is list:
-            if any(n < 0 for n in input_state) or sum(input_state) == 0:
-                raise ValueError("Photon numbers cannot be negative or all zeros")
-            if self.no_bunching and not all(x in [0, 1] for x in input_state):
-                raise ValueError(
-                    "Input state must be binary (0s and 1s only) in non-bunching mode"
-                )
+
+        if any(n < 0 for n in input_state) or sum(input_state) == 0:
+            raise ValueError("Photon numbers cannot be negative or all zeros")
+
+        if self.no_bunching and not all(x in [0, 1] for x in input_state):
+            raise ValueError(
+                "Input state must be binary (0s and 1s only) in non-bunching mode"
+            )
 
         batch_size, m, m2 = unitary.shape
         if m != m2 or m != self.m:

@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 
 from merlin import Probabilities, QuantumLayer
-from merlin.utils.grouping.mappers import ModGrouping
+from merlin.utils.grouping import ModGrouping
 
 _PCVL_HOME = Path(__file__).resolve().parents[2] / ".pcvl_home"
 (

@@ -29,5 +29,5 @@ class MeasurementStrategy(Enum):
     """Strategy for measuring quantum states or counts and possibly apply mapping to classical outputs."""
 
     PROBABILITIES = "probabilities"
-    MODE_EXPECTATIONS = "modeexpectations"
+    MODE_EXPECTATIONS = "mode_expectations"
     AMPLITUDES = "amplitudes"

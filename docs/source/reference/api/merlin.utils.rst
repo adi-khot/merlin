@@ -6,11 +6,11 @@ merlin.utils package
    :undoc-members:
    :show-inheritance:
 
-Subpackages
------------
+Modules
+-------
 
 .. toctree::
    :maxdepth: 4
 
    merlin.utils.grouping
-   merlin.utils.torch_utils
+   merlin.utils.torch_codes

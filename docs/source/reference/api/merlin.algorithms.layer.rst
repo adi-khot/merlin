@@ -28,7 +28,7 @@ Example: Quickstart QuantumLayer
 .. note::
    :func:`QuantumLayer.simple` returns a thin ``SimpleSequential`` wrapper that behaves like a standard
    PyTorch module while exposing the inner quantum layer as ``.quantum_layer`` and any
-   post-processing (:class:`~merlin.utils.grouping.mappers.ModGrouping` or :class:`~torch.nn.Identity`) as ``.post_processing``.
+   post-processing (:class:`~merlin.utils.grouping.ModGrouping` or :class:`~torch.nn.Identity`) as ``.post_processing``.
    The wrapper also forwards ``.circuit`` and ``.output_size`` so existing code that inspects these
    attributes continues to work.
 

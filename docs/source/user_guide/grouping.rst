@@ -7,7 +7,7 @@ Grouping Guide
 Merlin now exposes quantum-to-classical conversion through two orthogonal concepts:
 
 - :class:`~merlin.measurement.strategies.MeasurementStrategy` selects how results are extracted from the quantum simulation or hardware backend (see :doc:`./measurement_strategy`).
-- :class:`~merlin.utils.grouping.mappers.LexGrouping` and :class:`~merlin.utils.grouping.mappers.ModGrouping` provide optional post-processing of outputs.
+- :class:`~merlin.utils.grouping.LexGrouping` and :class:`~merlin.utils.grouping.ModGrouping` provide optional post-processing of outputs.
 
 Grouping modules are often used to reshape a torch.tensor into smaller feature sets while preserving differentiability.
 

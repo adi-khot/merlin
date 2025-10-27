@@ -47,8 +47,8 @@ from .measurement.autodiff import AutoDiffProcess
 from .measurement.process import SamplingProcess
 from .measurement.strategies import MeasurementStrategy
 from .pcvl_pytorch import CircuitConverter, build_slos_distribution_computegraph
-from .utils.grouping.mappers import LexGrouping, ModGrouping
-from .utils.torch_utils.torch_codes import FeatureEncoder
+from .utils.grouping import LexGrouping, ModGrouping
+from .utils.torch_codes import FeatureEncoder
 
 # Version and metadata
 __version__ = "0.1.0"

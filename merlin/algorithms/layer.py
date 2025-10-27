@@ -43,7 +43,7 @@ from ..measurement.autodiff import AutoDiffProcess
 from ..measurement.strategies import (
     MeasurementStrategy,
 )
-from ..utils.grouping.mappers import ModGrouping
+from ..utils.grouping import ModGrouping
 
 
 class QuantumLayer(nn.Module):

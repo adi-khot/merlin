@@ -81,8 +81,6 @@ packages = [
     "merlin.measurement",
     "merlin.pcvl_pytorch",
     "merlin.utils",
-    "merlin.utils.grouping",
-    "merlin.utils.torch_utils",
 ]
 
 [tool.pytest.ini_options]
