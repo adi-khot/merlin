@@ -155,12 +155,12 @@ Example
         experiment=experiment,
         input_size=quantum_dim,
         output_size=quantum_dim * 2,
-        measurement_strategy=ML.MeasurementStrategy.AMPLITUDE_VECTOR,
+        measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
     )
     q_layer_pre_pff = ML.QuantumLayer(
         input_size=quantum_dim,
         ansatz=ansatz,
-        measurement_strategy=ML.MeasurementStrategy.AMPLITUDE_VECTOR,
+        measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
     )
 
     # Define pff layer
@@ -177,17 +177,17 @@ Example
         experiment=experiment,
         input_size=0,
         output_size=quantum_dim * 2,
-        measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
     )
     q_layer_post_pff = ML.QuantumLayer(
         input_size=quantum_dim,
         ansatz=ansatz,
-        measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
     )
 
     # Example of a forward pass
     x = torch.rand(quantum_dim)
-    # The AMPLITUDE_VECTOR strategy returns the simulated amplitudes directly
+    # The AMPLITUDES strategy returns the simulated amplitudes directly
     amplitudes = q_layer_pre_pff(x)
     # Going from amplitudes in the space with 16 modes, 4 photons, to 8 modes, 4 photons
     amplitudes = pff(amplitudes)

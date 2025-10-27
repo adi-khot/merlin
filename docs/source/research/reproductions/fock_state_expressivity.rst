@@ -74,7 +74,7 @@ The key role of MerLin in our implementations is to give us access to trainable 
                 input_parameters=["px"],
                 input_state=initial_state,
                 no_bunching=False,
-                measurement_strategy=ml.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+                measurement_strategy=ml.MeasurementStrategy.PROBABILITIES,
             )
    # Assemble with a previously defined scale_layer
    model = nn.Sequential(

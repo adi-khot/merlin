@@ -66,23 +66,21 @@ class OutputMapper:
         Raises:
             ValueError: If strategy is unknown
         """
-        if strategy == MeasurementStrategy.MEASUREMENT_DISTRIBUTION:
-            return MeasurementDistribution()
+        if strategy == MeasurementStrategy.PROBABILITIES:
+            return Probabilities()
         elif strategy == MeasurementStrategy.MODE_EXPECTATIONS:
             if keys is None:
                 raise ValueError(
                     "When using ModeExpectations measurement strategy, keys must be provided."
                 )
             return ModeExpectations(no_bunching, keys)
-        elif strategy == MeasurementStrategy.AMPLITUDE_VECTOR:
-            return AmplitudeVector()
-        elif strategy == MeasurementStrategy.CUSTOM_OBSERVABLE:
-            return CustomObservable()
+        elif strategy == MeasurementStrategy.AMPLITUDES:
+            return Amplitudes()
         else:
             raise ValueError(f"Unknown measurement strategy: {strategy}")
 
 
-class MeasurementDistribution(nn.Module):
+class Probabilities(nn.Module):
     """Maps quantum state amplitudes or probabilities to the complete Fock state probability distribution."""
 
     def __init__(self):
@@ -177,7 +175,7 @@ class ModeExpectations(nn.Module):
             raise ValueError("Input must be 1D or 2D tensor")
 
         # Get probabilities
-        distribution_mapper = MeasurementDistribution()
+        distribution_mapper = Probabilities()
         prob = distribution_mapper(x)
 
         # Handle both 1D and 2D inputs uniformly
@@ -193,7 +191,7 @@ class ModeExpectations(nn.Module):
         return marginalized_probs
 
 
-class AmplitudeVector(nn.Module):
+class Amplitudes(nn.Module):
     """
     Output the Fock state vector (also called amplitudes) directly. This can only be done with a simulator because amplitudes cannot be retrieved
     from the per state probabilities obtained with a QPU.
@@ -219,16 +217,4 @@ class AmplitudeVector(nn.Module):
             )
         if len(original_shape) == 1:
             x = x.squeeze(0)
-        return x
-
-
-class CustomObservable(nn.Module):
-    """TODO: Placeholder for future implementation of custom observable measurement strategy."""
-
-    def __init__(self):
-        # TODO
-        pass
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # TODO
         return x

@@ -153,7 +153,7 @@ Creating Quantum Layers with Factories
         PhotonicBackend=photonicbackend,
         input_size=input_size,
         # output_size not specified - will be calculated automatically unless specified
-        measurement_strategy=MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
     )
 
     # Create quantum layer
@@ -203,7 +203,7 @@ Using Factory-Created Layers in Models
             ansatz = AnsatzFactory.create(
                 PhotonicBackend=photonicbackend,
                 input_size=4,
-                measurement_strategy=MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+                measurement_strategy=MeasurementStrategy.PROBABILITIES,
             )
 
             self.quantum = QuantumLayer(
@@ -285,7 +285,7 @@ Create Quantum Layer from Circuit
         trainable_parameters=["theta"],                            # Parameters to train
         input_parameters=["px"],                                   # Input encoding parameters
         input_state=[1, 0, 1, 0, 1, 0],                           # Initial photon state
-        measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
     )
 
     # Optional: reshape the Fock distribution to 3 features
@@ -312,7 +312,7 @@ Understanding Parameters
         input_parameters=["px"],                                   # Input encoding parameters
         input_state=[1, 0] * (m // 2) + [0] * (m % 2),           # Initial photon distribution
         no_bunching=False,                                         # Allow photon bunching
-        measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
     )
 
 **Parameter Explanation**:
@@ -350,7 +350,7 @@ Complete Hybrid Network Example
                 trainable_parameters=["theta"],
                 input_parameters=["px"],
                 input_state=[1, 0] * (n_modes // 2) + [0] * (n_modes % 2),
-                measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+                measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
             )
             self.quantum = nn.Sequential(
                 quantum_core,

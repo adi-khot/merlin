@@ -8,7 +8,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from merlin import MeasurementDistribution, QuantumLayer
+from merlin import Probabilities, QuantumLayer
 from merlin.utils.grouping.mappers import ModGrouping
 
 _PCVL_HOME = Path(__file__).resolve().parents[2] / ".pcvl_home"
@@ -105,7 +105,7 @@ def test_linear_strategy_creates_linear_mapping(quantum_layer_api):
     model = nn.Sequential(layer, nn.Linear(layer.output_size, 5))
 
     base = _unwrap(layer)
-    assert isinstance(base.measurement_mapping, MeasurementDistribution)
+    assert isinstance(base.measurement_mapping, Probabilities)
     x = torch.rand(6, 3)
     output = model(x)
     assert output.shape == (6, 5)

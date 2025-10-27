@@ -31,7 +31,7 @@ from merlin.measurement.strategies import MeasurementStrategy
 
 class TestQuantumLayerMeasurementStrategy:
     def test_measurement_distribution(self):
-        # MeasurementDistribution is equivalent to OutputMappingStrategy.NONE
+        # Probabilities is equivalent to OutputMappingStrategy.NONE
         builder = ML.CircuitBuilder(n_modes=3)
         builder.add_entangling_layer(trainable=True, name="U1")
         builder.add_angle_encoding(modes=[0, 1], name="input")
@@ -41,7 +41,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=1,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
         x = torch.rand(2, 2, requires_grad=True)
         output = layer(x)
@@ -59,7 +59,7 @@ class TestQuantumLayerMeasurementStrategy:
         output.sum().backward()
         assert x.grad is not None
 
-        # Ensure that QuantumLayer with MeasurementDistribution strategy can be initialized without specifying output_size and that its output_size is accessible
+        # Ensure that QuantumLayer with Probabilities strategy can be initialized without specifying output_size and that its output_size is accessible
         builder = ML.CircuitBuilder(n_modes=3)
         builder.add_entangling_layer(trainable=True, name="U1")
         builder.add_angle_encoding(modes=[0, 1], name="input")
@@ -69,7 +69,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=1,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
         x = torch.rand(2, 2, requires_grad=True)
         output = layer(x)
@@ -86,7 +86,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_state=input_state,
             trainable_parameters=[],
             input_parameters=["px"],
-            measurement_strategy=MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.PROBABILITIES,
             no_bunching=True,
         )
         x = torch.rand(2, 2, requires_grad=True)
@@ -107,11 +107,11 @@ class TestQuantumLayerMeasurementStrategy:
                 output_size=20,
                 n_photons=1,
                 builder=builder,
-                measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+                measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
             )
 
     def test_linear_equivalent(self):
-        # OutputMappingStrategy.LINEAR is equivalent to MeasurementDistribution + torch.nn.Linear
+        # OutputMappingStrategy.LINEAR is equivalent to Probabilities + torch.nn.Linear
         builder = ML.CircuitBuilder(n_modes=3)
         builder.add_entangling_layer(trainable=True, name="U1")
         builder.add_angle_encoding(modes=[0, 1], name="input")
@@ -121,7 +121,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=1,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
         linear = torch.nn.Linear(layer.output_size, 2)
         x = torch.rand(5, 2, requires_grad=True)
@@ -148,7 +148,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_state=input_state,
             trainable_parameters=[],
             input_parameters=["px"],
-            measurement_strategy=MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.PROBABILITIES,
             no_bunching=True,
         )
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 2))
@@ -272,7 +272,7 @@ class TestQuantumLayerMeasurementStrategy:
         assert x.grad is not None
 
     def test_amplitude_vector(self):
-        # AmplitudeVector is equivalent to return_amplitudes=True
+        # Amplitudes is equivalent to return_amplitudes=True
         builder = ML.CircuitBuilder(n_modes=3)
         builder.add_entangling_layer(trainable=True, name="U1")
         builder.add_angle_encoding(modes=[0, 1], name="input")
@@ -282,7 +282,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=1,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.AMPLITUDE_VECTOR,
+            measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
         )
         x = torch.rand(2, 2, requires_grad=True)
         output = layer(x)
@@ -310,7 +310,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_size=2,
             n_photons=1,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.AMPLITUDE_VECTOR,
+            measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
         )
         x = torch.rand(2, 2, requires_grad=True)
         output = layer(x)
@@ -330,7 +330,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_state=input_state,
             trainable_parameters=[],
             input_parameters=["px"],
-            measurement_strategy=MeasurementStrategy.AMPLITUDE_VECTOR,
+            measurement_strategy=MeasurementStrategy.AMPLITUDES,
             no_bunching=True,
         )
         x = torch.rand(2, 2, requires_grad=True)

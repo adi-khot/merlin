@@ -23,21 +23,16 @@
 """Sampling and autodiff utilities."""
 
 from .autodiff import AutoDiffProcess
-from .mappers import (
-    AmplitudeVector,
-    MeasurementDistribution,
-    ModeExpectations,
-    OutputMapper,
-)
+from .mappers import Amplitudes, ModeExpectations, OutputMapper, Probabilities
 from .process import SamplingProcess
 from .strategies import MeasurementStrategy
 
 __all__ = [
     "MeasurementStrategy",
     "OutputMapper",
-    "MeasurementDistribution",
+    "Probabilities",
     "ModeExpectations",
-    "AmplitudeVector",
+    "Amplitudes",
     "SamplingProcess",
     "AutoDiffProcess",
 ]

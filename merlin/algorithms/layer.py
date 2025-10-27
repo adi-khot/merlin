@@ -97,7 +97,7 @@ class QuantumLayer(nn.Module):
         trainable_parameters: list[str] | None = None,
         input_parameters: list[str] | None = None,
         # Common parameters
-        measurement_strategy: MeasurementStrategy = MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+        measurement_strategy: MeasurementStrategy = MeasurementStrategy.PROBABILITIES,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         shots: int = 0,
@@ -300,7 +300,7 @@ class QuantumLayer(nn.Module):
         dist_size = distribution.shape[-1]
 
         # Determine output size
-        if measurement_strategy == MeasurementStrategy.MEASUREMENT_DISTRIBUTION:
+        if measurement_strategy == MeasurementStrategy.PROBABILITIES:
             self._output_size = dist_size
         elif measurement_strategy == MeasurementStrategy.MODE_EXPECTATIONS:
             if type(self.circuit) is pcvl.Circuit:
@@ -309,7 +309,7 @@ class QuantumLayer(nn.Module):
                 self._output_size = self.circuit.n_modes
             else:
                 raise TypeError(f"Unknown circuit type: {type(self.circuit)}")
-        elif measurement_strategy == MeasurementStrategy.AMPLITUDE_VECTOR:
+        elif measurement_strategy == MeasurementStrategy.AMPLITUDES:
             self._output_size = dist_size
         else:
             raise TypeError(f"Unknown measurement_strategy: {measurement_strategy}")
@@ -719,7 +719,7 @@ class QuantumLayer(nn.Module):
             input_size=input_size,
             builder=builder,
             n_photons=n_photons,
-            measurement_strategy=MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+            measurement_strategy=MeasurementStrategy.PROBABILITIES,
             shots=shots,
             no_bunching=no_bunching,
             device=device,

@@ -61,7 +61,7 @@ def define_layer_no_input(n_modes, n_photons, circuit_type=None):
         circuit=circuit,
         n_photons=n_photons,
         input_state=input_state,  # Random Initial quantum state used only for initialization
-        measurement_strategy=MeasurementStrategy.AMPLITUDE_VECTOR,
+        measurement_strategy=MeasurementStrategy.AMPLITUDES,
         trainable_parameters=["phi"],
         no_bunching=True,
     )
@@ -88,7 +88,7 @@ def define_layer_with_input(M, N, input_size, circuit_type=None):
         circuit=circuit,
         n_photons=N,
         input_state=input_state,  # Random Initial quantum state used only for initialization
-        measurement_strategy=MeasurementStrategy.AMPLITUDE_VECTOR,
+        measurement_strategy=MeasurementStrategy.AMPLITUDES,
         input_parameters=["pl"],  # Optional: Specify device
         trainable_parameters=["phi"],
         no_bunching=True,

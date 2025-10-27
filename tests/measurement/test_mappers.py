@@ -32,29 +32,27 @@ class TestOutputMapper:
     def test_linear_mapping_creation(self):
         """Test creation of linear output mapping."""
         fock_distribution = ML.OutputMapper.create_mapping(
-            ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION
+            ML.MeasurementStrategy.PROBABILITIES
         )
         mapping = torch.nn.Sequential(fock_distribution, nn.Linear(6, 3))
-        assert isinstance(mapping[0], ML.MeasurementDistribution)
+        assert isinstance(mapping[0], ML.Probabilities)
         assert isinstance(mapping[-1], nn.Linear)
         assert mapping[-1].in_features == 6
         assert mapping[-1].out_features == 3
 
     def test_fock_distribution_mapping_creation(self):
         fock_distribution = ML.OutputMapper.create_mapping(
-            ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION
+            ML.MeasurementStrategy.PROBABILITIES
         )
-        assert isinstance(fock_distribution, ML.MeasurementDistribution)
+        assert isinstance(fock_distribution, ML.Probabilities)
 
     def test_state_vector_mapping_creation_valid(self):
         """Test creation of state vector mapping with matching sizes."""
-        mapping = ML.OutputMapper.create_mapping(
-            ML.MeasurementStrategy.AMPLITUDE_VECTOR
-        )
+        mapping = ML.OutputMapper.create_mapping(ML.MeasurementStrategy.AMPLITUDES)
         batch_size = 4
         input_amps = torch.rand(batch_size, 5)
         output_amps = mapping(input_amps)
-        assert isinstance(mapping, ML.AmplitudeVector)
+        assert isinstance(mapping, ML.Amplitudes)
         assert torch.allclose(input_amps, output_amps, atol=1e-6)
 
     def test_invalid_strategy(self):
@@ -90,7 +88,7 @@ class TestOutputMappingIntegration:
             input_size=2,
             n_photons=2,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
 
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
@@ -105,9 +103,9 @@ class TestOutputMappingIntegration:
         """Test gradient flow through different mapping strategies."""
 
         strategies = [
-            ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+            ML.MeasurementStrategy.PROBABILITIES,
             ML.MeasurementStrategy.MODE_EXPECTATIONS,
-            ML.MeasurementStrategy.AMPLITUDE_VECTOR,
+            ML.MeasurementStrategy.AMPLITUDES,
         ]
 
         builder = ML.CircuitBuilder(n_modes=6)
@@ -164,7 +162,7 @@ class TestOutputMappingIntegration:
             input_size=2,
             n_photons=2,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
         output_linear = model(x)
@@ -182,7 +180,7 @@ class TestOutputMappingIntegration:
                 input_size=2,
                 n_photons=2,
                 builder=builder,
-                measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+                measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
                 dtype=dtype,
             )
             model = torch.nn.Sequential(
@@ -207,7 +205,7 @@ class TestOutputMappingIntegration:
             input_size=1,
             n_photons=1,
             builder=builder,
-            measurement_strategy=ML.MeasurementStrategy.MEASUREMENT_DISTRIBUTION,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 1))
 
@@ -218,12 +216,12 @@ class TestOutputMappingIntegration:
         assert torch.all(torch.isfinite(output))
 
 
-class TestMeasurementDistributionMapping:
-    """Unit tests for MeasurementDistribution mapper."""
+class TestProbabilitiesMapping:
+    """Unit tests for Probabilities mapper."""
 
     def test_amplitudes_are_squared(self):
         """Amplitude inputs should be converted to probabilities."""
-        mapper = ML.MeasurementDistribution()
+        mapper = ML.Probabilities()
         amplitude = torch.tensor(
             [1 / math.sqrt(2) + 0j, 1j / math.sqrt(2)], dtype=torch.complex64
         )
@@ -235,7 +233,7 @@ class TestMeasurementDistributionMapping:
 
     def test_probabilities_are_preserved(self):
         """Already probabilistic inputs should be left untouched."""
-        mapper = ML.MeasurementDistribution()
+        mapper = ML.Probabilities()
         probabilities = torch.tensor([[0.2, 0.8], [0.3, 0.7]], dtype=torch.float32)
 
         prob = mapper(probabilities)
