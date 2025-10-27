@@ -25,6 +25,7 @@ import pandas as pd
 
 from merlin.datasets import DatasetMetadata
 
+from .mnist_digits import get_data_generic
 from .utils import fetch
 
 FASHION_MNIST_METADATA = {
@@ -50,7 +51,7 @@ FASHION_MNIST_METADATA = {
     "task_type": ["classification"],
     "num_classes": 10,
     "characteristics": ["image"],
-    "homepage": "https://huggingface.co/datasets/vincent-espitalier/Fashion-MNIST-CSV",
+    "homepage": "https://github.com/zalandoresearch/fashion-mnist",
     "license": "MIT",
     "citation": """@online{fashionmnist2017,
         author       = {Zalando Research},
@@ -64,12 +65,27 @@ FASHION_MNIST_METADATA = {
 }
 
 
+def get_data_train_original():
+    return get_data_generic(
+        subset="train",
+        url_images="https://github.com/zalandoresearch/fashion-mnist/raw/refs/heads/master/data/fashion/train-images-idx3-ubyte.gz",
+        url_labels="https://github.com/zalandoresearch/fashion-mnist/raw/refs/heads/master/data/fashion/train-labels-idx1-ubyte.gz",
+    )
+
+
+def get_data_test_original():
+    return get_data_generic(
+        subset="test",
+        url_images="https://github.com/zalandoresearch/fashion-mnist/raw/refs/heads/master/data/fashion/t10k-images-idx3-ubyte.gz",
+        url_labels="https://github.com/zalandoresearch/fashion-mnist/raw/refs/heads/master/data/fashion/t10k-labels-idx1-ubyte.gz",
+    )
+
+
 def get_data_train_huggingface():
     train = fetch(
         "https://huggingface.co/datasets/vincent-espitalier/Fashion-MNIST-CSV/resolve/main/fashion-mnist_train.csv"
     )
     df_train = pd.read_csv(train)
-
     X = (
         df_train[[col for col in df_train.columns if col.startswith("pixel")]]
         .values.astype(np.float32)
@@ -87,7 +103,6 @@ def get_data_test_huggingface():
         "https://huggingface.co/datasets/vincent-espitalier/Fashion-MNIST-CSV/resolve/main/fashion-mnist_test.csv"
     )
     df_val = pd.read_csv(val)
-
     X = (
         df_val[[col for col in df_val.columns if col.startswith("pixel")]]
         .values.astype(np.float32)
@@ -101,6 +116,8 @@ def get_data_test_huggingface():
 
 
 __all__ = [
+    "get_data_train_original",
+    "get_data_test_original",
     "get_data_train_huggingface",
     "get_data_test_huggingface",
 ]

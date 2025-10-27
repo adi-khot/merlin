@@ -139,32 +139,30 @@ def read_mnist_labels(filepath: Path) -> np.ndarray:
     return data
 
 
-def get_data_train_original():
-    train_images_path = fetch(
-        "https://storage.googleapis.com/cvdf-datasets/mnist/train-images-idx3-ubyte.gz"
-    )
-    train_labels_path = fetch(
-        "https://storage.googleapis.com/cvdf-datasets/mnist/train-labels-idx1-ubyte.gz"
-    )
+def get_data_generic(subset, url_images, url_labels):
+    train_images_path = fetch(url_images)
+    train_labels_path = fetch(url_labels)
     X = read_mnist_images(train_images_path)
     y = read_mnist_labels(train_labels_path)
     MNIST_METADATA["num_instances"] = len(X)
-    MNIST_METADATA["subset"] = "train"
+    MNIST_METADATA["subset"] = subset
     return X, y, DatasetMetadata.from_dict(MNIST_METADATA)
+
+
+def get_data_train_original():
+    return get_data_generic(
+        subset="train",
+        url_images="https://storage.googleapis.com/cvdf-datasets/mnist/train-images-idx3-ubyte.gz",
+        url_labels="https://storage.googleapis.com/cvdf-datasets/mnist/train-labels-idx1-ubyte.gz",
+    )
 
 
 def get_data_test_original():
-    train_images_path = fetch(
-        "https://storage.googleapis.com/cvdf-datasets/mnist/t10k-images-idx3-ubyte.gz"
+    return get_data_generic(
+        subset="test",
+        url_images="https://storage.googleapis.com/cvdf-datasets/mnist/t10k-images-idx3-ubyte.gz",
+        url_labels="https://storage.googleapis.com/cvdf-datasets/mnist/t10k-labels-idx1-ubyte.gz",
     )
-    train_labels_path = fetch(
-        "https://storage.googleapis.com/cvdf-datasets/mnist/t10k-labels-idx1-ubyte.gz"
-    )
-    X = read_mnist_images(train_images_path)
-    y = read_mnist_labels(train_labels_path)
-    MNIST_METADATA["num_instances"] = len(X)
-    MNIST_METADATA["subset"] = "test"
-    return X, y, DatasetMetadata.from_dict(MNIST_METADATA)
 
 
 def get_data_train_percevalquest():

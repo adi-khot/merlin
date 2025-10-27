@@ -25,6 +25,7 @@ import pandas as pd
 
 from merlin.datasets import DatasetMetadata
 
+from .mnist_digits import get_data_generic
 from .utils import fetch
 
 K_MNIST_METADATA = {
@@ -50,7 +51,7 @@ K_MNIST_METADATA = {
     "task_type": ["classification"],
     "num_classes": 10,
     "characteristics": ["image", "handwritten"],
-    "homepage": "https://huggingface.co/datasets/vincent-espitalier/K-MNIST-CSV",
+    "homepage": "https://github.com/rois-codh/kmnist",
     "license": "Creative Commons Attribution-Share Alike 4.0",
     "citation": """@online{clanuwat2018deep,
         author       = {Tarin Clanuwat and Mikel Bober-Irizar and Asanobu Kitamoto and Alex Lamb and Kazuaki Yamamoto and David Ha},
@@ -73,12 +74,27 @@ K_MNIST_METADATA = {
 }
 
 
+def get_data_train_original():
+    return get_data_generic(
+        subset="train",
+        url_images="http://codh.rois.ac.jp/kmnist/dataset/kmnist/train-images-idx3-ubyte.gz",
+        url_labels="http://codh.rois.ac.jp/kmnist/dataset/kmnist/train-labels-idx1-ubyte.gz",
+    )
+
+
+def get_data_test_original():
+    return get_data_generic(
+        subset="test",
+        url_images="http://codh.rois.ac.jp/kmnist/dataset/kmnist/t10k-images-idx3-ubyte.gz",
+        url_labels="http://codh.rois.ac.jp/kmnist/dataset/kmnist/t10k-labels-idx1-ubyte.gz",
+    )
+
+
 def get_data_train_huggingface():
     train = fetch(
         "https://huggingface.co/datasets/vincent-espitalier/K-MNIST-CSV/resolve/main/kmnist_train.csv"
     )
     df_train = pd.read_csv(train)
-
     X = (
         df_train[[col for col in df_train.columns if col.startswith("pixel")]]
         .values.astype(np.float32)
@@ -96,7 +112,6 @@ def get_data_test_huggingface():
         "https://huggingface.co/datasets/vincent-espitalier/K-MNIST-CSV/resolve/main/kmnist_test.csv"
     )
     df_val = pd.read_csv(val)
-
     X = (
         df_val[[col for col in df_val.columns if col.startswith("pixel")]]
         .values.astype(np.float32)
@@ -110,6 +125,8 @@ def get_data_test_huggingface():
 
 
 __all__ = [
+    "get_data_train_original",
+    "get_data_test_original",
     "get_data_train_huggingface",
     "get_data_test_huggingface",
 ]
