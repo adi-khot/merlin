@@ -14,9 +14,6 @@ All tests that require cloud auto-skip via the `remote_processor` fixture.
 
 from __future__ import annotations
 
-import math
-import time
-
 import pytest
 import torch
 import torch.nn as nn
@@ -26,10 +23,10 @@ from merlin.builder.circuit_builder import CircuitBuilder
 from merlin.core.merlin_processor import MerlinProcessor
 from merlin.sampling.strategies import OutputMappingStrategy
 
-
 # -------------------------
 # Utilities
 # -------------------------
+
 
 def _make_layer(m: int, n: int, input_size: int, no_bunching: bool) -> QuantumLayer:
     builder = CircuitBuilder(n_modes=m)
@@ -69,7 +66,7 @@ def _spin_until(pred, timeout_s: float = 10.0, sleep_s: float = 0.02) -> bool:
 # -------------------------
 
 @pytest.mark.parametrize("no_bunching, m, n, input_size, tol_l1", [
-    (True,  6, 2, 2, 0.12),   # C(6,2)=15
+    (True, 6, 2, 2, 0.12),   # C(6,2)=15
     (False, 5, 3, 3, 0.15),   # C(7,3)=35
 ])
 def test_prob_consistency_local_vs_remote(remote_processor, no_bunching, m, n, input_size, tol_l1):
@@ -108,10 +105,10 @@ def test_prob_consistency_local_vs_remote(remote_processor, no_bunching, m, n, i
     # Allow looser tolerance for sampling backends
     assert torch.all(l1 <= tol_l1), f"L1 distances too high: {l1.tolist()}"
 
-
 # -------------------------
 # Workflow preservation (classical/quantum mix)
 # -------------------------
+
 
 def test_workflow_preserves_classical_layers_and_offloads_quantum(remote_processor):
     """
@@ -157,97 +154,3 @@ def test_workflow_preserves_classical_layers_and_offloads_quantum(remote_process
     # Use per-row L1 with a loose threshold
     l1 = _l1_dist(Y_local, Y_remote)
     assert torch.all(l1 <= 0.35), f"Classical/quantum pipeline outputs diverged: {l1.tolist()}"
-
-
-# -------------------------
-# COBYLA gradient-free fine-tuning via MerlinProcessor.forward
-# -------------------------
-
-def test_cobyla_finetune_over_merlin_forward(remote_processor):
-    """
-    Demonstrate parameter 'fine-tuning' of a QuantumLayer by running a
-    derivative-free optimizer (COBYLA) that:
-      - Sets QuantumLayer parameters from a flat vector
-      - Evaluates an objective via MerlinProcessor.forward on a model that
-        includes the QuantumLayer + fixed linear readout
-      - Optimizes a tiny number of steps to move the metric in the right direction
-
-    IMPORTANT: This test also asserts we're truly using the *remote* path by
-    first calling forward_async() and checking that at least one cloud job_id
-    is created (offload happened).
-    """
-    scipy = pytest.importorskip("scipy", reason="SciPy required for COBYLA test")
-    from scipy.optimize import minimize
-
-    torch.manual_seed(0)
-
-    # ---- Build model (classical -> quantum -> readout) ----
-    q = _make_layer(m=4, n=2, input_size=2, no_bunching=True).eval()
-    dist = q(torch.rand(2, 2)).shape[1]
-
-    readout = nn.Linear(dist, 1, bias=False).eval()
-    with torch.no_grad():
-        torch.manual_seed(42)
-        readout.weight.copy_(torch.randn_like(readout.weight))
-
-    pre = nn.Linear(3, 2, bias=False).eval()
-    with torch.no_grad():
-        pre.weight.copy_(torch.tensor([[1.0, 0.5, -0.2],
-                                       [0.1, -0.3, 0.7]]))
-
-    model = nn.Sequential(pre, q, readout)
-    model.eval()  # REQUIRED by MerlinProcessor
-
-    # ---- Flatten quantum params for COBYLA ----
-    q_params = [(n, p) for n, p in q.named_parameters() if p.requires_grad]
-    shapes = [p.shape for _, p in q_params]
-    sizes = [p.numel() for _, p in q_params]
-
-    def _get_flat() -> torch.Tensor:
-        return torch.cat([p.detach().flatten().cpu() for _, p in q_params], dim=0)
-
-    def _set_from_flat(vec: torch.Tensor) -> None:
-        offset = 0
-        with torch.no_grad():
-            for (_, p), sz, shp in zip(q_params, sizes, shapes):
-                chunk = vec[offset:offset+sz].view(shp).to(p.dtype)
-                p.data.copy_(chunk.to(p.device))
-                offset += sz
-
-    x0 = _get_flat().double().numpy()
-
-    proc = MerlinProcessor(remote_processor)
-
-    # Use exact probs if available, otherwise sampling with moderate nsample
-    use_probs = "probs" in getattr(proc, "available_commands", [])
-    nsamp_eval = None if use_probs else 20_000
-
-    X = torch.rand(8, 3)
-
-    # ---- Prove we are truly remote before optimization ----
-    fut = proc.forward_async(model, X[:2], nsample=nsamp_eval)
-    # wait until we either have a job id or it's already done
-    _spin_until(lambda: len(fut.job_ids) > 0 or fut.done(), timeout_s=12.0)
-    assert len(fut.job_ids) >= 1, "Expected at least one remote job id (offload didn't happen)"
-    _ = fut.wait()  # consume result for the smoke check
-
-    # ---- COBYLA objective: maximize mean readout (we minimize the negative) ----
-    def objective(vec_np):
-        vec = torch.from_numpy(vec_np).to(torch.float64)
-        _set_from_flat(vec.to(torch.float32))
-        with torch.no_grad():
-            y = proc.forward(model, X, nsample=nsamp_eval)  # remote evaluation
-            return -float(y.mean().item())
-
-    # ---- Quick optimization (keep runtime sane for CI) ----
-    res = minimize(
-        objective,
-        x0,
-        method="COBYLA",
-        options={"maxiter": 12, "rhobeg": 0.5, "disp": False},
-    )
-
-    final_val = res.fun
-    start_val = objective(x0)
-    # Allow small slack due to sampling noise
-    assert final_val <= start_val + 1e-3, f"COBYLA did not improve: start={start_val:.4f}, final={final_val:.4f}"

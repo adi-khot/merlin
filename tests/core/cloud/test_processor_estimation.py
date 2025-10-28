@@ -10,9 +10,7 @@ Focus:
 
 from __future__ import annotations
 
-import pytest
 import torch
-import torch.nn as nn
 
 from merlin.algorithms import QuantumLayer
 from merlin.builder.circuit_builder import CircuitBuilder
@@ -63,7 +61,7 @@ class TestShotEstimation:
 
         # Asking for more desired samples should not reduce the shot estimate
         assert len(est_lo) == len(est_hi) == 4
-        for a, b in zip(est_lo, est_hi):
+        for a, b in zip(est_lo, est_hi, strict=False):
             assert b >= a  # monotonic non-decreasing
 
     def test_no_jobs_created(self, remote_processor):
@@ -75,4 +73,3 @@ class TestShotEstimation:
 
         after = len(proc.get_job_history())
         assert after == before, "Estimation must not submit any remote jobs"
-

@@ -9,7 +9,7 @@ import warnings
 from collections.abc import Iterable
 from contextlib import suppress
 from math import comb
-from typing import Any, Optional
+from typing import Any  # <- Optional removed
 
 import numpy as np
 import perceval as pcvl
@@ -145,7 +145,7 @@ class MerlinProcessor:
 
         # Determine deadline
         effective_timeout = self.default_timeout if timeout is None else timeout
-        deadline: Optional[float] = (
+        deadline: float | None = (
             None if effective_timeout in (None, 0) else time.time() + float(effective_timeout)
         )
 
@@ -235,7 +235,7 @@ class MerlinProcessor:
         input_tensor: torch.Tensor,
         nsample: int | None,
         state: dict,
-        deadline: Optional[float],
+        deadline: float | None,
     ) -> torch.Tensor:
         """
         Split the batch into chunks of size <= max_batch_size,
@@ -275,7 +275,7 @@ class MerlinProcessor:
             start = end
 
         state["chunks_total"] += len(chunks)
-        outputs: list[Optional[torch.Tensor]] = [None] * len(chunks)
+        outputs: list[torch.Tensor | None] = [None] * len(chunks)
 
         errors: list[BaseException] = []
 
@@ -329,7 +329,7 @@ class MerlinProcessor:
         input_chunk: torch.Tensor,
         nsample: int | None,
         state: dict,
-        deadline: Optional[float],
+        deadline: float | None,
     ) -> torch.Tensor:
         """Non-chunking simple path via a temporary child processor cache."""
         cache = self._layer_cache.get(id(layer))
@@ -361,7 +361,7 @@ class MerlinProcessor:
         input_chunk: torch.Tensor,
         nsample: int | None,
         state: dict,
-        deadline: Optional[float],
+        deadline: float | None,
     ) -> torch.Tensor:
         """Submit a single chunk job for the given layer and return mapped tensor."""
         from concurrent.futures import CancelledError  # used for cancellation mapping
@@ -387,7 +387,8 @@ class MerlinProcessor:
             circuit_params = {}
             for j, param_name in enumerate(input_param_names):
                 if j < input_chunk.shape[1]:
-                    circuit_params[param_name] = float(input_np[i, j] )
+                    # <<< keep inputs in [0,1] and convert to radians by × π >>>
+                    circuit_params[param_name] = float(input_np[i, j] * np.pi)
                 else:
                     circuit_params[param_name] = 0.0
             sampler.add_iteration(circuit_params=circuit_params)
@@ -442,7 +443,7 @@ class MerlinProcessor:
 
             if getattr(job, "is_failed", False):
                 msg = state["current_status"].get("message")
-                # >>> CHANGE: map Perceval cancel to CancelledError <<<
+                # Map Perceval "Cancel requested" to CancelledError
                 if msg and "Cancel requested" in str(msg):
                     with self._lock:
                         self._active_jobs.discard(job)
@@ -651,13 +652,13 @@ class MerlinProcessor:
         generate_states([0] * n_modes, n_photons, 0)
         return sorted(valid_states)
 
-        # merlin/core/merlin_processor.py  (inside class MerlinProcessor)
+    # ---- Shot estimation (no remote jobs submitted) ----
 
     def estimate_required_shots_per_input(
-            self,
-            layer: nn.Module,
-            input: torch.Tensor,
-            desired_samples_per_input: int,
+        self,
+        layer: nn.Module,
+        input: torch.Tensor,
+        desired_samples_per_input: int,
     ) -> list[int]:
         """
         Estimate required shots per input row for a QuantumLayer using the
@@ -690,7 +691,9 @@ class MerlinProcessor:
             child_rp.with_input(input_state)
             n_photons = sum(config["input_state"])
             # The estimator accounts for min_detected_photons via the processor setting
-            child_rp.min_detected_photons_filter(n_photons if getattr(layer, "no_bunching", False) else 1)
+            child_rp.min_detected_photons_filter(
+                n_photons if getattr(layer, "no_bunching", False) else 1
+            )
 
         # Build param name list as Merlin does for execution
         input_param_names = self._extract_input_params(config)
@@ -709,6 +712,8 @@ class MerlinProcessor:
             estimates.append(int(est) if est is not None else 0)
 
         return estimates
+
+    # ---- Misc ----
 
     def _parse_perceval_state(self, state_str: Any) -> tuple:
         if isinstance(state_str, str):
