@@ -48,22 +48,18 @@ Each group of gᵢ qubits is encoded as one photon distributed across 2^gᵢ mod
 Parameters
 ~~~~~~~~~~
 
-.. py:class:: QuantumBridge(*, qubit_groups, merlin_layer, device=None, dtype=torch.float32, pl_module=None, pl_state_fn=None, wires_order='little', normalize=True)
+.. py:class:: QuantumBridge(*, qubit_groups, n_modes, n_photons, device=None, dtype=torch.float32, wires_order='little', normalize=True)
 
    :param list[int] qubit_groups: List specifying the size of each qubit group. 
                                    For example, [2, 2] splits 4 qubits into two groups of 2.
    
-   :param QuantumLayer merlin_layer: Pre-configured Merlin QuantumLayer for photonic processing.
-                                     Must have m = Σ 2^group_size modes and n_photons = len(qubit_groups).
+   :param int n_modes: Total number of photonic modes (must equal Σ 2^group_size).
+   
+   :param int n_photons: Number of photons in the photonic layer (must equal len(qubit_groups)).
    
    :param torch.device device: Target device for computation (default: None, infers from input).
    
    :param torch.dtype dtype: Data type for real-valued tensors (default: torch.float32).
-   
-   :param nn.Module pl_module: PennyLane QNode wrapped as an nn.Module (mutually exclusive with pl_state_fn).
-   
-   :param Callable pl_state_fn: Function that takes input tensor and returns complex statevector 
-                                 (mutually exclusive with pl_module).
    
    :param str wires_order: Qubit ordering convention - 'little' (LSB first) or 'big' (MSB first) (default: 'little').
    
@@ -107,26 +103,32 @@ through the photonic layer:
        no_bunching=True,
    )
 
-   # Define a PennyLane state function (returns |00⟩ state)
-   def pl_state_fn(x):
-       psi = torch.zeros(4, dtype=torch.complex64)
-       psi[0] = 1.0 + 0.0j  # |00⟩ state
-       return psi
-
    # Create the bridge
    bridge = QuantumBridge(
        qubit_groups=[1, 1],  # Two 1-qubit groups
-       merlin_layer=merlin_layer,
-       pl_state_fn=pl_state_fn,
+       n_modes=4,
+       n_photons=2,
        wires_order='little',
        normalize=True,
    )
 
-   # Forward pass
+   # PennyLane-like state preparation module
+   class StatePrep(torch.nn.Module):
+       def forward(self, _x):
+           psi = torch.zeros(4, dtype=torch.complex64)
+           psi[0] = 1.0 + 0.0j  # |00⟩ state
+           return psi
+
+   state_prep = StatePrep()
+   model = torch.nn.Sequential(state_prep, bridge, merlin_layer)
+
    dummy_input = torch.zeros(1, 1)
-   output = bridge(dummy_input)
+   output = model(dummy_input)
    print(f"Output shape: {output.shape}")
    print(f"Output probabilities: {output}")
+
+The bridge returns a complex amplitude tensor; when chained with the same
+``QuantumLayer`` instance, the layer detects it automatically.
 
 
 Hybrid Classification Task
@@ -176,8 +178,8 @@ A complete example showing hybrid qubit-photonic classification:
            # Quantum bridge
            self.bridge = QuantumBridge(
                qubit_groups=[n_qubits],
-               merlin_layer=self.merlin_layer,
-               pl_state_fn=self._quantum_state,
+               n_modes=m,
+               n_photons=1,
                normalize=True,
            )
            
@@ -204,12 +206,12 @@ A complete example showing hybrid qubit-photonic classification:
        
        def forward(self, x):
            # Classical preprocessing
-           x = self.pre_net(x)
-           # Hybrid quantum processing
-           x = self.bridge(x)
-           # Classical postprocessing
-           x = self.post_net(x)
-           return x
+           features = self.pre_net(x)
+           psi = self._quantum_state(features)
+           payload = self.bridge(psi)
+           distribution = self.merlin_layer(payload)
+           logits = self.post_net(distribution)
+           return logits
 
    # Usage
    model = HybridQuantumClassifier(n_qubits=3, n_classes=2)

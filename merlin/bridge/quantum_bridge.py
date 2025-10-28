@@ -1,37 +1,30 @@
 # quantum_bridge.py
 #
 # Generic PennyLane ↔ Merlin bridge that:
-#   - calls a PennyLane state function/module to get ψ ∈ C^{2^n}
-#   - maps |bitstring⟩ amplitudes to Perceval SLOS keys via one-photon-per-group encoding
-#   - feeds a batched complex superposition tensor to a Merlin QuantumLayer
+#   - receives a PennyLane statevector ψ ∈ C^{2^n}
+#   - maps |bitstring⟩ amplitudes to Perceval SLOS occupancies via one-photon-per-group encoding
+#   - emits a complex tensor consumed by a Merlin QuantumLayer
 #
 # Design :
-#   -  No trainable mapping in the bridge (any variational behavior belongs to the PL/qubit side)
-#   -  No design type,  no ancilla/postselected modes; m = Σ 2^group_size
-#   -  No fallback QuantumLayer creation; a user-supplied `merlin_layer` is REQUIRED
+#   - No trainable mapping in the bridge (any variational behavior belongs to the PL/qubit side)
+#   - No design type, no ancilla/postselected modes; m = Σ 2^group_size
+#   - The bridge is circuit-agnostic: it only needs the number of modes and photons
 #
 # Notes:
-#   - Uses the tensor superposition path (compute_superposition_state), so gradients
+#   - Uses the tensor superposition path on the Merlin side (compute_superposition_state), so gradients
 #     flow from Merlin back into the PL state-prep.
-#   - We precompute an index_map from computational-basis order → Merlin's mapped_keys.
-#   - Set `apply_sampling=False` at call to keep the graph fully differentiable.
+#   - We precompute the computational-basis → Fock occupancy list once lazily.
+#   - Set `apply_sampling=False` at call time to keep the graph fully differentiable on the Merlin side.
 
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import perceval as pcvl
 import torch
 import torch.nn as nn
-
-try:
-    # Requires the 'merlin' package exposing QuantumLayer
-    from merlin import QuantumLayer
-except Exception as e:  # pragma: no cover
-    raise ImportError(
-        "This bridge requires 'merlin' with QuantumLayer installed."
-    ) from e
 
 
 # ----------------------------
@@ -53,11 +46,26 @@ def to_fock_state(qubit_state: str, group_sizes: list[int]) -> pcvl.BasicState:
     return pcvl.BasicState(fock_state)
 
 
-def _to_occ_tuple(key: pcvl.BasicState | Sequence[int]) -> tuple:
+def _to_occ_tuple(key: pcvl.BasicState | Sequence[int]) -> tuple[int, ...]:
     """Convert a BasicState or occupancy list to a tuple for dict keys."""
     if isinstance(key, pcvl.BasicState):
         return tuple(key)
     return tuple(key)
+
+
+def _tensor_metadata_key(tensor: torch.Tensor) -> tuple[int, torch.Size, torch.device]:
+    """Return a key combining storage pointer, shape, and device for the given tensor."""
+    return (
+        int(tensor.untyped_storage().data_ptr()),
+        tensor.shape,
+        tensor.device,
+    )
+
+
+_BRIDGE_METADATA: dict[
+    tuple[int, torch.Size, torch.device],
+    tuple[tuple[tuple[int, ...], ...], tuple[Any, ...]],
+] = {}
 
 
 # ----------------------------
@@ -68,16 +76,19 @@ class QuantumBridge(nn.Module):
     Plug-and-play bridge between a PennyLane state function/module and a Merlin QuantumLayer.
 
     REQUIRED:
-      - merlin_layer: an already-configured QuantumLayer (we do not build one here)
-      - qubit_groups: e.g., [2,2] means 4 qubits split into two groups → 2 photons over blocks of 4 modes each
-      - Provide either:
-          * pl_module: nn.Module whose forward(x) returns a complex statevector (B, 2^n) or (2^n,),
-            or
-          * pl_state_fn: a callable(x) -> complex statevector
+      - qubit_groups: e.g., [2, 2] means 4 qubits split into two groups → 2 photons over blocks of 4 modes each
+      - n_modes: Σ 2^group_size
+      - n_photons: len(qubit_groups)
+
+    Usage:
+      - Place a PennyLane (or generic) module that outputs a complex statevector before this bridge.
+      - Feed the resulting tensor (optionally alongside additional arguments meant for the Merlin layer)
+        through this module.
+      - The bridge emits a complex tensor of amplitudes that integrates naturally inside an
+        ``nn.Sequential`` with a Merlin ``QuantumLayer``.
 
     This module hides:
       - qubit-group → Fock encoding (one photon per group)
-      - SLOS key ordering and complex amplitude scattering
       - batching, dtype/device handling
 
     No trainable mapping is performed here; any variational behavior should be implemented
@@ -88,21 +99,15 @@ class QuantumBridge(nn.Module):
         self,
         *,
         qubit_groups: list[int],
-        merlin_layer: QuantumLayer,  # REQUIRED
+        n_modes: int,
+        n_photons: int,
         device: torch.device | None = None,
         dtype: torch.dtype = torch.float32,
-        # PennyLane side:
-        pl_module: nn.Module | None = None,
-        pl_state_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
         # encoding behavior:
         wires_order: str = "little",
         normalize: bool = True,
     ):
         super().__init__()
-        if merlin_layer is None:
-            raise ValueError(
-                "QuantumBridge requires a user-supplied 'merlin_layer' (QuantumLayer)."
-            )
         if wires_order not in ("little", "big"):
             raise ValueError("wires_order must be 'little' or 'big'.")
 
@@ -113,69 +118,37 @@ class QuantumBridge(nn.Module):
         self.dtype = dtype
         self.normalize = normalize
 
-        # PennyLane state provider
-        if pl_module is None and pl_state_fn is None:
+        if n_photons != self.n_photons:
             raise ValueError(
-                "Provide either 'pl_module' or 'pl_state_fn' that returns a complex statevector."
+                f"Provided n_photons={n_photons} does not match len(qubit_groups)={self.n_photons}."
             )
-        self.pl_module = pl_module
-        self._pl_state_fn = (
-            pl_state_fn
-            if pl_state_fn is not None
-            else (pl_module.forward if pl_module is not None else None)
-        )
-        if self._pl_state_fn is None:
-            raise ValueError("Could not resolve a PennyLane state function.")
-
-        # Use the provided Merlin layer as-is
-        self.merlin_layer = merlin_layer
+        expected_modes = sum(2**g for g in self.group_sizes)
+        if expected_modes != n_modes:
+            raise ValueError(
+                f"Provided n_modes={n_modes} incompatible with qubit_groups (expected {expected_modes})."
+            )
+        self.n_photonic_modes = n_modes
 
         # Lazily built on first forward (when we see the actual 2^n)
         self._initialized = False
         self.n_qubits: int | None = None
-        self.n_photonic_modes: int | None = None
+        self._basis_occupancies: tuple[tuple[int, ...], ...] | None = None
 
-        # Buffers to fill later
-        self.register_buffer(
-            "index_map", torch.tensor([], dtype=torch.long), persistent=False
-        )
-
-    # ------------- internal: building maps -------------
-    def _ensure_sim_graph(self):
-        dummy = self.merlin_layer._create_dummy_parameters()
-        _ = self.merlin_layer.computation_process.compute(dummy)
-
-    def _build_index_map(self, K: int):
-        """Build the 2^n → mapped_keys index map (ordering matches computational basis)."""
-        self._ensure_sim_graph()
-        mapped_keys = self.merlin_layer.computation_process.simulation_graph.mapped_keys
-
-        # build dict from BasicState -> index
-        by_state = {_to_occ_tuple(k): i for i, k in enumerate(mapped_keys)}
-
-        # ordered map: for each computational basis |bits⟩, map to its Fock BasicState index
-        idx_map: list[int] = []
+    # ------------- internal: building basis occupancies -------------
+    def _build_basis_occupancies(self, K: int):
+        """Construct the list of occupancy tuples for each computational basis element."""
+        occupancies: list[tuple[int, ...]] = []
         n = int(round(math.log2(K)))
         for k in range(K):
             bits = format(k, f"0{n}b")
             if self.wires_order == "little":
                 bits = bits[::-1]
             fock = to_fock_state(bits, self.group_sizes)
-            tup = _to_occ_tuple(fock)
-            if tup not in by_state:
-                raise RuntimeError(
-                    f"Fock state for bitstring {bits} not found in mapped_keys. "
-                    f"Ensure the Merlin layer's circuit uses m = Σ 2^group_size modes and "
-                    f"n_photons = len(qubit_groups), with no ancilla/postselected modes."
-                )
-            idx_map.append(by_state[tup])
-
-        dev = self.device
-        self.index_map = torch.tensor(idx_map, dtype=torch.long, device=dev)
+            occupancies.append(_to_occ_tuple(fock))
+        self._basis_occupancies = tuple(occupancies)
 
     def _maybe_init(self, psi: torch.Tensor):
         """Initialize after seeing the first statevector."""
-        # psi: (B,K) complex or (K,) complex
         K = psi.shape[-1]
         n = int(round(math.log2(K)))
         if 2**n != K:
@@ -185,62 +158,63 @@ class QuantumBridge(nn.Module):
                 f"sum(qubit_groups)={sum(self.group_sizes)} != inferred n_qubits={n}"
             )
         self.n_qubits = n
-        self.n_photonic_modes = sum(2**g for g in self.group_sizes)
-
-        # sanity checks against Merlin config (when available)
-        try:
-            cp = self.merlin_layer.computation_process
-            if hasattr(cp, "n_photons") and cp.n_photons is not None:
-                if int(cp.n_photons) != self.n_photons:
-                    raise ValueError(
-                        f"Merlin layer expects n_photons={cp.n_photons}, but qubit_groups imply {self.n_photons}."
-                    )
-            if hasattr(cp, "m") and cp.m is not None:
-                if int(cp.m) != self.n_photonic_modes:
-                    raise ValueError(
-                        f"Merlin layer has m={cp.m} modes, but qubit_groups imply {self.n_photonic_modes}."
-                    )
-        except AttributeError:
-            # If attributes are not present, skip strict validation
-            pass
-
-        self._build_index_map(K)
+        self._build_basis_occupancies(K)
         self._initialized = True
 
-    # ------------- PL call helper (supports modules that aren't batched) -------------
-    def _call_pl_state(self, x: torch.Tensor) -> torch.Tensor:
+    # ------------- Input parsing helpers -------------
+    @staticmethod
+    def _extract_state_and_args(
+        pl_output: torch.Tensor | Sequence[Any],
+    ) -> tuple[torch.Tensor, tuple[Any, ...]]:
         """
-        Call the PL provider; if it isn't batched, iterate over batch.
-        Returns a tensor of shape (B, K) complex.
+        Accept PennyLane output that is either:
+          - a complex tensor ψ (K,) or (B, K),
+          - a sequence whose first element is ψ and whose remaining elements are Merlin args.
         """
-        out = self._pl_state_fn(x)
-        if isinstance(out, torch.Tensor):
-            if out.ndim == 1:
-                return out.unsqueeze(0)
-            if out.ndim == 2:
-                return out
-        # Fallback: try per-sample evaluation
-        if not isinstance(x, torch.Tensor) or x.ndim < 1:
-            raise ValueError(
-                "pl_state_fn returned unsupported type/shape and input is not batchable."
-            )
-        outs = []
-        for i in range(x.shape[0]):
-            yi = self._pl_state_fn(x[i])
-            if not isinstance(yi, torch.Tensor) or yi.ndim != 1:
+        if isinstance(pl_output, torch.Tensor):
+            return pl_output, ()
+
+        if isinstance(pl_output, Sequence):
+            if len(pl_output) == 0:
                 raise ValueError(
-                    "pl_state_fn must return a 1D complex statevector per sample."
+                    "QuantumBridge received an empty sequence; expected a statevector as the first element."
                 )
-            outs.append(yi)
-        return torch.stack(outs, dim=0)
+            state = pl_output[0]
+            if not isinstance(state, torch.Tensor):
+                raise TypeError(
+                    "QuantumBridge expects the first element of the provided sequence to be a torch.Tensor statevector."
+                )
+            return state, tuple(pl_output[1:])
+
+        raise TypeError(
+            "QuantumBridge expects a torch.Tensor statevector or a sequence whose first element "
+            "is that tensor."
+        )
 
     # ------------- forward -------------
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, pl_output: torch.Tensor | Sequence[Any]
+    ) -> torch.Tensor:
         """
-        x -> PennyLane state ψ (complex) -> superposition over SLOS keys -> Merlin output.
+        PennyLane output → computational basis amplitudes.
+
+        Accepts either a complex statevector ψ or a sequence whose first element is ψ and whose
+        remaining elements should be forwarded as arguments to the Merlin layer.
         """
-        psi = self._call_pl_state(x)  # (B,K) complex
-        # Unify dtype/device with the bridge/merlin side
+        psi, extra_args = self._extract_state_and_args(pl_output)
+
+        if not isinstance(psi, torch.Tensor):
+            raise TypeError("Statevector produced by PennyLane must be a torch.Tensor.")
+
+        # Normalize shape to (B, K)
+        if psi.ndim == 1:
+            psi = psi.unsqueeze(0)
+        elif psi.ndim != 2:
+            raise ValueError(
+                f"QuantumBridge expects statevector shape (K,) or (B, K); received {psi.shape}."
+            )
+
+        # Unify dtype/device with the bridge side
         target_complex = (
             torch.complex64
             if self.dtype in (torch.float32, torch.bfloat16)
@@ -255,15 +229,25 @@ class QuantumBridge(nn.Module):
         if not self._initialized:
             self._maybe_init(psi)
 
-        B, K = psi.shape
-        self._ensure_sim_graph()
-        M = len(self.merlin_layer.computation_process.simulation_graph.mapped_keys)
+        occupancies = self._basis_occupancies
+        if occupancies is None:
+            raise RuntimeError("QuantumBridge basis occupancies were not generated.")
 
-        # fixed mapping: scatter ψ to length-M at precomputed positions
-        superpos = torch.zeros((B, M), dtype=psi.dtype, device=psi.device)
-        idx = self.index_map.to(psi.device)
-        superpos.scatter_(1, idx.unsqueeze(0).expand(B, -1), psi)
+        _BRIDGE_METADATA[_tensor_metadata_key(psi)] = (occupancies, extra_args)
+        return psi
 
-        # Feed to Merlin (tensor path → compute_superposition_state)
-        self.merlin_layer.computation_process.input_state = superpos
-        return self.merlin_layer(apply_sampling=False)  # keep differentiable
+
+def pop_bridge_metadata(
+    tensor: torch.Tensor,
+) -> tuple[tuple[tuple[int, ...], ...] | None, tuple[Any, ...]]:
+    """
+    Retrieve and remove metadata associated with a QuantumBridge output tensor.
+
+    Returns:
+        (occupancies, extra_args) if available, otherwise (None, ()).
+    """
+    key = _tensor_metadata_key(tensor)
+    if key in _BRIDGE_METADATA:
+        occupancies, extra_args = _BRIDGE_METADATA.pop(key)
+        return occupancies, extra_args
+    return None, ()

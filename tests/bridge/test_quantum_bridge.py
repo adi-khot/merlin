@@ -41,21 +41,19 @@ def test_basis_state_mapping_little_endian(basis_index: int, bits: str):
     n_photons = len(groups)
     layer = make_identity_layer(m, n_photons)
 
-    # PennyLane-like state provider (returns 1D statevector)
-    def pl_state_fn(_x: torch.Tensor) -> torch.Tensor:
-        psi = torch.zeros(2 ** sum(groups), dtype=torch.complex64)
-        psi[basis_index] = 1.0 + 0.0j
-        return psi
-
     bridge = QuantumBridge(
         qubit_groups=groups,
-        merlin_layer=layer,
-        pl_state_fn=pl_state_fn,
+        n_modes=m,
+        n_photons=n_photons,
         wires_order="little",
         normalize=True,
     )
 
-    out = bridge(torch.zeros(1, 1))  # dummy input, ignored by pl_state_fn
+    psi = torch.zeros(2 ** sum(groups), dtype=torch.complex64)
+    psi[basis_index] = 1.0 + 0.0j
+
+    payload = bridge(psi)
+    out = layer(payload)
     assert out.shape[0] == 1
 
     # Expected Fock state for this basis (little-endian reverses the bitstring before grouping)
@@ -72,25 +70,22 @@ def test_superposition_and_normalization():
     m = sum(2**g for g in groups)
     layer = make_identity_layer(m, n_photons=len(groups))
 
-    # Unnormalized superposition |00> + i|11>
-    def pl_state_fn(x: torch.Tensor) -> torch.Tensor:
-        psi = torch.zeros(4, dtype=torch.complex64)
-        psi[0] = 1.0 + 0.0j
-        psi[3] = 0.0 + 1.0j
-        # If called with batched input, return a batched statevector
-        if isinstance(x, torch.Tensor) and x.shape[0] > 1:
-            return psi.unsqueeze(0).expand(x.shape[0], -1)
-        return psi
-
     bridge = QuantumBridge(
         qubit_groups=groups,
-        merlin_layer=layer,
-        pl_state_fn=pl_state_fn,
+        n_modes=m,
+        n_photons=len(groups),
         wires_order="little",
         normalize=True,
     )
 
-    out = bridge(torch.zeros(2, 2, 1))  # batched dummy input (batch size 2)
+    psi = torch.zeros(4, dtype=torch.complex64)
+    psi[0] = 1.0 + 0.0j
+    psi[3] = 0.0 + 1.0j
+
+    psi_batch = psi.unsqueeze(0).expand(2, -1).clone()
+
+    payload = bridge(psi_batch)
+    out = layer(payload)
     assert out.shape[0] == 2
 
     idx_00 = find_key_index(layer, to_fock_state("00"[::-1], groups))
@@ -122,22 +117,22 @@ def test_bridge_with_pennylane_qnode():
         qml.RY(theta, wires=0)
         return qml.state()
 
-    def pl_state_fn(x: torch.Tensor) -> torch.Tensor:
-        theta = x.squeeze().to(torch.get_default_dtype())
-        psi = pl_state(theta)
-        return psi.to(torch.complex64)
-
     bridge = QuantumBridge(
         qubit_groups=groups,
-        merlin_layer=layer,
-        pl_state_fn=pl_state_fn,
+        n_modes=2,
+        n_photons=len(groups),
         wires_order="little",
         normalize=True,
     )
 
     angle = math.pi / 3
     inputs = torch.tensor([[angle]], dtype=torch.get_default_dtype())
-    out = bridge(inputs)
+    theta = inputs.squeeze().to(torch.get_default_dtype())
+    psi = pl_state(theta)
+    psi = psi.to(torch.complex64)
+
+    payload = bridge(psi)
+    out = layer(payload)
 
     idx_0 = find_key_index(layer, to_fock_state("0", groups))
     idx_1 = find_key_index(layer, to_fock_state("1", groups))
@@ -160,29 +155,29 @@ def test_wires_order_big_endian_changes_mapping():
     layer = make_identity_layer(m, n_photons=len(groups))
 
     # State |01> (index 1)
-    def pl_state_fn(_x: torch.Tensor) -> torch.Tensor:
-        psi = torch.zeros(4, dtype=torch.complex64)
-        psi[1] = 1.0 + 0.0j
-        return psi
-
     # Big-endian: do not reverse bits
     bridge_big = QuantumBridge(
         qubit_groups=groups,
-        merlin_layer=layer,
-        pl_state_fn=pl_state_fn,
+        n_modes=m,
+        n_photons=len(groups),
         wires_order="big",
     )
-    out_big = bridge_big(torch.zeros(1, 1))
+    psi = torch.zeros(4, dtype=torch.complex64)
+    psi[1] = 1.0 + 0.0j
+
+    payload_big = bridge_big(psi)
+    out_big = layer(payload_big)
     idx_big = find_key_index(layer, to_fock_state("01", groups))
 
     # Little-endian: reverse bits before grouping
     bridge_little = QuantumBridge(
         qubit_groups=groups,
-        merlin_layer=layer,
-        pl_state_fn=pl_state_fn,
+        n_modes=m,
+        n_photons=len(groups),
         wires_order="little",
     )
-    out_little = bridge_little(torch.zeros(1, 1))
+    payload_little = bridge_little(psi)
+    out_little = layer(payload_little)
     idx_little = find_key_index(layer, to_fock_state("01"[::-1], groups))
 
     assert torch.isclose(
@@ -199,31 +194,23 @@ def test_error_when_qubit_groups_do_not_match_state_length():
     # Provide a 2-qubit state but groups sum to 1
     layer = make_identity_layer(m=2, n_photons=1)
 
-    def pl_state_fn(_x: torch.Tensor) -> torch.Tensor:
-        return torch.tensor(
-            [1.0 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j], dtype=torch.complex64
-        )
-
-    bridge = QuantumBridge(
-        qubit_groups=[1], merlin_layer=layer, pl_state_fn=pl_state_fn
-    )
+    bridge = QuantumBridge(qubit_groups=[1], n_modes=2, n_photons=1)
 
     with pytest.raises(ValueError):
-        _ = bridge(torch.zeros(1, 1))
+        psi = torch.tensor(
+            [1.0 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j], dtype=torch.complex64
+        )
+        _ = bridge(psi)
 
 
 def test_error_when_merlin_layer_mismatch_modes():
     # groups imply m=4, but build a layer with m=6
     bad_layer = make_identity_layer(m=6, n_photons=2)
 
-    def pl_state_fn(_x: torch.Tensor) -> torch.Tensor:
+    bridge = QuantumBridge(qubit_groups=[1, 1], n_modes=4, n_photons=2)
+
+    with pytest.raises(RuntimeError):
         psi = torch.zeros(4, dtype=torch.complex64)
         psi[0] = 1.0 + 0.0j
-        return psi
-
-    bridge = QuantumBridge(
-        qubit_groups=[1, 1], merlin_layer=bad_layer, pl_state_fn=pl_state_fn
-    )
-
-    with pytest.raises((ValueError, RuntimeError)):
-        _ = bridge(torch.zeros(1, 1))
+        payload = bridge(psi)
+        _ = bad_layer(payload)

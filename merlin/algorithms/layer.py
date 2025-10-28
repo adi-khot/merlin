@@ -40,6 +40,7 @@ from ..builder.circuit_builder import (
     ANGLE_ENCODING_MODE_ERROR,
     CircuitBuilder,
 )
+from ..bridge import pop_bridge_metadata
 from ..core.process import ComputationProcessFactory
 from ..sampling.autodiff import AutoDiffProcess
 from ..sampling.strategies import OutputMappingStrategy
@@ -151,6 +152,7 @@ class QuantumLayer(nn.Module):
         self.autodiff_process = AutoDiffProcess(sampling_method)
         self.shots = shots
         self.sampling_method = sampling_method
+        self._bridge_index_cache: dict[tuple[tuple[int, ...], ...], torch.Tensor] = {}
 
     def _init_from_ansatz(
         self,
@@ -551,6 +553,48 @@ class QuantumLayer(nn.Module):
         self.input_state = input_state
         self.computation_process.input_state = input_state
 
+    def _from_bridge_payload(
+        self,
+        amplitudes: torch.Tensor,
+        occupancies: tuple[tuple[int, ...], ...],
+    ) -> torch.Tensor:
+        """
+        Convert a QuantumBridge bridge output into a superposition tensor aligned with mapped_keys.
+        """
+        if amplitudes.ndim == 1:
+            amplitudes = amplitudes.unsqueeze(0)
+        elif amplitudes.ndim != 2:
+            raise ValueError(
+                f"QuantumBridge amplitudes must have shape (K,) or (B, K); received {amplitudes.shape}."
+            )
+        if not torch.is_complex(amplitudes):
+            raise TypeError("QuantumBridge amplitudes tensor must be complex.")
+
+        index_map = self._bridge_index_cache.get(occupancies)
+
+        if index_map is None:
+            mapped_keys = self.computation_process.simulation_graph.mapped_keys
+            by_state = {tuple(k): i for i, k in enumerate(mapped_keys)}
+            indices: list[int] = []
+            for occ in occupancies:
+                if occ not in by_state:
+                    raise RuntimeError(
+                        "QuantumBridge occupancy not found in QuantumLayer mapped_keys. "
+                        "Ensure n_modes and qubit_groups match the layer configuration."
+                    )
+                indices.append(by_state[occ])
+            index_map = torch.tensor(indices, dtype=torch.long)
+            self._bridge_index_cache[occupancies] = index_map
+
+        index_map = index_map.to(device=amplitudes.device)
+        B, K = amplitudes.shape
+        M = len(self.computation_process.simulation_graph.mapped_keys)
+        superposition = torch.zeros(
+            (B, M), dtype=amplitudes.dtype, device=amplitudes.device
+        )
+        superposition.scatter_(1, index_map.unsqueeze(0).expand(B, -1), amplitudes)
+        return superposition
+
     def prepare_parameters(
         self, input_parameters: list[torch.Tensor]
     ) -> list[torch.Tensor]:
@@ -596,8 +640,21 @@ class QuantumLayer(nn.Module):
         return_amplitudes: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
         """Forward pass through the quantum layer."""
+        params_list = list(input_parameters)
+
+        if params_list and isinstance(params_list[0], torch.Tensor):
+            tensor_candidate = params_list[0]
+            occupancies, extra_args = pop_bridge_metadata(tensor_candidate)
+            if occupancies is not None:
+                params_list.pop(0)
+                superposition = self._from_bridge_payload(
+                    tensor_candidate, occupancies
+                )
+                self.set_input_state(superposition)
+                params_list = list(extra_args) + params_list
+
         # Prepare parameters
-        params = self.prepare_parameters(list(input_parameters))
+        params = self.prepare_parameters(params_list)
         # Get quantum output
         if type(self.computation_process.input_state) is torch.Tensor:
             amplitudes = self.computation_process.compute_superposition_state(params)

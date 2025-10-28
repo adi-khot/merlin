@@ -31,8 +31,8 @@ def cpu_gpu_bridge_outputs(groups, statevec_fn, batch: int = 1):
     layer_cpu = make_identity_layer(m, n_photons, torch.device("cpu"))
     bridge_cpu = QuantumBridge(
         qubit_groups=groups,
-        merlin_layer=layer_cpu,
-        pl_state_fn=statevec_fn(torch.device("cpu")),
+        n_modes=m,
+        n_photons=n_photons,
         wires_order="little",
         normalize=True,
         device=torch.device("cpu"),
@@ -43,18 +43,21 @@ def cpu_gpu_bridge_outputs(groups, statevec_fn, batch: int = 1):
     layer_gpu = make_identity_layer(m, n_photons, device_gpu)
     bridge_gpu = QuantumBridge(
         qubit_groups=groups,
-        merlin_layer=layer_gpu,
-        pl_state_fn=statevec_fn(device_gpu),
+        n_modes=m,
+        n_photons=n_photons,
         wires_order="little",
         normalize=True,
         device=device_gpu,
     )
 
-    x_cpu = torch.zeros(batch, 1)
-    x_gpu = torch.zeros(batch, 1, device=device_gpu)
+    psi_cpu = statevec_fn(torch.device("cpu"), batch)
+    psi_gpu = statevec_fn(device_gpu, batch)
 
-    out_cpu = bridge_cpu(x_cpu).detach().cpu()
-    out_gpu = bridge_gpu(x_gpu)
+    payload_cpu = bridge_cpu(psi_cpu)
+    payload_gpu = bridge_gpu(psi_gpu)
+
+    out_cpu = layer_cpu(payload_cpu).detach().cpu()
+    out_gpu = layer_gpu(payload_gpu)
     assert out_gpu.is_cuda, f"Expected output on CUDA, got {out_gpu.device}"
     return out_cpu, out_gpu.detach().cpu()
 
@@ -62,13 +65,12 @@ def cpu_gpu_bridge_outputs(groups, statevec_fn, batch: int = 1):
 def test_bridge_gpu_matches_cpu_basis_state():
     groups = [1, 1]
 
-    def statevec_fn(device):
-        def _inner(_x: torch.Tensor):
-            psi = torch.zeros(4, dtype=torch.complex64, device=device)
-            psi[1] = 1.0 + 0.0j  # |01>
-            return psi
-
-        return _inner
+    def statevec_fn(device, batch):
+        psi = torch.zeros(4, dtype=torch.complex64, device=device)
+        psi[1] = 1.0 + 0.0j  # |01>
+        if batch > 1:
+            return psi.unsqueeze(0).expand(batch, -1).clone()
+        return psi
 
     out_cpu, out_gpu = cpu_gpu_bridge_outputs(groups, statevec_fn, batch=1)
     assert out_cpu.shape == out_gpu.shape
@@ -78,16 +80,13 @@ def test_bridge_gpu_matches_cpu_basis_state():
 def test_bridge_gpu_matches_cpu_superposition_batched():
     groups = [1, 1]
 
-    def statevec_fn(device):
-        def _inner(x: torch.Tensor):
-            psi = torch.zeros(4, dtype=torch.complex64, device=device)
-            psi[0] = 1.0 + 0.0j
-            psi[3] = 0.0 + 1.0j
-            if isinstance(x, torch.Tensor) and x.dim() > 0 and x.shape[0] > 1:
-                return psi.unsqueeze(0).expand(x.shape[0], -1)
-            return psi
-
-        return _inner
+    def statevec_fn(device, batch):
+        psi = torch.zeros(4, dtype=torch.complex64, device=device)
+        psi[0] = 1.0 + 0.0j
+        psi[3] = 0.0 + 1.0j
+        if batch > 1:
+            return psi.unsqueeze(0).expand(batch, -1).clone()
+        return psi
 
     out_cpu, out_gpu = cpu_gpu_bridge_outputs(groups, statevec_fn, batch=3)
     assert out_cpu.shape == out_gpu.shape
