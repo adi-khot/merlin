@@ -1,6 +1,7 @@
+from types import MethodType
+
 import perceval as pcvl
 import torch
-from types import MethodType
 
 from merlin.algorithms.layer import QuantumLayer
 from merlin.sampling.strategies import OutputMappingStrategy
@@ -149,7 +150,9 @@ class TestOutputSuperposedState:
 
         def tracked_ebs(self, parameters, simultaneous_processes=1):
             call_tracker["ebs"] += 1
-            return original_ebs(parameters, simultaneous_processes=simultaneous_processes)
+            return original_ebs(
+                parameters, simultaneous_processes=simultaneous_processes
+            )
 
         def tracked_super(self, parameters):
             call_tracker["super"] += 1
@@ -194,7 +197,9 @@ class TestOutputSuperposedState:
 
         def tracked_ebs(self, parameters, simultaneous_processes=1):
             call_tracker["ebs"] += 1
-            return original_ebs(parameters, simultaneous_processes=simultaneous_processes)
+            return original_ebs(
+                parameters, simultaneous_processes=simultaneous_processes
+            )
 
         def tracked_super(self, parameters):
             call_tracker["super"] += 1

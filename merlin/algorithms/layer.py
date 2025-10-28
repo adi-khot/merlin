@@ -511,7 +511,7 @@ class QuantumLayer(nn.Module):
         # Prepare parameters
         params = self.prepare_parameters(list(input_parameters))
         # Get quantum output
-        
+
         # Auto-detect batch mode from the stored input state.
         inferred_state = getattr(self.computation_process, "input_state", None)
         if isinstance(inferred_state, torch.Tensor) and inferred_state.dim() > 1:
