@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 import perceval as pcvl
 import torch
 import torch.nn as nn
 
+from merlin.torch_utils.dtypes import resolve_float_complex
 
 # ----------------------------
 # Helpers: qubit-groups <-> Fock (no ancillas)
@@ -53,21 +54,6 @@ def _to_occ_tuple(key: pcvl.BasicState | Sequence[int]) -> tuple[int, ...]:
     return tuple(key)
 
 
-def _tensor_metadata_key(tensor: torch.Tensor) -> tuple[int, torch.Size, torch.device]:
-    """Return a key combining storage pointer, shape, and device for the given tensor."""
-    return (
-        int(tensor.untyped_storage().data_ptr()),
-        tensor.shape,
-        tensor.device,
-    )
-
-
-_BRIDGE_METADATA: dict[
-    tuple[int, torch.Size, torch.device],
-    tuple[tuple[tuple[int, ...], ...], tuple[Any, ...]],
-] = {}
-
-
 # ----------------------------
 # The generic bridge
 # ----------------------------
@@ -81,7 +67,7 @@ class QuantumBridge(nn.Module):
       - n_photons: len(qubit_groups)
 
     Usage:
-      - Place a PennyLane (or generic) module that outputs a complex statevector before this bridge.
+      - Place a PennyLane (or generic) module that outputs a complex 2^k statevector before this bridge.
       - Feed the resulting tensor (optionally alongside additional arguments meant for the Merlin layer)
         through this module.
       - The bridge emits a complex tensor of amplitudes that integrates naturally inside an
@@ -97,31 +83,40 @@ class QuantumBridge(nn.Module):
 
     def __init__(
         self,
-        *,
-        qubit_groups: list[int],
-        n_modes: int,
         n_photons: int,
+        n_modes: int,
+        *,
+        # encoding behavior:
+        qubit_groups: list[int] = None,
+        wires_order: Literal["little", "big"] = "little",
+        normalize: bool = True,
+        # runtime behavior:
         device: torch.device | None = None,
         dtype: torch.dtype = torch.float32,
-        # encoding behavior:
-        wires_order: str = "little",
-        normalize: bool = True,
     ):
         super().__init__()
         if wires_order not in ("little", "big"):
             raise ValueError("wires_order must be 'little' or 'big'.")
 
         self.group_sizes = qubit_groups
-        self.n_photons = len(qubit_groups)
+        if qubit_groups is None:
+            # dual-rail default
+            if n_modes != 2 * n_photons:
+                raise ValueError(
+                    "If qubit_groups is not provided, n_modes must be equal to 2 * n_photons (dual-rail)."
+                )
+            qubit_groups = [1] * n_photons
+        if len(qubit_groups) != n_photons:
+            raise ValueError(
+                f"Length of qubit_groups ({len(qubit_groups)}) must match n_photons ({n_photons})."
+            )
+
+        self.n_photons = n_photons
         self.wires_order = wires_order
         self.device = device
         self.dtype = dtype
         self.normalize = normalize
 
-        if n_photons != self.n_photons:
-            raise ValueError(
-                f"Provided n_photons={n_photons} does not match len(qubit_groups)={self.n_photons}."
-            )
         expected_modes = sum(2**g for g in self.group_sizes)
         if expected_modes != n_modes:
             raise ValueError(
@@ -161,47 +156,11 @@ class QuantumBridge(nn.Module):
         self._build_basis_occupancies(K)
         self._initialized = True
 
-    # ------------- Input parsing helpers -------------
-    @staticmethod
-    def _extract_state_and_args(
-        pl_output: torch.Tensor | Sequence[Any],
-    ) -> tuple[torch.Tensor, tuple[Any, ...]]:
-        """
-        Accept PennyLane output that is either:
-          - a complex tensor ψ (K,) or (B, K),
-          - a sequence whose first element is ψ and whose remaining elements are Merlin args.
-        """
-        if isinstance(pl_output, torch.Tensor):
-            return pl_output, ()
-
-        if isinstance(pl_output, Sequence):
-            if len(pl_output) == 0:
-                raise ValueError(
-                    "QuantumBridge received an empty sequence; expected a statevector as the first element."
-                )
-            state = pl_output[0]
-            if not isinstance(state, torch.Tensor):
-                raise TypeError(
-                    "QuantumBridge expects the first element of the provided sequence to be a torch.Tensor statevector."
-                )
-            return state, tuple(pl_output[1:])
-
-        raise TypeError(
-            "QuantumBridge expects a torch.Tensor statevector or a sequence whose first element "
-            "is that tensor."
-        )
-
     # ------------- forward -------------
-    def forward(
-        self, pl_output: torch.Tensor | Sequence[Any]
-    ) -> torch.Tensor:
+    def forward(self, psi: torch.Tensor) -> torch.Tensor:
         """
-        PennyLane output → computational basis amplitudes.
-
-        Accepts either a complex statevector ψ or a sequence whose first element is ψ and whose
-        remaining elements should be forwarded as arguments to the Merlin layer.
+        PennyLane (or other gate-based ml framework) output psi to computational basis amplitudes.
         """
-        psi, extra_args = self._extract_state_and_args(pl_output)
 
         if not isinstance(psi, torch.Tensor):
             raise TypeError("Statevector produced by PennyLane must be a torch.Tensor.")
@@ -215,11 +174,7 @@ class QuantumBridge(nn.Module):
             )
 
         # Unify dtype/device with the bridge side
-        target_complex = (
-            torch.complex64
-            if self.dtype in (torch.float32, torch.bfloat16)
-            else torch.complex128
-        )
+        target_complex = resolve_float_complex(self.dtype)[1]
         target_device = self.device if self.device is not None else psi.device
         psi = psi.to(dtype=target_complex, device=target_device)
 
@@ -233,21 +188,4 @@ class QuantumBridge(nn.Module):
         if occupancies is None:
             raise RuntimeError("QuantumBridge basis occupancies were not generated.")
 
-        _BRIDGE_METADATA[_tensor_metadata_key(psi)] = (occupancies, extra_args)
         return psi
-
-
-def pop_bridge_metadata(
-    tensor: torch.Tensor,
-) -> tuple[tuple[tuple[int, ...], ...] | None, tuple[Any, ...]]:
-    """
-    Retrieve and remove metadata associated with a QuantumBridge output tensor.
-
-    Returns:
-        (occupancies, extra_args) if available, otherwise (None, ()).
-    """
-    key = _tensor_metadata_key(tensor)
-    if key in _BRIDGE_METADATA:
-        occupancies, extra_args = _BRIDGE_METADATA.pop(key)
-        return occupancies, extra_args
-    return None, ()
