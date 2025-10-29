@@ -235,7 +235,7 @@ class QuantumLayer(nn.Module):
 
         self.circuit = resolved_circuit
         # dual-rail needs n photons and 2n modes
-        if self.computation_space == "dual_rail" and self.circuit.m // 2 != n_photons:
+        if self.computation_space == "dual_rail" and self.circuit.m != int(2*n_photons):
             raise ValueError("Dual-rail encoding requires the number of modes to be be two times the number of modes. Here "
                              f"{self.circuit.m} modes and {n_photons} photons were provided.")
         self._init_from_custom_circuit(
