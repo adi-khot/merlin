@@ -5,7 +5,7 @@ import torch
 from perceval.components import BS, PS
 
 from ..core.generators import CircuitType
-from ..sampling.strategies import OutputMappingStrategy
+from ..measurement.strategies import MeasurementStrategy
 from .layer import QuantumLayer
 
 
@@ -58,11 +58,10 @@ def define_layer_no_input(n_modes, n_photons, circuit_type=None):
 
     layer = QuantumLayer(
         input_size=0,
-        output_size=None,
         circuit=circuit,
         n_photons=n_photons,
         input_state=input_state,  # Random Initial quantum state used only for initialization
-        output_mapping_strategy=OutputMappingStrategy.NONE,
+        measurement_strategy=MeasurementStrategy.AMPLITUDES,
         trainable_parameters=["phi"],
         no_bunching=True,
     )
@@ -86,11 +85,10 @@ def define_layer_with_input(M, N, input_size, circuit_type=None):
     input_state = [1] * N + [0] * (M - N)
     layer = QuantumLayer(
         input_size=input_size,
-        output_size=None,
         circuit=circuit,
         n_photons=N,
         input_state=input_state,  # Random Initial quantum state used only for initialization
-        output_mapping_strategy=OutputMappingStrategy.NONE,
+        measurement_strategy=MeasurementStrategy.AMPLITUDES,
         input_parameters=["pl"],  # Optional: Specify device
         trainable_parameters=["phi"],
         no_bunching=True,
@@ -112,6 +110,13 @@ class FeedForwardBlock(torch.nn.Module):
 
     The recursion continues until a specified depth, allowing the model to
     simulate complex conditional evolution of quantum systems.
+
+    Detector support:
+        The current feed-forward implementation expects amplitude access for
+        every intermediate layer (``MeasurementStrategy.AMPLITUDES``) and
+        therefore assumes ideal PNR detectors. Custom detector transforms or
+        Perceval experiments with threshold / hybrid detectors are not yet
+        supported inside this block.
 
     ---
     Args:
@@ -152,7 +157,7 @@ class FeedForwardBlock(torch.nn.Module):
         input_size: int,
         n: int,
         m: int,
-        depth: int = None,
+        depth: int | None = None,
         state_injection=False,
         conditional_modes: list[int] = None,
         layers: list = None,
@@ -352,13 +357,10 @@ class FeedForwardBlock(torch.nn.Module):
         # Base case: end of tree reached
         if depth >= self.depth:
             fock_probs = remaining_amplitudes.abs().pow(2)
-            detection_probs = layer._detector_transform(fock_probs)
-            detection_keys = layer.get_output_keys()
-            for i, key in enumerate(detection_keys):
-                contribution = detection_probs[:, i] * accumulated_prob
+            for i, key in enumerate(keys):
                 if key not in outputs:
-                    outputs[key] = torch.zeros_like(contribution)
-                outputs[key] += contribution
+                    outputs[key] = torch.zeros_like(accumulated_prob)
+                outputs[key] += accumulated_prob * fock_probs[:, i]
             return
 
         # Generate all possible binary measurement outcomes
@@ -391,11 +393,9 @@ class FeedForwardBlock(torch.nn.Module):
 
                 # Execute layer with or without classical input
                 if start != end:
-                    probs_next, amps_next = layer(
-                        x[:, start:end], return_amplitudes=True
-                    )
+                    amps_next = layer(x[:, start:end])
                 else:
-                    probs_next, amps_next = layer(return_amplitudes=True)
+                    amps_next = layer()
 
                 # Recurse into next layer
                 new_prob = accumulated_prob * prob_combo
@@ -487,10 +487,7 @@ class FeedForwardBlock(torch.nn.Module):
         # Run the first quantum layer (root of the tree)
         input_size = min(self.input_size, self.m)
         layer = self.layers[()]
-        if input_size > 0:
-            probs, amplitudes = layer(x[:, :input_size], return_amplitudes=True)
-        else:
-            probs, amplitudes = layer(return_amplitudes=True)
+        amplitudes = layer(x[:, :input_size])
         keys = layer.computation_process.simulation_graph.mapped_keys
 
         # Recursively propagate through all branches
@@ -621,14 +618,12 @@ class PoolingFeedForward(torch.nn.Module):
         super().__init__()
         keys_in = QuantumLayer(
             0,
-            10,
             circuit=pcvl.Circuit(n_modes),
             n_photons=n_photons,
             no_bunching=no_bunching,
         ).computation_process.simulation_graph.mapped_keys
         keys_out = QuantumLayer(
             0,
-            10,
             circuit=pcvl.Circuit(n_output_modes),
             n_photons=n_photons,
             no_bunching=no_bunching,
@@ -793,7 +788,7 @@ if __name__ == "__main__":
     params = chain(pre_layer.parameters(), post_layer.parameters())
     optimizer = torch.optim.Adam(params)
     for _ in range(10):
-        _, amplitudes = pre_layer(return_amplitudes=True)
+        amplitudes = pre_layer()
         amplitudes = pff(amplitudes)
         print(amplitudes.abs().pow(2).sum())
         post_layer.set_input_state(amplitudes)

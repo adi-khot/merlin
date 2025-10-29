@@ -74,7 +74,14 @@ issues = "https://github.com/merlinquantum/merlin/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["merlin", "merlin.core", "merlin.datasets", "merlin.pcvl_pytorch", "merlin.sampling", "merlin.torch_utils"]
+packages = [
+    "merlin",
+    "merlin.core",
+    "merlin.datasets",
+    "merlin.measurement",
+    "merlin.pcvl_pytorch",
+    "merlin.utils",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "benchmarks"]
@@ -169,4 +176,3 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
-

@@ -31,10 +31,6 @@ import torch
 
 import merlin as ML
 
-ANSATZ_SKIP = pytest.mark.skip(
-    reason="Legacy ansatz-based QuantumLayer API has been removed; test pending migration."
-)
-
 
 class TestSamplingProcess:
     """Test suite for SamplingProcess."""
@@ -224,21 +220,24 @@ class TestAutoDiffProcess:
 class TestSamplingIntegration:
     """Integration tests for sampling with QuantumLayer."""
 
-    @ANSATZ_SKIP
     def test_layer_sampling_during_training(self):
         """Test that sampling is disabled during training mode."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
-        )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input", subset_combinations=True)
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz, shots=100)
+        layer = ML.QuantumLayer(
+            input_size=2,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            shots=100,
+        )
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
         # Set to training mode
-        layer.train()
+        model.train()
 
         x = torch.rand(3, 2, requires_grad=True)
 
@@ -246,7 +245,8 @@ class TestSamplingIntegration:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
 
-            output = layer(x, apply_sampling=True, shots=100)
+            x_out = layer(x, apply_sampling=True, shots=100)
+            output = model[1](x_out)
             loss = output.sum()
             loss.backward()
 
@@ -257,29 +257,32 @@ class TestSamplingIntegration:
             )
             assert warning_found
 
-    @ANSATZ_SKIP
     def test_layer_sampling_during_evaluation(self):
         """Test that sampling works during evaluation mode."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input", subset_combinations=True)
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=2,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
         )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz, shots=100)
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
         # Set to evaluation mode
-        layer.eval()
+        model.eval()
 
         x = torch.rand(3, 2)
 
         # Get clean output
-        clean_output = layer(x)
+        clean_output = model(x)
 
         # Get sampled output
-        sampled_output = layer(x, apply_sampling=True, shots=100)
+        x_out = layer(x, apply_sampling=True, shots=100)
+        sampled_output = model[1](x_out)
 
         # Should be different due to sampling noise
         assert not torch.allclose(clean_output, sampled_output, atol=1e-3)
@@ -288,18 +291,20 @@ class TestSamplingIntegration:
         assert torch.all(torch.isfinite(clean_output))
         assert torch.all(torch.isfinite(sampled_output))
 
-    @ANSATZ_SKIP
     def test_layer_sampling_config_update(self):
         """Test updating sampling configuration on layer."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input", subset_combinations=True)
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=2,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
         )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+        torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
         # Initial config
         assert layer.shots == 0
@@ -318,19 +323,21 @@ class TestSamplingIntegration:
         with pytest.raises(ValueError):
             layer.set_sampling_config(method="invalid")
 
-    @ANSATZ_SKIP
     def test_different_sampling_methods_produce_different_results(self):
         """Test that different sampling methods produce different results."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input", subset_combinations=True)
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=2,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
         )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
-        layer.eval()
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
+        model.eval()
 
         x = torch.rand(5, 2)
 
@@ -339,7 +346,8 @@ class TestSamplingIntegration:
 
         for method in methods:
             layer.set_sampling_config(shots=100, method=method)
-            output = layer(x, apply_sampling=True, shots=100)
+            x_out = layer(x, apply_sampling=True, shots=100)
+            output = model[1](x_out)
             results[method] = output
 
         # All results should be different from each other

@@ -9,13 +9,13 @@ import torch
 from torch import Tensor
 
 from ..builder.circuit_builder import ANGLE_ENCODING_MODE_ERROR, CircuitBuilder
+from ..measurement.autodiff import AutoDiffProcess
+from ..measurement.detectors import DetectorTransform, resolve_detectors
 from ..pcvl_pytorch.locirc_to_tensor import CircuitConverter
 from ..pcvl_pytorch.slos_torchscript import (
     build_slos_distribution_computegraph as build_slos_graph,
 )
-from ..sampling.autodiff import AutoDiffProcess
-from ..sampling.detectors import DetectorTransform, resolve_detectors
-from ..torch_utils.dtypes import to_torch_dtype
+from ..utils.dtypes import to_torch_dtype
 
 
 class FeatureMap:
@@ -27,6 +27,7 @@ class FeatureMap:
 
     Args:
         circuit: Pre-compiled :class:`pcvl.Circuit` to encode features.
+        input_size: Dimension of incoming classical data (required).
         builder: Optional :class:`CircuitBuilder` to compile into a circuit.
         input_parameters: Parameter prefix(es) that host the classical data.
         dtype: Torch dtype used when constructing the unitary.
@@ -36,9 +37,9 @@ class FeatureMap:
     def __init__(
         self,
         circuit: pcvl.Circuit | None = None,
+        input_size: int | None = None,
         *,
         builder: CircuitBuilder | None = None,
-        input_size: int,
         input_parameters: str | list[str] | None,
         trainable_parameters: list[str] | None = None,
         dtype: str | torch.dtype = torch.float32,
@@ -62,6 +63,8 @@ class FeatureMap:
         if circuit is None:
             raise ValueError("Either 'circuit' or 'builder' must be provided")
         self.circuit = circuit
+        if input_size is None:
+            raise TypeError("FeatureMap requires 'input_size' to be specified.")
         self.input_size = input_size
         if trainable_parameters is None:
             trainable_parameters = builder_trainable
@@ -763,6 +766,15 @@ class FidelityKernel(torch.nn.Module):
 
         len_x1 = len(x1)
         if x2 is not None:
+            x2_tensor = (
+                x2
+                if isinstance(x2, torch.Tensor)
+                else torch.as_tensor(x2, dtype=self.dtype, device=self.device)
+            )
+            U_adjoint = torch.stack([
+                self.feature_map.compute_unitary(x).transpose(0, 1).conj().to(x1.device)
+                for x in x2_tensor
+            ])
             if isinstance(x2, torch.Tensor):
                 U_adjoint = torch.stack([
                     self.feature_map.compute_unitary(x)
@@ -789,16 +801,26 @@ class FidelityKernel(torch.nn.Module):
             )
             all_circuits = U_forward[upper_idx[0]] @ U_adjoint[upper_idx[1]]
 
+        # Distribution for every evaluated circuit
+        _, amplitudes = self._slos_graph.compute(all_circuits, self.input_state)
+        _, probabilities = self._slos_graph.compute_probs_from_amplitudes(amplitudes)
+        if probabilities.ndim == 1:
+            probabilities = probabilities.unsqueeze(0)
+        probabilities = probabilities.to(dtype=self.dtype)
         # Distribution for every evaluated circuit (before detection)
         amplitudes = self._slos_graph.compute(all_circuits, self.input_state)[1]
         probabilities = torch.abs(amplitudes).square()
         detection_probs = self._detector_transform(probabilities)
 
         if self.shots > 0:
+            probabilities = self._autodiff_process.sampling_noise.pcvl_sampler(
+                probabilities, self.shots, self.sampling_method
+            )
             detection_probs = self._autodiff_process.sampling_noise.pcvl_sampler(
                 detection_probs, self.shots, self.sampling_method
             )
 
+        transition_probs = probabilities[:, self._input_state_index]
         if self._input_detection_index is not None:
             transition_probs = detection_probs[:, self._input_detection_index]
         else:
@@ -823,6 +845,13 @@ class FidelityKernel(torch.nn.Module):
                 kernel_matrix = self._project_psd(kernel_matrix)
 
         else:
+            x2_tensor = (
+                x2
+                if isinstance(x2, torch.Tensor)
+                else torch.as_tensor(x2, dtype=self.dtype, device=self.device)
+            )
+            transition_probs = transition_probs.to(dtype=self.dtype, device=x1.device)
+            kernel_matrix = transition_probs.reshape(len_x1, len(x2_tensor))
             if isinstance(x2, torch.Tensor):
                 transition_probs = transition_probs.to(
                     dtype=self.dtype, device=x1.device
@@ -869,11 +898,19 @@ class FidelityKernel(torch.nn.Module):
         U_adjoint = self.feature_map.compute_unitary(x2_t)
         U_adjoint = U_adjoint.conj().T
 
-        amplitudes = self._slos_graph.compute(U @ U_adjoint, self.input_state)[1]
-        probabilities = torch.abs(amplitudes).square()
+        kernel_unitary = U @ U_adjoint
+        _, amplitudes = self._slos_graph.compute(kernel_unitary, self.input_state)
+        _, probabilities = self._slos_graph.compute_probs_from_amplitudes(amplitudes)
+        if probabilities.ndim == 1:
+            probabilities = probabilities.unsqueeze(0)
+        probabilities = probabilities.to(dtype=self.dtype, device=self.device)
+
         detection_probs = self._detector_transform(probabilities)
 
         if self.shots > 0:
+            probabilities = self._autodiff_process.sampling_noise.pcvl_sampler(
+                probabilities, self.shots, self.sampling_method
+            )
             detection_probs = self._autodiff_process.sampling_noise.pcvl_sampler(
                 detection_probs, self.shots, self.sampling_method
             )
@@ -884,8 +921,8 @@ class FidelityKernel(torch.nn.Module):
             weights = self._input_detection_weights.to(
                 dtype=detection_probs.dtype, device=detection_probs.device
             )
-            value = detection_probs @ weights
-            value = value[0]
+            value = (detection_probs @ weights)[0]
+
         return value.item()
 
     @classmethod

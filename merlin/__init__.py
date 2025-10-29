@@ -32,21 +32,24 @@ from .algorithms.feed_forward import FeedForwardBlock, PoolingFeedForward
 from .algorithms.kernels import FeatureMap, FidelityKernel
 from .algorithms.layer import QuantumLayer
 from .algorithms.loss import NKernelAlignment
+from .builder.circuit_builder import CircuitBuilder
 
 # Essential enums
 # Advanced components (for power users)
 from .core.generators import CircuitGenerator, CircuitType, StateGenerator, StatePattern
 from .core.photonicbackend import PhotonicBackend
-from .pcvl_pytorch import CircuitConverter, build_slos_distribution_computegraph
-from .sampling.autodiff import AutoDiffProcess
-from .sampling.process import SamplingProcess
-from .sampling.strategies import OutputMappingStrategy
-from .torch_utils.torch_codes import (
-    FeatureEncoder,
-    LexGroupingMapper,
-    ModGroupingMapper,
+from .measurement import (
+    Amplitudes,
+    ModeExpectations,
     OutputMapper,
+    Probabilities,
 )
+from .measurement.autodiff import AutoDiffProcess
+from .measurement.process import SamplingProcess
+from .measurement.strategies import MeasurementStrategy
+from .pcvl_pytorch import CircuitConverter, build_slos_distribution_computegraph
+from .utils.grouping import LexGrouping, ModGrouping
+from .utils.torch_codes import FeatureEncoder
 
 # Version and metadata
 __version__ = "0.1.0"
@@ -61,7 +64,7 @@ __all__ = [
     # Configuration enums
     "CircuitType",
     "StatePattern",
-    "OutputMappingStrategy",
+    "MeasurementStrategy",
     # Advanced components
     "CircuitGenerator",
     "StateGenerator",
@@ -69,8 +72,11 @@ __all__ = [
     "SamplingProcess",
     "AutoDiffProcess",
     "OutputMapper",
-    "LexGroupingMapper",
-    "ModGroupingMapper",
+    "Probabilities",
+    "ModeExpectations",
+    "Amplitudes",
+    "LexGrouping",
+    "ModGrouping",
     "CircuitConverter",
     "build_slos_distribution_computegraph",
     "NKernelAlignment",
@@ -78,4 +84,5 @@ __all__ = [
     "FidelityKernel",
     "FeedForwardBlock",
     "PoolingFeedForward",
+    "CircuitBuilder",
 ]

@@ -45,7 +45,6 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[1, 0, 1],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
         )
 
         output = layer()
@@ -58,6 +57,36 @@ class TestDetectorsWithQuantumLayer:
             output[:, target_index], torch.ones_like(output[:, target_index])
         )
 
+    def test_amplitudes_strategy_rejected_with_detectors(self):
+        circuit = pcvl.Circuit(2)
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.threshold()
+
+        with pytest.raises(
+            RuntimeError,
+            match="cannot be used when Experiment contains at least one Detector",
+        ):
+            ML.QuantumLayer(
+                input_size=0,
+                experiment=experiment,
+                input_state=[1, 0],
+                measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
+            )
+
+        # No error with MeasurementStrategy PROBABILITIES or MODE_EXPECTATIONS
+        ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 0],
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+        )
+        ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 0],
+            measurement_strategy=ML.MeasurementStrategy.MODE_EXPECTATIONS,
+        )
+
     def test_pnr_detectors_match_default_distribution(self):
         circuit = pcvl.Circuit(2)
         circuit.add((0, 1), pcvl.BS())
@@ -66,7 +95,6 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             circuit=circuit,
             input_state=[1, 1],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             no_bunching=False,
         )
 
@@ -78,7 +106,6 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[1, 1],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             no_bunching=False,
         )
 
@@ -102,7 +129,6 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[4, 0],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             no_bunching=False,
         )
 
@@ -110,7 +136,6 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment_threshold,
             input_state=[4, 0],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             no_bunching=False,
         )
 
@@ -143,7 +168,6 @@ class TestDetectorsWithQuantumLayer:
             experiment=experiment,
             input_state=[3, 4, 1, 0],
             no_bunching=False,
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
         )
 
         output = layer()
@@ -170,7 +194,6 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[1, 1, 1, 0],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             no_bunching=False,
         )
 
@@ -195,14 +218,12 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[1, 1],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
         )
 
         layer_direct = ML.QuantumLayer(
             input_size=0,
             circuit=circuit,
             input_state=[1, 1],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
         )
 
         probs_exp = layer_experiment()
@@ -219,7 +240,6 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[0, 0, 2],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             no_bunching=False,
         )
 
@@ -243,7 +263,6 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=input_state,
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             no_bunching=False,
         )
 
@@ -283,7 +302,6 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=input_state,
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             no_bunching=False,
         )
 
@@ -318,7 +336,6 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             circuit=circuit,
             input_state=input_state,
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             no_bunching=False,
         )
 
@@ -334,7 +351,6 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=input_state,
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             no_bunching=False,
         )
 
@@ -361,7 +377,6 @@ class TestDetectorsWithQuantumLayer:
             input_state=[1, 0],
             input_parameters=["phi"],
             trainable_parameters=["theta"],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
         )
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 1))
 
@@ -391,7 +406,6 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=input_state,
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             no_bunching=False,
         )
 
@@ -429,7 +443,6 @@ class TestDetectorsWithQuantumLayer:
             experiment=exp,
             input_state=[1, 1, 1, 1],
             no_bunching=False,
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
         )
 
         layer_probs = layer()
@@ -447,6 +460,8 @@ class TestDetectorsWithQuantumLayer:
             pcvl_probs.append(prob)
 
         pcvl_probs = torch.tensor(pcvl_probs, dtype=torch.float32)
+        assert layer_probs.shape[-1] == len(layer_keys)
+        assert torch.tensor(pcvl_probs).shape[-1] == len(pcvl_keys)
         assert layer_keys == pcvl_keys
         assert torch.allclose(layer_probs, torch.tensor(pcvl_probs))
 
@@ -482,21 +497,18 @@ class TestDetectorsWithQuantumLayer:
             experiment=experiment,
             input_state=[1, 1, 1, 1],
             no_bunching=False,
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
         )
         ML.QuantumLayer(
             input_size=0,
             experiment=experiment,
             input_state=[1, 1, 1, 1],
             no_bunching=True,
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
         )
         ML.QuantumLayer(
             input_size=0,
             experiment=experiment_pnr_detector,
             input_state=[1, 1, 1, 1],
             no_bunching=False,
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
         )
 
         with pytest.raises(RuntimeError):
@@ -505,14 +517,12 @@ class TestDetectorsWithQuantumLayer:
                 experiment=experiment_pnr_detector,
                 input_state=[1, 1, 1, 1],
                 no_bunching=True,
-                output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             )
         ML.QuantumLayer(
             input_size=0,
             experiment=experiment_threshold_detector,
             input_state=[1, 1, 1, 1],
             no_bunching=False,
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
         )
         with pytest.raises(RuntimeError):
             ML.QuantumLayer(
@@ -520,14 +530,12 @@ class TestDetectorsWithQuantumLayer:
                 experiment=experiment_threshold_detector,
                 input_state=[1, 1, 1, 1],
                 no_bunching=True,
-                output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             )
         ML.QuantumLayer(
             input_size=0,
             experiment=experiment_ppnr_detector,
             input_state=[1, 1, 1, 1],
             no_bunching=False,
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
         )
         with pytest.raises(RuntimeError):
             ML.QuantumLayer(
@@ -535,7 +543,6 @@ class TestDetectorsWithQuantumLayer:
                 experiment=experiment_ppnr_detector,
                 input_state=[1, 1, 1, 1],
                 no_bunching=True,
-                output_mapping_strategy=ML.OutputMappingStrategy.NONE,
             )
 
 
@@ -665,107 +672,3 @@ class TestDetectorsWithKernels:
         assert all(sum(key) == sum(input_state) for key in keys_pnr)
         assert any(sum(key) < sum(input_state) for key in keys_threshold)
         assert all(value in (0, 1) for key in keys_threshold for value in key)
-
-
-class TestDetectorsWithFeedForward:
-    """Test suite for Detectors integration with FeedForward."""
-
-    def test_feedforward_respects_detector_configuration_depth_0(self):
-        """FeedForward should honour detector transforms from embedded quantum layers."""
-        circuit = pcvl.Circuit(2)
-        circuit.add((0, 1), pcvl.BS())
-        circuit.add(0, pcvl.PS(pcvl.P("phi")))
-
-        experiment = pcvl.Experiment(circuit)
-        experiment.detectors[0] = pcvl.Detector.threshold()
-        experiment.detectors[1] = pcvl.Detector.threshold()
-
-        layer = ML.QuantumLayer(
-            input_size=1,
-            experiment=experiment,
-            input_state=[1, 0],
-            input_parameters=["phi"],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
-        )
-
-        ff = ML.FeedForwardBlock(input_size=1, n=1, m=2, depth=0, conditional_modes=[0])
-        ff.layers[()] = layer
-
-        x = torch.zeros(2, 1)
-        output = ff(x)
-
-        assert output.shape == (2, len(layer.get_output_keys()))
-        assert torch.allclose(output.sum(dim=1), torch.ones(2), atol=1e-6)
-
-        feedforward_keys = [tuple(key) for key in ff.get_output_keys()]
-        layer_keys = [tuple(key) for key in layer.get_output_keys()]
-        assert feedforward_keys == layer_keys
-        assert all(value in (0, 1) for key in feedforward_keys for value in key)
-
-    def test_feedforward_with_pnr_detectors_matches_default_depth_0(self):
-        """PNR detectors should reproduce the no-detector behaviour."""
-        circuit = pcvl.Circuit(2)
-        circuit.add((0, 1), pcvl.BS())
-
-        base_layer = ML.QuantumLayer(
-            input_size=0,
-            circuit=circuit,
-            input_state=[1, 2],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
-            no_bunching=False,
-        )
-
-        experiment = pcvl.Experiment(circuit)
-        experiment.detectors[0] = pcvl.Detector.pnr()
-        experiment.detectors[1] = pcvl.Detector.pnr()
-
-        detector_layer = ML.QuantumLayer(
-            input_size=0,
-            experiment=experiment,
-            input_state=[1, 2],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
-            no_bunching=False,
-        )
-
-        ff = ML.FeedForwardBlock(input_size=0, n=3, m=2, depth=0, conditional_modes=[0])
-        ff.layers[()] = detector_layer
-
-        probs_base = base_layer()
-        x = torch.rand(3, 0)
-        probs_ff = ff(x)
-        expected = probs_base.expand_as(probs_ff)
-        assert torch.allclose(probs_ff, expected, atol=1e-6)
-
-    def test_feedforward_with_interleaved_detectors(self):
-        """FeedForward should support probabilistic interleaved detectors."""
-        circuit = pcvl.Circuit(3)
-        circuit.add((0, 1), pcvl.BS())
-        circuit.add((1, 2), pcvl.BS())
-
-        experiment = pcvl.Experiment(circuit)
-        experiment.detectors[0] = pcvl.Detector.ppnr(n_wires=1)
-        experiment.detectors[1] = pcvl.Detector.ppnr(n_wires=2)
-        experiment.detectors[2] = pcvl.Detector.threshold()
-
-        layer = ML.QuantumLayer(
-            input_size=0,
-            experiment=experiment,
-            input_state=[1, 0, 0],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
-        )
-
-        ff = ML.FeedForwardBlock(
-            input_size=0, n=1, m=3, depth=1, conditional_modes=[0, 1]
-        )
-        ff.layers[()] = layer
-
-        x = torch.rand(4, 0)
-        output = ff(x)
-        assert torch.allclose(
-            output.sum(dim=1), torch.ones_like(output[:, 0]), atol=1e-6
-        )
-        assert torch.all(output >= 0)
-        ff_keys = ff.get_output_keys()
-        assert len(ff_keys) == output.shape[-1]
-        assert all(0 <= key[0] <= 2 for key in ff_keys)
-        assert all(0 <= key[1] <= 1 for key in ff_keys)

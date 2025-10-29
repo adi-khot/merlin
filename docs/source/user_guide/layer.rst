@@ -18,11 +18,12 @@ Overview
   :class:`perceval.Circuit` or a fully specified :class:`perceval.Experiment`.
 - **Detector awareness** – Layers automatically derive detector transforms from
   the experiment, enabling threshold, PNR, or hybrid detection schemes.
+- **Measurement strategies** – Select between probabilities, per-mode expectations,
+  or raw amplitudes through :class:`~merlin.measurement.strategies.MeasurementStrategy`.
+  The layer validates incompatible combinations (e.g. detectors with amplitude read-out).
 - **Autograd ready** – QuantumLayer exposes a PyTorch ``Module`` interface,
   supports batching and differentiable forward passes, and plays nicely with
   optimisers or higher-level architectures.
-- **Output mapping strategies** – Choose how raw detection probabilities are
-  post-processed (see :mod:`merlin.sampling.strategies` for options).
 
 -----------------------
 Initialisation recipes
@@ -43,7 +44,7 @@ learning experts without any prior knowledge in quantum machine learning.
    layer = ML.QuantumLayer.simple(
        input_size=4,
        n_params=64,
-       output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
+       measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
        no_bunching=True,
    )
 
@@ -71,7 +72,7 @@ with Perceval.
    layer = ML.QuantumLayer(
        input_size=2,
        builder=builder,
-       output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+       measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
        no_bunching=True,
    )
 
@@ -101,7 +102,7 @@ a good understanding of Perceval.
        input_parameters=["phi"],
        trainable_parameters=["theta"],
        input_state=[1, 0, 0],
-       output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+       measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
    )
 
    x = torch.linspace(0.0, 1.0, steps=8).unsqueeze(1)
@@ -132,7 +133,7 @@ is the one that gives the user the most options when utilizing a QuantumLayer.
        input_size=0,
        experiment=experiment,
        input_state=[1, 1],
-       output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+       measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
    )
 
    probs = layer()
@@ -142,10 +143,13 @@ is the one that gives the user the most options when utilizing a QuantumLayer.
 Detector integration
 -----------
 
-- If any detector is set on the experiment, ensure ``no_bunching`` is ``False``.
-  Bunching suppression conflicts with detector post-processing.
+- If any detector is set on the experiment, ``no_bunching`` must be ``False``.
+  The layer enforces this by raising a ``RuntimeError`` when both are requested.
 - Without an experiment, the layer defaults to ideal PNR detection on every
   mode, mirroring Perceval’s default behaviour.
+- ``MeasurementStrategy.AMPLITUDES`` requires access to raw complex amplitudes
+  and is therefore incompatible with custom detectors. Attempting this combination
+  raises a ``RuntimeError``.
 - Call :meth:`~merlin.algorithms.layer.QuantumLayer.get_output_keys` to inspect
   the classical outcomes produced by the detector transform.
 

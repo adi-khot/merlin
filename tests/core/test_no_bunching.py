@@ -36,7 +36,7 @@ from merlin.core.generators import (
     StatePattern,
 )
 from merlin.core.process import ComputationProcessFactory
-from merlin.sampling.strategies import OutputMappingStrategy
+from merlin.measurement.strategies import MeasurementStrategy
 
 
 def calculate_fock_space_size(n_modes: int, n_photons: int) -> int:
@@ -183,14 +183,13 @@ class TestNoBunchingFunctionality:
             input_state = StateGenerator.generate_state(
                 n_modes, n_photons, StatePattern.PERIODIC
             )
-
             q_layer = QuantumLayer(
-                input_size=2,
+                input_size=3,
                 circuit=circuit,
                 input_state=input_state,
                 trainable_parameters=["phi_"],
                 input_parameters=["pl"],
-                output_mapping_strategy=OutputMappingStrategy.NONE,
+                measurement_strategy=MeasurementStrategy.PROBABILITIES,
                 no_bunching=no_bunching,
             )
 

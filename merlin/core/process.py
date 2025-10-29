@@ -113,8 +113,8 @@ class ComputationProcess(AbstractComputationProcess):
         return amplitudes
 
     def compute_superposition_state(
-        self, parameters: list[torch.Tensor]
-    ) -> torch.Tensor:
+        self, parameters: list[torch.Tensor], return_keys: bool = False
+    ) -> torch.Tensor | tuple[list[tuple[int, ...]], torch.Tensor]:
         unitary = self.converter.to_tensor(*parameters)
         changed_unitary = True
 
@@ -191,14 +191,13 @@ class ComputationProcess(AbstractComputationProcess):
         input_state = self.input_state.to(amplitudes.dtype)
 
         final_amplitudes = input_state @ amplitudes
-
-        # Save keys and amplitudes
-        self.keys = keys
-        self.amplitudes = final_amplitudes
-
+        if return_keys:
+            return keys, final_amplitudes
         return final_amplitudes
 
-    def compute_with_keys(self, parameters: list[torch.Tensor]):
+    def compute_with_keys(
+        self, parameters: list[torch.Tensor], return_keys: bool = False
+    ):
         """Compute quantum output distribution and return both keys and probabilities."""
         # Generate unitary matrix from parameters
         unitary = self.converter.to_tensor(*parameters)

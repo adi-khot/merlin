@@ -207,7 +207,12 @@ __all__ = [
 
 # Example usage
 if __name__ == "__main__":
-    X, y, metadata = get_data_train_percevalquest()
-    Xtest, ytest, _ = get_data_test_percevalquest()
+    X, y, metadata = get_data_train_original()
+    Xtest, ytest, _ = get_data_test_original()
+    X_mean_std_per_pixel = np.std(X.reshape(X.shape[0], -1), axis=0).mean()
     print(len(X), len(Xtest))
+    # Mean of per-pixel standard deviations – Helps characterize/identify the dataset by capturing pixel-level variability.
+    X_mean_std_per_pixel = np.std(X.reshape(X.shape[0], -1), axis=0).mean()
+    Xtest_mean_std_per_pixel = np.std(Xtest.reshape(Xtest.shape[0], -1), axis=0).mean()
+    print(X_mean_std_per_pixel, Xtest_mean_std_per_pixel)
     print(metadata)

@@ -51,6 +51,12 @@ Basic Example
                 shots=10000        # Number of measurements
             )
 
+            # ``QuantumLayer.simple`` returns a lightweight wrapper that exposes the underlying
+            # quantum layer through ``.quantum_layer`` and any post-processing through
+            # ``.post_processing``.  Common attributes such as ``.output_size`` and ``.circuit`` are
+            # forwarded, so existing code can continue to treat the result like a standard
+            # ``QuantumLayer`` when preferred.
+
             # Classical output layer
             self.classical_out = nn.Sequential(
                 nn.Linear(self.quantum.output_size, 8),
@@ -117,8 +123,15 @@ Creating Quantum Layers with Factories
 
 .. code-block:: python
 
-    from merlin import PhotonicBackend, CircuitType, StatePattern, AnsatzFactory, QuantumLayer
-    from merlin import OutputMappingStrategy
+    from merlin import (
+        PhotonicBackend,
+        CircuitType,
+        StatePattern,
+        AnsatzFactory,
+        QuantumLayer,
+        MeasurementStrategy,
+        LexGrouping,
+    )
 
     # Define the quantum experiment configuration
     n_modes = 6
@@ -140,7 +153,7 @@ Creating Quantum Layers with Factories
         PhotonicBackend=photonicbackend,
         input_size=input_size,
         # output_size not specified - will be calculated automatically unless specified
-        output_mapping_strategy=OutputMappingStrategy.NONE
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
     )
 
     # Create quantum layer
@@ -190,8 +203,7 @@ Using Factory-Created Layers in Models
             ansatz = AnsatzFactory.create(
                 PhotonicBackend=photonicbackend,
                 input_size=4,
-                output_size = 10,
-                output_mapping_strategy=OutputMappingStrategy.LINEAR
+                measurement_strategy=MeasurementStrategy.PROBABILITIES,
             )
 
             self.quantum = QuantumLayer(
@@ -269,17 +281,22 @@ Create Quantum Layer from Circuit
 
     quantum_layer = ML.QuantumLayer(
         input_size=4,                                              # 4 input features
-        output_size=3,                                             # 3 output classes
         circuit=circuit,                                           # Quantum circuit
         trainable_parameters=["theta"],                            # Parameters to train
         input_parameters=["px"],                                   # Input encoding parameters
         input_state=[1, 0, 1, 0, 1, 0],                           # Initial photon state
-        output_mapping_strategy=ML.OutputMappingStrategy.LINEAR    # Output mapping
+        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+    )
+
+    # Optional: reshape the Fock distribution to 3 features
+    mapped_layer = nn.Sequential(
+        quantum_layer,
+        ML.LexGrouping(quantum_layer.output_size, 3),
     )
 
     # Test the layer
     x = torch.rand(10, 4)  # Batch of 10 samples, 4 features each
-    output = quantum_layer(x)
+    output = mapped_layer(x)
     print(f"Input shape: {x.shape}")      # [10, 4]
     print(f"Output shape: {output.shape}")  # [10, 3]
 
@@ -290,13 +307,12 @@ Understanding Parameters
 
     quantum_layer = ML.QuantumLayer(
         input_size=4,                                              # Classical input features
-        output_size=3,                                             # Desired output size
         circuit=circuit,                                           # Quantum circuit
         trainable_parameters=["theta"],                            # Which parameters to train
         input_parameters=["px"],                                   # Input encoding parameters
         input_state=[1, 0] * (m // 2) + [0] * (m % 2),           # Initial photon distribution
         no_bunching=False,                                         # Allow photon bunching
-        output_mapping_strategy=ML.OutputMappingStrategy.LINEAR    # How to map quantum output
+        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
     )
 
 **Parameter Explanation**:
@@ -305,7 +321,8 @@ Understanding Parameters
 - ``input_parameters``: Parameters that encode classical input data
 - ``input_state``: Initial photon configuration (e.g., [1,0,1,0,0,0] = photons in modes 0,2)
 - ``no_bunching``: Whether multiple photons can occupy the same mode
-- ``output_mapping_strategy``: How quantum probabilities become classical outputs
+- ``measurement_strategy``: Which measurement post-processing Merlin applies (e.g., Fock distribution or mode expectation)
+- Add ``ML.LexGrouping`` or ``ML.ModGrouping`` *after* the quantum layer to reduce the Fock distribution when needed
 
 Complete Hybrid Network Example
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -326,15 +343,18 @@ Complete Hybrid Network Example
             # Create quantum circuit
             circuit = create_quantum_circuit(n_modes)
 
-            # Quantum processing layer
-            self.quantum_layer = ML.QuantumLayer(
+            # Quantum processing layer + grouping
+            quantum_core = ML.QuantumLayer(
                 input_size=4,
-                output_size=6,
                 circuit=circuit,
                 trainable_parameters=["theta"],
                 input_parameters=["px"],
                 input_state=[1, 0] * (n_modes // 2) + [0] * (n_modes % 2),
-                output_mapping_strategy=ML.OutputMappingStrategy.LINEAR
+                measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+            )
+            self.quantum = nn.Sequential(
+                quantum_core,
+                ML.LexGrouping(quantum_core.output_size, 6),
             )
 
             # Classical output layer
@@ -351,7 +371,7 @@ Complete Hybrid Network Example
             x = torch.sigmoid(x)
 
             # Quantum transformation
-            x = self.quantum_layer(x)
+            x = self.quantum(x)
 
             # Classical output
             return self.classifier(x)

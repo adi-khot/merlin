@@ -38,10 +38,13 @@ from ..builder.circuit_builder import (
     CircuitBuilder,
 )
 from ..core.process import ComputationProcessFactory
-from ..sampling.autodiff import AutoDiffProcess
-from ..sampling.detectors import DetectorTransform, resolve_detectors
-from ..sampling.strategies import OutputMappingStrategy
-from ..torch_utils.torch_codes import OutputMapper
+from ..measurement import OutputMapper
+from ..measurement.autodiff import AutoDiffProcess
+from ..measurement.detectors import DetectorTransform, resolve_detectors
+from ..measurement.strategies import (
+    MeasurementStrategy,
+)
+from ..utils.grouping import ModGrouping
 
 
 class QuantumLayer(nn.Module):
@@ -82,7 +85,6 @@ class QuantumLayer(nn.Module):
     def __init__(
         self,
         input_size: int,
-        output_size: int | None = None,
         # Builder-based construction
         builder: CircuitBuilder | None = None,
         # Custom circuit construction
@@ -93,10 +95,10 @@ class QuantumLayer(nn.Module):
         input_state: list[int] | None = None,
         n_photons: int | None = None,
         # only for custom circuits and experiments
-        trainable_parameters: list[str] = None,
-        input_parameters: list[str] = None,
+        trainable_parameters: list[str] | None = None,
+        input_parameters: list[str] | None = None,
         # Common parameters
-        output_mapping_strategy: OutputMappingStrategy = OutputMappingStrategy.LINEAR,
+        measurement_strategy: MeasurementStrategy = MeasurementStrategy.PROBABILITIES,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         shots: int = 0,
@@ -112,6 +114,7 @@ class QuantumLayer(nn.Module):
         self.dtype = dtype or torch.float32
         self.input_size = input_size
         self.no_bunching = no_bunching
+        self.measurement_strategy = measurement_strategy
         self.experiment: pcvl.Experiment | None = None
 
         self._detector_transform: DetectorTransform | None = None
@@ -119,13 +122,10 @@ class QuantumLayer(nn.Module):
         self._raw_output_keys: list[tuple[int, ...]] = []
         self._detector_is_identity: bool = True
         self._output_size: int = 0
+        self.input_state = input_state
 
         # ensure exclusivity of circuit/builder/experiment
-        if (
-            (circuit is not None and (builder is not None or experiment is not None))
-            or (builder is not None and experiment is not None)
-            or (circuit is None and builder is None and experiment is None)
-        ):
+        if sum(x is not None for x in (circuit, builder, experiment)) != 1:
             raise ValueError(
                 "Provide exactly one of 'circuit', 'builder', or 'experiment'."
             )
@@ -160,16 +160,16 @@ class QuantumLayer(nn.Module):
         self.angle_encoding_specs: dict[str, dict[str, Any]] = {}
 
         resolved_circuit: pcvl.Circuit | None = None
-        trainable_parameter_list = (
+        trainable_parameters = (
             list(trainable_parameters) if trainable_parameters else []
         )
-        input_parameter_list = list(input_parameters) if input_parameters else []
+        input_parameters = list(input_parameters) if input_parameters else []
 
         if builder is not None:
             if circuit is not None:
                 raise ValueError("Provide either 'circuit' or 'builder', not both")
-            trainable_parameter_list = list(builder.trainable_parameter_prefixes)
-            input_parameter_list = list(builder.input_parameter_prefixes)
+            trainable_parameters = list(builder.trainable_parameter_prefixes)
+            input_parameters = list(builder.input_parameter_prefixes)
             self.angle_encoding_specs = builder.angle_encoding_specs
             resolved_circuit = builder.to_pcvl_circuit(pcvl)
             self.experiment = pcvl.Experiment(resolved_circuit)
@@ -195,15 +195,21 @@ class QuantumLayer(nn.Module):
             raise RuntimeError(
                 "no_bunching must be False if Experiement contains at least one Detector."
             )
+        if (
+            not self._empty_detectors
+            and measurement_strategy == MeasurementStrategy.AMPLITUDES
+        ):
+            raise RuntimeError(
+                "measurement_strategy=MeasurementStrategy.AMPLITUDES cannot be used when Experiment contains at least one Detector."
+            )
 
         self._init_from_custom_circuit(
             resolved_circuit,
             input_state,
             n_photons,
-            trainable_parameter_list,
-            input_parameter_list,
-            output_size,
-            output_mapping_strategy,
+            trainable_parameters,
+            input_parameters,
+            measurement_strategy,
         )
 
         # Setup sampling
@@ -218,8 +224,7 @@ class QuantumLayer(nn.Module):
         n_photons: int | None,
         trainable_parameters: list[str],
         input_parameters: list[str],
-        output_size: int | None,
-        output_mapping_strategy: OutputMappingStrategy,
+        measurement_strategy: MeasurementStrategy,
     ):
         """Initialize from custom circuit (backward compatible mode)."""
         if input_state is not None:
@@ -245,6 +250,7 @@ class QuantumLayer(nn.Module):
             no_bunching=self.no_bunching,
         )
 
+        # Setup DetectorTransform
         self.n_photons = self.computation_process.n_photons
         raw_keys = list(self.computation_process.simulation_graph.mapped_keys)
         self._raw_output_keys = []
@@ -263,11 +269,48 @@ class QuantumLayer(nn.Module):
         self._detector_keys = self._detector_transform.output_keys
         self._detector_is_identity = self._detector_transform.is_identity
 
+        # Validate that the declared input size matches the builder-provided parameters
+        spec_mappings = self.computation_process.converter.spec_mappings
+        total_input_params = 0
+        if input_parameters is not None:
+            total_input_params = sum(
+                len(spec_mappings.get(prefix, [])) for prefix in input_parameters
+            )
+
+        # Prefer metadata from angle encoding specs when available to deduce feature count
+        expected_features: int | None = None
+        if self.angle_encoding_specs:
+            expected_features = 0
+            specs_provided = False
+            for metadata in self.angle_encoding_specs.values():
+                # Each prefix maintains its own logical feature indices; count them separately
+                # so distinct encoders do not collide when they reuse low-order indices.
+                combos = metadata.get("combinations", [])
+                prefix_indices = {idx for combo in combos for idx in combo}
+                if not prefix_indices:
+                    continue
+                specs_provided = True
+                expected_features += len(prefix_indices)
+            if not specs_provided:
+                expected_features = None
+
+        if expected_features is not None:
+            if expected_features != self.input_size:
+                raise ValueError(
+                    f"Input size ({self.input_size}) must equal the number of encoded input features "
+                    f"generated by the circuit ({expected_features})."
+                )
+        elif total_input_params != self.input_size:
+            raise ValueError(
+                f"Input size ({self.input_size}) must equal the number of input parameters "
+                f"generated by the circuit ({total_input_params})."
+            )
+
         # Setup parameters
         self._setup_parameters_from_custom(trainable_parameters)
 
-        # Setup output mapping
-        self._setup_output_mapping_from_custom(output_size, output_mapping_strategy)
+        # Setup measurement strategy
+        self._setup_measurement_strategy_from_custom(measurement_strategy)
 
     def _setup_parameters_from_custom(self, trainable_parameters: list[str] | None):
         """Setup parameters from custom circuit configuration."""
@@ -291,8 +334,8 @@ class QuantumLayer(nn.Module):
                 self.register_parameter(tp, parameter)
                 self.thetas.append(parameter)
 
-    def _setup_output_mapping_from_custom(
-        self, output_size: int | None, output_mapping_strategy: OutputMappingStrategy
+    def _setup_measurement_strategy_from_custom(
+        self, measurement_strategy: MeasurementStrategy
     ):
         """Setup output mapping for custom circuit construction."""
         if self._detector_transform is None:
@@ -301,45 +344,113 @@ class QuantumLayer(nn.Module):
         dist_size = self._detector_transform.output_size
 
         # Determine output size
-        if output_size is None:
-            if output_mapping_strategy == OutputMappingStrategy.NONE:
-                resolved_output_size = dist_size
+        if measurement_strategy == MeasurementStrategy.PROBABILITIES:
+            self._output_size = dist_size
+        elif measurement_strategy == MeasurementStrategy.MODE_EXPECTATIONS:
+            if type(self.circuit) is pcvl.Circuit:
+                self._output_size = self.circuit.m
+            elif type(self.circuit) is CircuitBuilder:
+                self._output_size = self.circuit.n_modes
             else:
-                raise ValueError(
-                    "output_size must be specified for non-NONE strategies"
-                )
+                raise TypeError(f"Unknown circuit type: {type(self.circuit)}")
+        elif measurement_strategy == MeasurementStrategy.AMPLITUDES:
+            self._output_size = dist_size
         else:
-            resolved_output_size = output_size
+            raise TypeError(f"Unknown measurement_strategy: {measurement_strategy}")
 
-        self._output_size = resolved_output_size
+        keys = self._detector_keys
 
         # Create output mapping
-        self.output_mapping = OutputMapper.create_mapping(
-            output_mapping_strategy, dist_size, self._output_size
+        self.measurement_mapping = OutputMapper.create_mapping(
+            measurement_strategy,
+            self.computation_process.no_bunching,
+            keys,
         )
-
-        # Ensure output mapping has correct dtype and device
-        if hasattr(self.output_mapping, "weight"):
-            self.output_mapping = self.output_mapping.to(
-                dtype=self.dtype, device=self.device
-            )
 
     def _create_dummy_parameters(self) -> list[torch.Tensor]:
         """Create dummy parameters for initialization."""
-        params = list(self.thetas)
-
-        # For custom circuits, create dummy based on input parameter count
         spec_mappings = self.computation_process.converter.spec_mappings
-        input_params = self.computation_process.input_parameters
-        for ip in input_params:
-            if ip in spec_mappings:
-                param_count = len(spec_mappings[ip])
-                dummy_input = torch.zeros(
-                    param_count, dtype=self.dtype, device=self.device
-                )
-                params.append(dummy_input)  # type: ignore[arg-type]
+        trainable_prefixes = list(
+            getattr(self.computation_process, "trainable_parameters", [])
+        )
+        input_prefixes = list(self.computation_process.input_parameters)
+
+        params: list[torch.Tensor] = []
+
+        def _zeros(count: int) -> torch.Tensor:
+            return torch.zeros(count, dtype=self.dtype, device=self.device)
+
+        # Feed the true trainable parameters first, preserving converter order.
+        theta_iter = iter(self.thetas)
+        for prefix in trainable_prefixes:
+            param = next(theta_iter, None)
+            if param is not None:
+                params.append(param)
+                continue
+
+            # Fall back to zero tensors only if no nn.Parameter exists yet.
+            param_count = len(spec_mappings.get(prefix, []))
+            params.append(_zeros(param_count))
+
+        # Append any additional trainable parameters not covered by prefixes (defensive guard).
+        params.extend(list(theta_iter))
+
+        # Generate placeholder tensors for every declared input prefix in order. Encoders
+        # sometimes omit converter specs ->  we fall
+        # back to their stored combination metadata to deduce tensor length.
+        for prefix in input_prefixes:
+            # Counting parameters using their prefix
+            param_count = self._feature_count_for_prefix(prefix) or 0
+            if prefix in self.angle_encoding_specs:
+                combos = self.angle_encoding_specs[prefix].get("combinations", [])
+                if combos:
+                    param_count = max(param_count, len(combos))
+            params.append(_zeros(param_count))
 
         return params  # type: ignore[return-value]
+
+    def _feature_count_for_prefix(self, prefix: str) -> int | None:
+        """Infer the number of raw features associated with an encoding prefix."""
+        spec = self.angle_encoding_specs.get(prefix)
+        if spec:
+            combos = spec.get("combinations", [])
+            feature_indices = {idx for combo in combos for idx in combo}
+            if feature_indices:
+                return len(feature_indices)
+
+        spec_mappings = getattr(self.computation_process.converter, "spec_mappings", {})
+        mapping = spec_mappings.get(prefix, [])
+        if mapping:
+            return len(mapping)
+
+        return None
+
+    def _split_inputs_by_prefix(
+        self, prefixes: list[str], tensor: torch.Tensor
+    ) -> list[torch.Tensor] | None:
+        """Split a single logical input tensor into per-prefix chunks when possible."""
+        counts: list[int] = []
+        for prefix in prefixes:
+            count = self._feature_count_for_prefix(prefix)
+            if count is None:
+                return None
+            counts.append(count)
+
+        total_required = sum(counts)
+        feature_dim = tensor.shape[-1] if tensor.dim() > 1 else tensor.shape[0]
+        if total_required != feature_dim:
+            return None
+
+        slices: list[torch.Tensor] = []
+        offset = 0
+        for count in counts:
+            end = offset + count
+            if tensor.dim() == 1:
+                slices.append(tensor[offset:end])
+            else:
+                slices.append(tensor[..., offset:end])
+            offset = end
+        return slices
 
     def _prepare_input_encoding(
         self, x: torch.Tensor, prefix: str | None = None
@@ -423,6 +534,15 @@ class QuantumLayer(nn.Module):
         # Apply input encoding
         prefixes = getattr(self.computation_process, "input_parameters", [])
 
+        # Automatically split a single logical input across multiple prefixes when possible.
+        # Builder circuits that define several encoders typically expose one logical tensor
+        # to the user, while the converter expects separate tensors per prefix.
+        if len(prefixes) > 1 and len(input_parameters) == 1:
+            split_inputs = self._split_inputs_by_prefix(prefixes, input_parameters[0])
+            if split_inputs is not None:
+                input_parameters = split_inputs
+
+        # Custom mode or multiple parameters
         for idx, x in enumerate(input_parameters):
             prefix = None
             if prefixes:
@@ -437,7 +557,6 @@ class QuantumLayer(nn.Module):
         *input_parameters: torch.Tensor,
         apply_sampling: bool | None = None,
         shots: int | None = None,
-        return_amplitudes: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
         """
         Forward pass through the quantum layer.
@@ -463,7 +582,13 @@ class QuantumLayer(nn.Module):
         apply_sampling, shots = self.autodiff_process.autodiff_backend(
             needs_gradient, apply_sampling or False, shots or self.shots
         )
-        distribution = amplitudes.real**2 + amplitudes.imag**2
+        if type(amplitudes) is torch.Tensor:
+            distribution = amplitudes.real**2 + amplitudes.imag**2
+        elif type(amplitudes) is tuple:
+            amplitudes = amplitudes[1]
+            distribution = amplitudes.real**2 + amplitudes.imag**2
+        else:
+            raise TypeError(f"Unexpected amplitudes type: {type(amplitudes)}")
         if self.no_bunching:
             sum_probs = distribution.sum(dim=1, keepdim=True)
 
@@ -484,22 +609,30 @@ class QuantumLayer(nn.Module):
                     ),
                     amplitudes,
                 )
-        if self._detector_transform is not None:
-            distribution = self._detector_transform(distribution)
+        if (
+            self.measurement_strategy == MeasurementStrategy.PROBABILITIES
+            or self.measurement_strategy == MeasurementStrategy.MODE_EXPECTATIONS
+        ):
+            if self._detector_transform is not None:
+                distribution = self._detector_transform(distribution)
 
-        if apply_sampling and shots > 0:
-            distribution = self.autodiff_process.sampling_noise.pcvl_sampler(
-                distribution, shots
-            )
-        if return_amplitudes:
-            warnings.warn(
-                "The returned amplitudes correspond to pre-detection states (before applying any perceval.Detector)",
-                stacklevel=2,
-            )
-            return self.output_mapping(distribution), amplitudes
-        # Apply output mapping
+            if apply_sampling and shots > 0:
+                counts = self.autodiff_process.sampling_noise.pcvl_sampler(
+                    distribution, shots
+                )
+                results = counts
+            else:
+                results = distribution
+            # Apply measurement_strategy
+            results = self.measurement_mapping(results)
 
-        return self.output_mapping(distribution)
+        # MeasurementStrategy.AMPLITUDES
+        else:
+            results = self.measurement_mapping(amplitudes)
+
+        # TODO treatement when Detectors are defined with MeasurementStrategy.AMPLITUDES
+        # -> Incompatible
+        return results
 
     def set_sampling_config(self, shots: int | None = None, method: str | None = None):
         """Update sampling configuration."""
@@ -547,11 +680,6 @@ class QuantumLayer(nn.Module):
             self.dtype, target_device
         )
 
-        if hasattr(self.output_mapping, "weight"):
-            self.output_mapping = self.output_mapping.to(
-                dtype=self.dtype, device=target_device
-            )
-
         if self._detector_transform is not None:
             self._detector_transform = self._detector_transform.to(*args, **kwargs)
 
@@ -559,6 +687,8 @@ class QuantumLayer(nn.Module):
 
     def get_output_keys(self):
         if getattr(self, "_detector_transform", None) is None:
+            return self.computation_process.simulation_graph.mapped_keys
+        if self.measurement_strategy == MeasurementStrategy.AMPLITUDES:
             return self.computation_process.simulation_graph.mapped_keys
         return (
             self._raw_output_keys
@@ -581,7 +711,6 @@ class QuantumLayer(nn.Module):
         n_params: int = 100,
         shots: int = 0,
         output_size: int | None = None,
-        output_mapping_strategy: OutputMappingStrategy = OutputMappingStrategy.NONE,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         no_bunching: bool = True,
@@ -604,7 +733,6 @@ class QuantumLayer(nn.Module):
                 amount because each added MZI exposes two parameters.
             shots: Number of sampling shots for stochastic evaluation.
             output_size: Optional classical output width.
-            output_mapping_strategy: Strategy used to post-process the quantum distribution.
             device: Optional target device for tensors.
             dtype: Optional tensor dtype.
             no_bunching: Whether to restrict to states without photon bunching.
@@ -684,21 +812,65 @@ class QuantumLayer(nn.Module):
                 f"{total_trainable} trainable parameters but {expected_trainable} were expected."
             )
 
-        return cls(
+        quantum_layer = cls(
             input_size=input_size,
-            output_size=output_size,
             builder=builder,
             n_photons=n_photons,
-            output_mapping_strategy=output_mapping_strategy,
+            measurement_strategy=MeasurementStrategy.PROBABILITIES,
             shots=shots,
             no_bunching=no_bunching,
             device=device,
             dtype=dtype,
         )
 
+        class SimpleSequential(nn.Module):
+            """Simple Sequential Module that contains the quantum layer as well as the post processing"""
+
+            def __init__(self, quantum_layer: QuantumLayer, post_processing: nn.Module):
+                super().__init__()
+                self.quantum_layer = quantum_layer
+                self.post_processing = post_processing
+                self.add_module("quantum_layer", quantum_layer)
+                self.add_module("post_processing", post_processing)
+                self.circuit = quantum_layer.circuit
+                if hasattr(post_processing, "output_size"):
+                    self._output_size = post_processing.output_size  # type: ignore[attr-defined]
+                else:
+                    self._output_size = quantum_layer.output_size
+
+            @property
+            def output_size(self):
+                return self._output_size
+
+            def forward(self, x: torch.Tensor) -> torch.Tensor:
+                return self.post_processing(self.quantum_layer(x))
+
+        if output_size is not None:
+            if not isinstance(output_size, int):
+                raise TypeError("output_size must be an integer.")
+            if output_size <= 0:
+                raise ValueError("output_size must be a positive integer.")
+            if output_size != quantum_layer.output_size:
+                model = SimpleSequential(
+                    quantum_layer, ModGrouping(quantum_layer.output_size, output_size)
+                )
+            else:
+                model = SimpleSequential(quantum_layer, nn.Identity())
+        else:
+            model = SimpleSequential(quantum_layer, nn.Identity())
+
+        return model
+
     def __str__(self) -> str:
         """String representation of the quantum layer."""
-        return (
-            "QuantumLayer(custom_circuit, "
-            f"input_size={self.input_size}, output_size={self.output_size})"
+        n_modes = None
+        if hasattr(self, "circuit") and getattr(self.circuit, "m", None) is not None:
+            n_modes = self.circuit.m
+
+        modes_fragment = f", modes={n_modes}" if n_modes is not None else ""
+        base_str = (
+            f"QuantumLayer(custom_circuit{modes_fragment}, input_size={self.input_size}, "
+            f"output_size={self.output_size}"
         )
+
+        return base_str + ")"

@@ -20,18 +20,14 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-"""
-Output mapping strategy definitions.
-"""
+"""Measurement strategy definitions for quantum-to-classical conversion."""
 
 from enum import Enum
 
 
-class OutputMappingStrategy(Enum):
-    """Strategy for mapping quantum probability distributions to classical outputs."""
+class MeasurementStrategy(Enum):
+    """Strategy for measuring quantum states or counts and possibly apply mapping to classical outputs."""
 
-    LINEAR = "linear"
-    GROUPING = "grouping"
-    LEXGROUPING = "lexgrouping"
-    MODGROUPING = "modgrouping"
-    NONE = "none"
+    PROBABILITIES = "probabilities"
+    MODE_EXPECTATIONS = "mode_expectations"
+    AMPLITUDES = "amplitudes"

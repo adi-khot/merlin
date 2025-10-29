@@ -5,7 +5,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from merlin import OutputMappingStrategy, QuantumLayer
+from merlin import MeasurementStrategy, QuantumLayer
 from merlin.builder import CircuitBuilder
 from merlin.datasets import iris as iris_dataset
 
@@ -19,7 +19,9 @@ def iris_batch():
 
 
 def _check_training_step(
-    layer: QuantumLayer, inputs: torch.Tensor, targets: torch.Tensor
+    layer: QuantumLayer | torch.nn.Sequential,
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
 ):
     layer.train()
     layer.zero_grad()
@@ -35,7 +37,7 @@ def _check_training_step(
 
 
 def _train_for_classification(
-    layer: QuantumLayer,
+    layer: QuantumLayer | torch.nn.Sequential,
     inputs: torch.Tensor,
     targets: torch.Tensor,
     *,
@@ -81,13 +83,13 @@ def test_builder_api_pipeline_on_iris(iris_batch):
         input_size=features.shape[1],
         builder=builder,
         n_photons=5,
-        output_size=3,
-        output_mapping_strategy=OutputMappingStrategy.LINEAR,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
         dtype=features.dtype,
     )
     pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
-    _check_training_step(layer, features, labels)
-    _train_for_classification(layer, features, labels)
+    model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
+    _check_training_step(model, features, labels)
+    _train_for_classification(model, features, labels)
 
 
 def test_simple_api_pipeline_on_iris(iris_batch):
@@ -96,16 +98,16 @@ def test_simple_api_pipeline_on_iris(iris_batch):
     layer = QuantumLayer.simple(
         input_size=features.shape[1],
         n_params=10,
-        output_size=3,
-        output_mapping_strategy=OutputMappingStrategy.LINEAR,
         dtype=features.dtype,
     )
-    pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
+    base = layer.quantum_layer if hasattr(layer, "quantum_layer") else layer
+    pcvl.pdisplay(base.computation_process.circuit, output_format=pcvl.Format.TEXT)
     print(
         f"Nb of parameters = {sum(p.numel() for p in layer.parameters() if p.requires_grad)}"
     )
-    _check_training_step(layer, features, labels)
-    _train_for_classification(layer, features, labels)
+    model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
+    _check_training_step(model, features, labels)
+    _train_for_classification(model, features, labels)
 
 
 def test_manual_pcvl_circuit_pipeline_on_iris(iris_batch):
@@ -140,13 +142,13 @@ def test_manual_pcvl_circuit_pipeline_on_iris(iris_batch):
         n_photons=1,
         trainable_parameters=["theta"],
         input_parameters=["input"],
-        output_size=3,
-        output_mapping_strategy=OutputMappingStrategy.LINEAR,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
         dtype=features.dtype,
     )
-    _check_training_step(layer, features, labels)
+    model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
+    _check_training_step(model, features, labels)
     _train_for_classification(
-        layer,
+        model,
         features,
         labels,
         min_relative_improvement=0.0,
