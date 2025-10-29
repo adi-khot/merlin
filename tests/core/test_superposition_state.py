@@ -46,8 +46,6 @@ class TestOutputSuperposedState:
 
     def test_superposed_state(self, benchmark):
         """Test default measurement behaviour when output_size is not constrained."""
-        print("\n=== Testing Superposed input state method ===")
-
         # With the default measurement distribution the output size matches the underlying Fock distribution
         circuit = pcvl.components.GenericInterferometer(
             10,
@@ -90,8 +88,6 @@ class TestOutputSuperposedState:
 
     def test_classical_method(self, benchmark):
         """Test probability distribution behaviour when output_size is not constrained."""
-        print("\n=== Testing Superposed input state method ===")
-
         # With the default measurement distribution the output size matches the underlying Fock distribution
         circuit = pcvl.components.GenericInterferometer(
             10,

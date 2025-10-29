@@ -49,6 +49,43 @@ def make_layer():
     return _make
 
 
+def _no_bunching_keys(modes: int, n_photons: int) -> set[tuple[int, ...]]:
+    return {
+        tuple(1 if i in combo else 0 for i in range(modes))
+        for combo in itertools.combinations(range(modes), n_photons)
+    }
+
+
+def _dual_rail_keys(modes: int, n_photons: int) -> set[tuple[int, ...]]:
+    states = []
+    for choices in itertools.product((0, 1), repeat=n_photons):
+        state = [0] * modes
+        for pair_idx, bit in enumerate(choices):
+            state[2 * pair_idx + bit] = 1
+        states.append(tuple(state))
+    return set(states)
+
+
+def _fock_keys(modes: int, n_photons: int) -> set[tuple[int, ...]]:
+    keys: set[tuple[int, ...]] = set()
+
+    def build(prefix: list[int], remaining: int, idx: int) -> None:
+        if idx == modes - 1:
+            keys.add(tuple(prefix + [remaining]))
+            return
+        for value in range(remaining + 1):
+            build(prefix + [value], remaining - value, idx + 1)
+
+    build([], n_photons, 0)
+    return keys
+
+
+def _normalised_state(n_states: int, dtype: torch.dtype) -> torch.Tensor:
+    state = torch.rand(1, n_states, dtype=dtype)
+    norm = state.abs().pow(2).sum(dim=1, keepdim=True).sqrt()
+    return state / norm
+
+
 def test_amplitude_encoding_matches_superposition(make_layer):
     layer = make_layer()
     num_states = len(layer.computation_process.simulation_graph.mapped_keys)
@@ -162,33 +199,6 @@ def test_amplitude_encoding_probabilities_strategy(make_layer):
     assert torch.allclose(probabilities, expected_probabilities, rtol=1e-6, atol=1e-8)
 
 
-def _normalised_state(n_states: int, dtype: torch.dtype) -> torch.Tensor:
-    state = torch.rand(1, n_states, dtype=dtype)
-    norm = state.abs().pow(2).sum(dim=1, keepdim=True).sqrt()
-    return state / norm
-
-
-def _fock_keys(modes: int, n_photons: int) -> set[tuple[int, ...]]:
-    keys: set[tuple[int, ...]] = set()
-
-    def build(prefix: list[int], remaining: int, idx: int) -> None:
-        if idx == modes - 1:
-            keys.add(tuple(prefix + [remaining]))
-            return
-        for value in range(remaining + 1):
-            build(prefix + [value], remaining - value, idx + 1)
-
-    build([], n_photons, 0)
-    return keys
-
-
-def _no_bunching_keys(modes: int, n_photons: int) -> set[tuple[int, ...]]:
-    return {
-        tuple(1 if i in combo else 0 for i in range(modes))
-        for combo in itertools.combinations(range(modes), n_photons)
-    }
-
-
 def test_mapped_keys_no_bunching_space():
     circuit = pcvl.components.GenericInterferometer(
         4,
@@ -247,7 +257,35 @@ def test_mapped_keys_fock_space():
     assert set(mapped_keys) == _fock_keys(circuit.m, n_photons)
 
 
-@pytest.mark.parametrize("computation_space", ["fock", "no_bunching"])
+def test_mapped_keys_dual_rail_space():
+    n_photons = 3
+    circuit = pcvl.components.GenericInterferometer(
+        2 * n_photons,
+        pcvl.components.catalog["mzi phase last"].generate,
+        shape=pcvl.InterferometerShape.RECTANGLE,
+    )
+    expected_states = 2**n_photons
+    input_state = _normalised_state(expected_states, dtype=torch.float32)
+
+    layer = QuantumLayer(
+        circuit=circuit,
+        n_photons=n_photons,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
+        input_state=input_state,
+        trainable_parameters=["phi"],
+        input_parameters=[],
+        dtype=torch.float32,
+        amplitude_encoding=True,
+        computation_space="dual_rail",
+    )
+
+    mapped_keys = layer.state_keys
+    assert len(mapped_keys) == expected_states
+    assert len(set(mapped_keys)) == expected_states
+    assert set(mapped_keys) == _dual_rail_keys(circuit.m, n_photons)
+
+
+@pytest.mark.parametrize("computation_space", ["fock", "no_bunching", "dual_rail"])
 def test_ebs_batches_group_fock_states(computation_space):
     circuit = pcvl.components.GenericInterferometer(
         4,
@@ -266,16 +304,15 @@ def test_ebs_batches_group_fock_states(computation_space):
         dtype=torch.float32,
         amplitude_encoding=True,
         computation_space=computation_space,
-        no_bunching=(computation_space == "no_bunching"),
+        no_bunching=computation_space in {"no_bunching", "dual_rail"},
     )
 
-    expected_states = len(layer.state_keys)
+    expected_states = layer.input_size
     amplitude = torch.rand(8, expected_states, dtype=torch.float32)
 
     process = layer.computation_process
     original_compute_batch = process.simulation_graph.compute_batch
     recorded_batches: list[list[tuple[int, ...]]] = []
-    print(f"Initial recorded batches: {recorded_batches}")
 
     def tracked_compute_batch(unitary, batch_fock_states):
         recorded_batches.append([tuple(state) for state in batch_fock_states])
@@ -284,10 +321,8 @@ def test_ebs_batches_group_fock_states(computation_space):
     process.simulation_graph.compute_batch = tracked_compute_batch  # type: ignore[assignment]
     try:
         layer(amplitude, simultaneous_processes=8)
-        print(f"Recorded batches: {recorded_batches}")
     finally:
         process.simulation_graph.compute_batch = original_compute_batch  # type: ignore[assignment]
-        print(f"Finally Recorded batches: {recorded_batches}")
     expected_batches = [
         [tuple(state) for state in layer.state_keys[i : i + 8]]
         for i in range(0, expected_states, 8)
@@ -298,10 +333,9 @@ def test_ebs_batches_group_fock_states(computation_space):
 @pytest.mark.parametrize(
     ("space", "n_photons", "n_modes", "expected_size"),
     [
-        ("fock", 4, 8, math.comb(4 + 8 - 1, 4)),
+        ("fock", 4, 8, math.comb(8 + 4 - 1, 4)),
         ("no_bunching", 4, 8, math.comb(8, 4)),
-        # TODO: support dual_rail
-        # ("dual_rail", 4, 8, 2**4),
+        ("dual_rail", 4, 8, 2**4),
     ],
 )
 def test_amplitude_encoding_input_size(space, n_photons, n_modes, expected_size):
@@ -332,7 +366,9 @@ def test_amplitude_encoding_requires_valid_configuration():
             amplitude_encoding=True,
         )
 
-    with pytest.raises(ValueError, match="Amplitude encoding cannot be combined"):
+    with pytest.raises(
+        ValueError, match="Amplitude encoding cannot be combined with classical input parameters"
+    ):
         QuantumLayer(
             circuit=circuit,
             n_photons=4,
@@ -341,8 +377,36 @@ def test_amplitude_encoding_requires_valid_configuration():
         )
 
 
-"""def test_amplitude_encoding_superposition_matches_basis_sum():
-    #The amplitudes are a weighted sum over basis-state simulations.
+def test_dual_rail_requires_even_mode_count():
+    circuit = pcvl.Circuit(6)
+
+    # Newer error message includes the provided counts for clarity
+    with pytest.raises(ValueError, match=r"6 modes and 2 photons were provided"):
+        QuantumLayer(
+            circuit=circuit,
+            n_photons=2,
+            amplitude_encoding=True,
+            computation_space="dual_rail",
+        )
+
+
+def test_dual_rail_rejects_incorrect_amplitude_length():
+    n_photons = 3
+    circuit = pcvl.Circuit(2 * n_photons)
+    layer = QuantumLayer(
+        circuit=circuit,
+        n_photons=n_photons,
+        amplitude_encoding=True,
+        computation_space="dual_rail",
+    )
+    invalid = torch.rand((2**n_photons) + 1, dtype=torch.float32)
+
+    with pytest.raises(ValueError, match="Amplitude input expects .* components"):
+        layer(invalid)
+
+
+def test_amplitude_encoding_superposition_matches_basis_sum():
+    """The amplitudes are a weighted sum over basis-state simulations."""
 
     n_photons = 4
     n_modes = 8
@@ -350,10 +414,8 @@ def test_amplitude_encoding_requires_valid_configuration():
     for k in range(0, n_modes, 2):
         for mode in range(k%2, n_modes, 2):
             circuit.add(mode, pcvl.BS())
-
     layer = QuantumLayer(
         circuit=circuit,
-        input_size = 0,
         n_photons=n_photons,
         measurement_strategy=MeasurementStrategy.AMPLITUDES,
         amplitude_encoding=True,
@@ -373,12 +435,11 @@ def test_amplitude_encoding_requires_valid_configuration():
     amplitude_input[basis_indices] = coefficients
 
     combined_output = layer(amplitude_input)
-    expected_output = torch.sum(
-        coefficients.unsqueeze(-1) * basis_outputs,
-        dim=0,
-    )
+    expected_output = torch.sum(coefficients[:, None, None] * basis_outputs, dim=0)
+    difference = combined_output - expected_output
+    assert torch.allclose(
+        combined_output, expected_output, atol=1e-6, rtol=1e-6
+    ), f"Max deviation {difference.abs().max().item():.2e}"
 
-    assert torch.allclose(combined_output, expected_output, atol=1e-6)
-
-    with pytest.raises(ValueError, match="Amplitude input dimension"):
-        layer(torch.ones(layer.input_size + 1, dtype=torch.complex64))"""
+    with pytest.raises(ValueError, match="Amplitude input expects"):
+        layer(torch.ones(layer.input_size + 1, dtype=torch.complex64))

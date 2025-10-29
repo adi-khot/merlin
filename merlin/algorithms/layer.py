@@ -95,6 +95,8 @@ class QuantumLayer(nn.Module):
         n_photons: int | None = None,
         # Amplitude encoding
         amplitude_encoding: bool = False,
+        #TODO: add enum for computation_space
+        # ComputationSpace.FOCK, ComputationSpace.UNBUNCHED, ComputationSpace.DUAL_RAIL
         computation_space: str | None = None,
         # only for custom circuits and experiments
         trainable_parameters: list[str] | None = None,
@@ -120,14 +122,12 @@ class QuantumLayer(nn.Module):
         # input_size management: input_size can be given only if amplitude_encoding is False
         # otherwise, it is determined by the computation space and n_photons
         if self.amplitude_encoding:
-            if input_size not in (None, 0):
+            if input_size is not None:
                 raise ValueError(
                     "When amplitude_encoding is enabled, do not specify input_size; it "
                     "is inferred from the computation space."
                 )
-            self.input_size = (
-                0  # temporary value, will be set within init_from_custom_circuit
-            )
+            self.input_size = 0  # temporary value, revisited after setup
             if n_photons is None:
                 raise ValueError(
                     "n_photons must be provided when amplitude_encoding=True."
@@ -137,22 +137,18 @@ class QuantumLayer(nn.Module):
                     "Amplitude encoding cannot be combined with classical input parameters."
                 )
         else:
-            if input_size is None:
-                raise ValueError(
-                    "input_size must be provided when amplitude_encoding is False."
-                )
             self.input_size = int(input_size)
 
         # computation_space and no_bunching arguments management
-        # TODO: support dual_rail
-        allowed_spaces = {"fock", "no_bunching"}
+        allowed_spaces = {"fock", "no_bunching", "dual_rail"}
         if computation_space is not None and computation_space not in allowed_spaces:
             raise ValueError(
                 f"Invalid computation_space '{computation_space}'. "
-                "Supported values are 'fock' and 'no_bunching'."
+                "Supported values are 'fock', 'no_bunching', and 'dual_rail'."
             )
         # no_bunching cannot be True by default, to fit with "fock" computation_space
         # to avoid situation such that no_bunching=True and computation_space="fock"
+        #TODO: warning for no_bunching deprecation -> map it to computation_space
         if no_bunching is None:
             no_bunching_value = True
         else:
@@ -163,7 +159,7 @@ class QuantumLayer(nn.Module):
         else:
             # if it is provided, check consistency with no_bunching
             computation_space_value = computation_space
-            derived_no_bunching = computation_space_value == "no_bunching"
+            derived_no_bunching = computation_space_value in {"no_bunching", "dual_rail"}
             if no_bunching is not None and no_bunching_value != derived_no_bunching:
                 warnings.warn(
                     "Overriding 'no_bunching' to match the requested computation_space. "
@@ -238,6 +234,10 @@ class QuantumLayer(nn.Module):
             resolved_circuit = experiment.unitary_circuit()
 
         self.circuit = resolved_circuit
+        # dual-rail needs n photons and 2n modes
+        if self.computation_space == "dual_rail" and self.circuit.m // 2 != n_photons:
+            raise ValueError("Dual-rail encoding requires the number of modes to be be two times the number of modes. Here "
+                             f"{self.circuit.m} modes and {n_photons} photons were provided.")
         self._init_from_custom_circuit(
             resolved_circuit,
             input_state,
@@ -280,6 +280,10 @@ class QuantumLayer(nn.Module):
             dtype=self.dtype,
             no_bunching=self.no_bunching,
         )
+
+        # Pick the effective state space after the factory creates the process so
+        # dual-rail can shrink the logical basis without extra factory plumbing.
+        self.computation_process.configure_computation_space(self.computation_space)
 
         # Validate that the declared input size matches the builder-provided parameters
         spec_mappings = self.computation_process.converter.spec_mappings
@@ -324,6 +328,9 @@ class QuantumLayer(nn.Module):
 
         # Setup measurement strategy
         self._setup_measurement_strategy_from_custom(measurement_strategy)
+
+        if self.amplitude_encoding:
+            self._init_amplitude_metadata()
 
         # set input_size for amplitude encoding
         if self.amplitude_encoding:
@@ -388,6 +395,14 @@ class QuantumLayer(nn.Module):
             self.computation_process.no_bunching,
             keys,
         )
+
+    def _init_amplitude_metadata(self) -> None:
+        logical_keys = getattr(
+            self.computation_process,
+            "logical_keys",
+            list(self.computation_process.simulation_graph.mapped_keys),
+        )
+        self.input_size = len(logical_keys)
 
     def _create_dummy_parameters(self) -> list[torch.Tensor]:
         """Create dummy parameters for initialization."""
@@ -559,11 +574,11 @@ class QuantumLayer(nn.Module):
                 "Amplitude-encoded inputs must be 1D (single state) or 2D (batch of states) tensors"
             )
 
-        expected_dim = len(self.computation_process.simulation_graph.mapped_keys)
+        expected_dim = len(self.state_keys)
         feature_dim = amplitude.shape[-1]
         if feature_dim != expected_dim:
             raise ValueError(
-                f"Amplitude input expects {expected_dim} components, received {feature_dim} : we encourage you to complete your input vector with zeros (zerro-padding)."
+                f"Amplitude input expects {expected_dim} components, received {feature_dim}."
             )
             # TODO: suggest/implement zero-padding or sparsity tensor format
 
@@ -780,7 +795,9 @@ class QuantumLayer(nn.Module):
 
     @property
     def state_keys(self):
-        return self.computation_process.simulation_graph.mapped_keys
+        return getattr(self.computation_process, "logical_keys", None) or list(
+            self.computation_process.simulation_graph.mapped_keys
+        )
 
     @property
     def output_size(self):
