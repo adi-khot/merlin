@@ -146,8 +146,10 @@ class MerlinProcessor:
         # Determine deadline
         effective_timeout = self.default_timeout if timeout is None else timeout
         deadline: float | None = (
-            None if effective_timeout in (None, 0) else time.time() + float(effective_timeout)
-        )
+                        None
+             if effective_timeout in (None, 0)
+                  else time.time() + float(effective_timeout)
+                        )
 
         original_device = input.device
         original_dtype = input.dtype
