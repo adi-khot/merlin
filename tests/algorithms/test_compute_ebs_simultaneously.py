@@ -1,9 +1,12 @@
+import math
+
 import perceval as pcvl
 import pytest
 import torch
 
 from merlin import QuantumLayer
 from merlin.core.process import ComputationProcess
+from merlin.measurement.strategies import MeasurementStrategy
 from merlin.measurement.strategies import MeasurementStrategy
 
 
@@ -42,7 +45,8 @@ class TestComputeEbsSimultaneously:
         )
 
         # Create superposition input state
-        self.input_state_tensor = torch.rand(2, 6, dtype=torch.float64)
+        expected_states = math.comb(6, 2)
+        self.input_state_tensor = torch.rand(2, expected_states, dtype=torch.float64)
         sum_values = self.input_state_tensor.abs().pow(2).sum(dim=1).sqrt().unsqueeze(1)
         self.input_state_tensor = self.input_state_tensor / sum_values
         # Set up parameters
@@ -122,9 +126,9 @@ class TestComputeEbsSimultaneously:
     def test_edge_case_single_state(self):
         """Test with input state that has only one non-zero component."""
         # Create input state with only one non-zero component
-        single_state = torch.zeros(1, 6, dtype=torch.float64)
+        expected_states = math.comb(self.circuit.m, self.n_photons)
+        single_state = torch.zeros(1, expected_states, dtype=torch.float64)
         single_state[0, 0] = 1.0
-        single_state[0, 1] = 1.0
 
         process_single = ComputationProcess(
             circuit=self.circuit,
@@ -165,6 +169,49 @@ class TestComputeEbsSimultaneously:
 
         # Should be complex64 for float32 input
         assert result_f32.dtype == torch.complex64
+
+    def test_invalid_superposition_dimension_no_bunching(self):
+        """Input state with mismatched dimension should raise a ValueError."""
+        invalid_state = torch.rand(
+            self.input_state_tensor.shape[0],
+            self.input_state_tensor.shape[1] - 1,
+            dtype=self.input_state_tensor.dtype,
+            device=self.input_state_tensor.device,
+        )
+        self.process.input_state = invalid_state
+
+        with pytest.raises(ValueError, match="Input state dimension mismatch"):
+            self.process.compute_ebs_simultaneously(
+                self.test_parameters, simultaneous_processes=1
+            )
+
+    def test_invalid_superposition_dimension_fock(self):
+        """Input state dimension mismatch in Fock space raises a ValueError."""
+        expected_fock_states = math.comb(self.circuit.m + self.n_photons - 1, self.n_photons)
+        valid_state = torch.rand(1, expected_fock_states, dtype=torch.float64)
+        valid_state = valid_state / valid_state.abs().pow(2).sum(dim=1, keepdim=True).sqrt()
+
+        process_fock = ComputationProcess(
+            circuit=self.circuit,
+            input_state=valid_state,
+            trainable_parameters=self.trainable_parameters,
+            input_parameters=self.input_parameters,
+            n_photons=self.n_photons,
+            dtype=torch.float64,
+            no_bunching=False,
+        )
+
+        invalid_state = torch.rand(
+            1, expected_fock_states + 1, dtype=torch.float64, device=valid_state.device
+        )
+        process_fock.input_state = invalid_state
+
+        params = [p.clone() for p in self.test_parameters]
+
+        with pytest.raises(ValueError, match="Input state dimension mismatch"):
+            process_fock.compute_ebs_simultaneously(
+                params, simultaneous_processes=1
+            )
 
     def test_error_handling(self):
         """Test error handling for invalid inputs."""

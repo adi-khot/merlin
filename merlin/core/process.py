@@ -24,6 +24,8 @@
 Quantum computation processes and factories.
 """
 
+import math
+
 import perceval as pcvl
 import torch
 
@@ -70,6 +72,10 @@ class ComputationProcess(AbstractComputationProcess):
             self.n_photons = n_photons
         # Build computation graphs
         self._setup_computation_graphs()
+        # validate initial input state shape when provided as tensor
+        if isinstance(self.input_state, torch.Tensor):
+            state_tensor: torch.Tensor = self.input_state
+            self._validate_superposition_state_shape(state_tensor)
 
     def _setup_computation_graphs(self):
         """Setup unitary and simulation computation graphs."""
@@ -109,6 +115,7 @@ class ComputationProcess(AbstractComputationProcess):
     def compute_superposition_state(
         self, parameters: list[torch.Tensor], return_keys: bool = False
     ) -> torch.Tensor | tuple[list[tuple[int, ...]], torch.Tensor]:
+        prepared_state = self._prepare_superposition_tensor()
         unitary = self.converter.to_tensor(*parameters)
         changed_unitary = True
 
@@ -126,7 +133,7 @@ class ComputationProcess(AbstractComputationProcess):
 
         def reorder_swap_chain(lst):
             remaining = lst[:]
-            chain = [remaining.pop(0)]  # Commence avec le premier élément
+            chain = [remaining.pop(0)]
             while remaining:
                 for i, candidate in enumerate(remaining):
                     if is_swap_permutation(chain[-1][1], candidate[1]):
@@ -137,21 +144,7 @@ class ComputationProcess(AbstractComputationProcess):
 
             return chain
 
-        if type(self.input_state) is torch.Tensor:
-            if len(self.input_state.shape) == 1:
-                self.input_state = self.input_state.unsqueeze(0)
-            if self.input_state.dtype == torch.float32:
-                self.input_state = self.input_state.to(torch.complex64)
-            elif self.input_state.dtype == torch.float64:
-                self.input_state = self.input_state.to(torch.complex128)
-
-        else:
-            raise TypeError("Input state should be a tensor")
-
-        sum_input = self.input_state.abs().pow(2).sum(dim=1).sqrt().unsqueeze(1)
-        self.input_state = self.input_state / sum_input
-
-        mask = (self.input_state.real**2 + self.input_state.imag**2 < 1e-13).all(dim=0)
+        mask = (prepared_state.real**2 + prepared_state.imag**2 < 1e-13).all(dim=0)
 
         masked_input_state = (~mask).int().tolist()
 
@@ -167,9 +160,9 @@ class ComputationProcess(AbstractComputationProcess):
 
         keys, amplitude = self.simulation_graph.compute(unitary, prev_state)
         amplitudes = torch.zeros(
-            (self.input_state.shape[-1], len(self.simulation_graph.mapped_keys)),
+            (prepared_state.shape[-1], len(self.simulation_graph.mapped_keys)),
             dtype=amplitude.dtype,
-            device=self.input_state.device,
+            device=prepared_state.device,
         )
         amplitudes[prev_state_index] = amplitude
 
@@ -182,7 +175,7 @@ class ComputationProcess(AbstractComputationProcess):
             )
             changed_unitary = False
             prev_state = fock_state
-        input_state = self.input_state.to(amplitudes.dtype)
+        input_state = prepared_state.to(amplitudes.dtype)
 
         final_amplitudes = input_state @ amplitudes
         if return_keys:
@@ -238,23 +231,12 @@ class ComputationProcess(AbstractComputationProcess):
               ``self.input_state`` live on the same device.
         """
 
-        unitary = self.converter.to_tensor(*parameters)
-        if type(self.input_state) is torch.Tensor:
-            if len(self.input_state.shape) == 1:
-                self.input_state = self.input_state.unsqueeze(0)
-            if self.input_state.dtype == torch.float32:
-                self.input_state = self.input_state.to(torch.complex64)
-            elif self.input_state.dtype == torch.float64:
-                self.input_state = self.input_state.to(torch.complex128)
-        else:
-            raise TypeError("Input state should be a tensor")
+        prepared_state = self._prepare_superposition_tensor()
 
-        # Normalize input state
-        sum_input = self.input_state.abs().pow(2).sum(dim=1).sqrt().unsqueeze(1)
-        self.input_state = self.input_state / sum_input
+        unitary = self.converter.to_tensor(*parameters)
 
         # Find non-zero input states
-        mask = (self.input_state.real**2 + self.input_state.imag**2 < 1e-13).all(dim=0)
+        mask = (prepared_state.real**2 + prepared_state.imag**2 < 1e-13).all(dim=0)
         masked_input_state = (~mask).int().tolist()
 
         input_states = [
@@ -264,9 +246,9 @@ class ComputationProcess(AbstractComputationProcess):
         ]
         # Initialize amplitudes tensor
         amplitudes = torch.zeros(
-            (self.input_state.shape[-1], len(self.simulation_graph.mapped_keys)),
+            (prepared_state.shape[-1], len(self.simulation_graph.mapped_keys)),
             dtype=unitary.dtype,
-            device=self.input_state.device,
+            device=prepared_state.device,
         )
 
         # Process input states in batches
@@ -289,8 +271,7 @@ class ComputationProcess(AbstractComputationProcess):
                 amplitudes[idx, :] = batch_amplitudes[:, :, k]
 
         # Apply input state coefficients
-
-        input_state = self.input_state.to(amplitudes.dtype)
+        input_state = prepared_state.to(amplitudes.dtype)
 
         final_amplitudes = input_state @ amplitudes
         return final_amplitudes
@@ -304,6 +285,73 @@ class ComputationProcess(AbstractComputationProcess):
         keys, amplitudes = self.simulation_graph.compute(unitary, self.input_state)
 
         return keys, amplitudes
+
+    def _expected_superposition_size(self) -> int:
+        """Expected number of Fock states given current computation space."""
+        if self.n_photons < 0:
+            raise ValueError("Number of photons must be non-negative.")
+        if self.no_bunching:
+            if self.n_photons > self.m:
+                raise ValueError(
+                    "Invalid configuration: no_bunching=True requires "
+                    "n_photons to be less than or equal to the number of modes."
+                )
+            return math.comb(self.m, self.n_photons)
+        return math.comb(self.m + self.n_photons - 1, self.n_photons)
+
+    def _validate_superposition_state_shape(self, input_state: torch.Tensor) -> None:
+        """Ensure the provided superposition state matches the configured computation space."""
+        if not isinstance(input_state, torch.Tensor):
+            raise TypeError("Input state should be a tensor")
+
+        if input_state.dim() == 1:
+            state_dim = input_state.shape[0]
+        elif input_state.dim() == 2:
+            state_dim = input_state.shape[1]
+        else:
+            raise ValueError(
+                f"Superposed input state must be 1D or 2D tensor, got shape {tuple(input_state.shape)}"
+            )
+
+        expected = self._expected_superposition_size()
+        if state_dim != expected:
+            space = "no_bunching" if self.no_bunching else "fock"
+            if self.no_bunching:
+                explanation = (
+                    f"expected C(m, n_photons) = C({self.m}, {self.n_photons}) = {expected}"
+                )
+            else:
+                explanation = (
+                    f"expected C(m + n_photons - 1, n_photons) = "
+                    f"C({self.m + self.n_photons - 1}, {self.n_photons}) = {expected}"
+                )
+            raise ValueError(
+                "Input state dimension mismatch for computation_space "
+                f"'{space}': got {state_dim}, {explanation}."
+            )
+
+    def _prepare_superposition_tensor(self) -> torch.Tensor:
+        """Validate, normalise, and convert the stored superposition state to the correct dtype."""
+        if not isinstance(self.input_state, torch.Tensor):
+            raise TypeError("Input state should be a tensor")
+
+        tensor = self.input_state
+        self._validate_superposition_state_shape(tensor)
+
+        if tensor.dim() == 1:
+            tensor = tensor.unsqueeze(0)
+
+        if tensor.dtype == torch.float32:
+            tensor = tensor.to(torch.complex64)
+        elif tensor.dtype == torch.float64:
+            tensor = tensor.to(torch.complex128)
+        elif tensor.dtype not in (torch.complex64, torch.complex128):
+            raise TypeError(f"Unsupported dtype for superposition state: {tensor.dtype}")
+
+        norm = tensor.abs().pow(2).sum(dim=1, keepdim=True).sqrt()
+        tensor = tensor / norm
+        self.input_state = tensor
+        return tensor
 
 
 class ComputationProcessFactory:

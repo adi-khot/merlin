@@ -1,4 +1,5 @@
 from types import MethodType
+import math
 
 import perceval as pcvl
 import torch
@@ -42,7 +43,9 @@ class TestOutputSuperposedState:
             shape=pcvl.InterferometerShape.RECTANGLE,
         )
 
-        input_state = torch.rand(3, 10).to(torch.float64)
+        n_photons = 3
+        expected_states = math.comb(circuit.m, n_photons)
+        input_state = torch.rand(3, expected_states, dtype=torch.float64)
 
         sum_values = (input_state**2).sum(dim=-1, keepdim=True)
 
@@ -51,7 +54,7 @@ class TestOutputSuperposedState:
         layer = QuantumLayer(
             input_size=0,
             circuit=circuit,
-            n_photons=3,
+            n_photons=n_photons,
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
             input_state=input_state,
             trainable_parameters=["phi"],
@@ -84,7 +87,9 @@ class TestOutputSuperposedState:
             shape=pcvl.InterferometerShape.RECTANGLE,
         )
 
-        input_state = torch.rand(3, 10).to(torch.float64)
+        n_photons = 3
+        expected_states = math.comb(circuit.m, n_photons)
+        input_state = torch.rand(3, expected_states, dtype=torch.float64)
 
         sum_values = (input_state**2).sum(dim=-1, keepdim=True)
 
@@ -93,7 +98,7 @@ class TestOutputSuperposedState:
         layer = QuantumLayer(
             input_size=0,
             circuit=circuit,
-            n_photons=3,
+            n_photons=n_photons,
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
             input_state=input_state,
             trainable_parameters=["phi"],
@@ -124,14 +129,16 @@ class TestOutputSuperposedState:
             shape=pcvl.InterferometerShape.RECTANGLE,
         )
 
-        input_state = torch.rand(2, 10).to(torch.float64)
+        n_photons = 3
+        expected_states = math.comb(circuit.m, n_photons)
+        input_state = torch.rand(2, expected_states, dtype=torch.float64)
         sum_values = (input_state**2).sum(dim=-1, keepdim=True)
         input_state = input_state / sum_values
 
         layer = QuantumLayer(
             input_size=0,
             circuit=circuit,
-            n_photons=3,
+            n_photons=n_photons,
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
             input_state=input_state,
             trainable_parameters=["phi"],
@@ -171,14 +178,16 @@ class TestOutputSuperposedState:
             shape=pcvl.InterferometerShape.RECTANGLE,
         )
 
-        input_state = torch.rand(1, 10).to(torch.float64)
+        n_photons = 3
+        expected_states = math.comb(circuit.m, n_photons)
+        input_state = torch.rand(1, expected_states, dtype=torch.float64)
         sum_values = (input_state**2).sum(dim=-1, keepdim=True)
         input_state = input_state / sum_values
 
         layer = QuantumLayer(
             input_size=0,
             circuit=circuit,
-            n_photons=3,
+            n_photons=n_photons,
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
             input_state=input_state,
             trainable_parameters=["phi"],

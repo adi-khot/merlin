@@ -27,7 +27,7 @@ Main QuantumLayer implementation
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import Any, cast
 
 import perceval as pcvl
 import torch
@@ -666,8 +666,9 @@ class QuantumLayer(nn.Module):
                         params, simultaneous_processes=simultaneous_processes
                     )
                 else:
-                    amplitudes = self.computation_process.compute_superposition_state(
-                        params
+                    amplitudes = cast(
+                        torch.Tensor,
+                        self.computation_process.compute_superposition_state(params),
                     )
             else:
                 amplitudes = self.computation_process.compute(params)
