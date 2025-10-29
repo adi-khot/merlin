@@ -32,7 +32,6 @@ def make_layer():
             shape=pcvl.InterferometerShape.RECTANGLE,
         )
         params = {
-            "input_size": 0,
             "circuit": circuit,
             "n_photons": 1,
             "measurement_strategy": MeasurementStrategy.AMPLITUDES,
@@ -43,6 +42,8 @@ def make_layer():
             "computation_space": "no_bunching",
         }
         params.update(overrides)
+        if not params.get("amplitude_encoding", False):
+            params.setdefault("input_size", 0)
         return QuantumLayer(**params)
 
     return _make
@@ -199,7 +200,6 @@ def test_mapped_keys_no_bunching_space():
     input_state = _normalised_state(expected_states, dtype=torch.float32)
 
     layer = QuantumLayer(
-        input_size=0,
         circuit=circuit,
         n_photons=n_photons,
         measurement_strategy=MeasurementStrategy.PROBABILITIES,
@@ -213,8 +213,6 @@ def test_mapped_keys_no_bunching_space():
     )
 
     mapped_keys = layer.state_keys
-    print(f"Mapped keys: {mapped_keys}")
-    print(f"No bunching keys: {_no_bunching_keys(circuit.m, n_photons)}")
     assert len(mapped_keys) == expected_states
     assert len(set(mapped_keys)) == expected_states
     assert set(mapped_keys) == _no_bunching_keys(circuit.m, n_photons)
@@ -231,7 +229,6 @@ def test_mapped_keys_fock_space():
     input_state = _normalised_state(expected_states, dtype=torch.float32)
 
     layer = QuantumLayer(
-        input_size=0,
         circuit=circuit,
         n_photons=n_photons,
         measurement_strategy=MeasurementStrategy.PROBABILITIES,
@@ -245,8 +242,6 @@ def test_mapped_keys_fock_space():
     )
 
     mapped_keys = layer.state_keys
-    print(f"Mapped keys: {mapped_keys}")
-    print(f"Fock keys: {_fock_keys(circuit.m, n_photons)}")
     assert len(mapped_keys) == expected_states
     assert len(set(mapped_keys)) == expected_states
     assert set(mapped_keys) == _fock_keys(circuit.m, n_photons)
@@ -262,7 +257,6 @@ def test_ebs_batches_group_fock_states(computation_space):
     n_photons = 2
 
     layer = QuantumLayer(
-        input_size=0,
         circuit=circuit,
         n_photons=n_photons,
         measurement_strategy=MeasurementStrategy.PROBABILITIES,
@@ -272,7 +266,7 @@ def test_ebs_batches_group_fock_states(computation_space):
         dtype=torch.float32,
         amplitude_encoding=True,
         computation_space=computation_space,
-        no_bunching=False,
+        no_bunching=(computation_space == "no_bunching"),
     )
 
     expected_states = len(layer.state_keys)
@@ -299,3 +293,92 @@ def test_ebs_batches_group_fock_states(computation_space):
         for i in range(0, expected_states, 8)
     ]
     assert recorded_batches == expected_batches
+
+
+@pytest.mark.parametrize(
+    ("space", "n_photons", "n_modes", "expected_size"),
+    [
+        ("fock", 4, 8, math.comb(4 + 8 - 1, 4)),
+        ("no_bunching", 4, 8, math.comb(8, 4)),
+        # TODO: support dual_rail
+        # ("dual_rail", 4, 8, 2**4),
+    ],
+)
+def test_amplitude_encoding_input_size(space, n_photons, n_modes, expected_size):
+    """QuantumLayer computes the correct input size for amplitude encoding."""
+
+    circuit = pcvl.Circuit(n_modes)
+
+    layer = QuantumLayer(
+        circuit=circuit,
+        n_photons=n_photons,
+        amplitude_encoding=True,
+        computation_space=space,
+    )
+
+    assert layer.input_size == expected_size
+    assert len(layer.state_keys) == expected_size
+
+
+def test_amplitude_encoding_requires_valid_configuration():
+    """Amplitude encoding enforces required constructor constraints."""
+
+    circuit = pcvl.Circuit(8)
+
+    with pytest.raises(ValueError, match="n_photons must be provided"):
+        QuantumLayer(
+            circuit=circuit,
+            n_photons=None,
+            amplitude_encoding=True,
+        )
+
+    with pytest.raises(ValueError, match="Amplitude encoding cannot be combined"):
+        QuantumLayer(
+            circuit=circuit,
+            n_photons=4,
+            input_parameters=["theta"],
+            amplitude_encoding=True,
+        )
+
+
+"""def test_amplitude_encoding_superposition_matches_basis_sum():
+    #The amplitudes are a weighted sum over basis-state simulations.
+
+    n_photons = 4
+    n_modes = 8
+    circuit = pcvl.Circuit(n_modes)
+    for k in range(0, n_modes, 2):
+        for mode in range(k%2, n_modes, 2):
+            circuit.add(mode, pcvl.BS())
+
+    layer = QuantumLayer(
+        circuit=circuit,
+        input_size = 0,
+        n_photons=n_photons,
+        measurement_strategy=MeasurementStrategy.AMPLITUDES,
+        amplitude_encoding=True,
+        computation_space="dual_rail",
+    )
+
+    basis_indices = [0, 1, 2]
+    basis_vectors = torch.eye(layer.input_size, dtype=torch.complex64)[basis_indices]
+    basis_outputs = torch.stack([layer(state) for state in basis_vectors])
+
+    coefficients = torch.tensor(
+        [0.6 + 0.2j, -0.3 + 0.5j, 0.1 - 0.4j], dtype=torch.complex64
+    )
+    coefficients = coefficients / torch.linalg.norm(coefficients)
+
+    amplitude_input = torch.zeros(layer.input_size, dtype=torch.complex64)
+    amplitude_input[basis_indices] = coefficients
+
+    combined_output = layer(amplitude_input)
+    expected_output = torch.sum(
+        coefficients.unsqueeze(-1) * basis_outputs,
+        dim=0,
+    )
+
+    assert torch.allclose(combined_output, expected_output, atol=1e-6)
+
+    with pytest.raises(ValueError, match="Amplitude input dimension"):
+        layer(torch.ones(layer.input_size + 1, dtype=torch.complex64))"""

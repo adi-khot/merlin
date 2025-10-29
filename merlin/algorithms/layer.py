@@ -83,7 +83,7 @@ class QuantumLayer(nn.Module):
 
     def __init__(
         self,
-        input_size: int,
+        input_size: int | None = None,
         # Builder-based construction
         builder: CircuitBuilder | None = None,
         # Custom circuit construction
@@ -114,11 +114,36 @@ class QuantumLayer(nn.Module):
 
         self.device = device
         self.dtype = dtype or torch.float32
-        self.input_size = input_size
         self.input_state = input_state
         self.amplitude_encoding = amplitude_encoding
 
-        # managing computation_space and no_bunching arguments
+        # input_size management: input_size can be given only if amplitude_encoding is False
+        # otherwise, it is determined by the computation space and n_photons
+        if self.amplitude_encoding:
+            if input_size not in (None, 0):
+                raise ValueError(
+                    "When amplitude_encoding is enabled, do not specify input_size; it "
+                    "is inferred from the computation space."
+                )
+            self.input_size = (
+                0  # temporary value, will be set within init_from_custom_circuit
+            )
+            if n_photons is None:
+                raise ValueError(
+                    "n_photons must be provided when amplitude_encoding=True."
+                )
+            if input_parameters:
+                raise ValueError(
+                    "Amplitude encoding cannot be combined with classical input parameters."
+                )
+        else:
+            if input_size is None:
+                raise ValueError(
+                    "input_size must be provided when amplitude_encoding is False."
+                )
+            self.input_size = int(input_size)
+
+        # computation_space and no_bunching arguments management
         # TODO: support dual_rail
         allowed_spaces = {"fock", "no_bunching"}
         if computation_space is not None and computation_space not in allowed_spaces:
@@ -299,6 +324,10 @@ class QuantumLayer(nn.Module):
 
         # Setup measurement strategy
         self._setup_measurement_strategy_from_custom(measurement_strategy)
+
+        # set input_size for amplitude encoding
+        if self.amplitude_encoding:
+            self.input_size = len(self.state_keys)
 
     def _setup_parameters_from_custom(self, trainable_parameters: list[str] | None):
         """Setup parameters from custom circuit configuration."""
