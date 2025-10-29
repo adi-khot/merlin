@@ -45,7 +45,7 @@ class TestShotEstimation:
         )
         assert len(lo) == len(hi) == 4
         for a, b in zip(lo, hi, strict=False):
-            assert b >= a
+            assert b >= a  # larger target -> requires >= shots
 
     def test_no_jobs_created(self, remote_processor):
         q = make_layer(6, 2, 2, no_bunching=True)

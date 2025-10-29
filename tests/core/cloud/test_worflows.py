@@ -13,7 +13,6 @@ import torch.nn as nn
 from merlin.algorithms import QuantumLayer
 from merlin.builder.circuit_builder import CircuitBuilder
 from merlin.core.merlin_processor import MerlinProcessor
-from merlin.sampling.strategies import OutputMappingStrategy
 
 
 def _make_layer(
@@ -33,11 +32,9 @@ def _make_layer(
         b.add_entangling_layer()
     return QuantumLayer(
         input_size=input_size,
-        output_size=None,  # raw distribution
         builder=b,
         n_photons=n_photons,
         no_bunching=no_bunching,
-        output_mapping_strategy=OutputMappingStrategy.NONE,
     ).eval()
 
 
@@ -70,11 +67,9 @@ class TestUserGuideExamples:
 
         q = QuantumLayer(
             input_size=2,
-            output_size=None,
             builder=b,
             n_photons=2,
             no_bunching=True,
-            output_mapping_strategy=OutputMappingStrategy.NONE,
         ).eval()
 
         model = nn.Sequential(

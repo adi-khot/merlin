@@ -26,7 +26,7 @@ Automatic differentiation handling for sampling.
 
 import warnings
 
-from ..sampling.process import SamplingProcess
+from ..measurement.process import SamplingProcess
 
 
 class AutoDiffProcess:

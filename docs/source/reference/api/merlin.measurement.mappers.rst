@@ -1,7 +1,7 @@
-merlin.sampling.strategies module
+merlin.measurement.mappers module
 =================================
 
-.. automodule:: merlin.sampling.strategies
+.. automodule:: merlin.measurement.mappers
    :members:
    :undoc-members:
    :show-inheritance:

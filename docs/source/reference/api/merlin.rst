@@ -16,6 +16,6 @@ Subpackages
    merlin.builder
    merlin.core
    merlin.datasets
+   merlin.measurement
    merlin.pcvl_pytorch
-   merlin.sampling
-   merlin.torch_utils
+   merlin.utils

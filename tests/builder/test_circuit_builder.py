@@ -7,7 +7,7 @@ import perceval as pcvl
 import pytest
 import torch
 
-from merlin import OutputMappingStrategy, QuantumLayer
+from merlin import MeasurementStrategy, QuantumLayer
 from merlin.builder import CircuitBuilder
 from merlin.core.components import (
     BeamSplitter,
@@ -158,20 +158,20 @@ def test_builder_integrates_directly_with_quantum_layer():
         input_size=3,
         builder=builder,
         n_photons=1,
-        output_size=3,
-        output_mapping_strategy=OutputMappingStrategy.LINEAR,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
         dtype=torch.float32,
     )
+    model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
     assert isinstance(layer.computation_process.circuit, pcvl.Circuit)
 
     x = torch.rand(4, 3)
-    logits = layer(x)
+    logits = model(x)
     loss = logits.sum()
     loss.backward()
 
     assert logits.shape == (4, 3)
-    assert any(p.grad is not None for p in layer.parameters() if p.requires_grad)
+    assert any(p.grad is not None for p in model.parameters() if p.requires_grad)
 
 
 def test_angle_encoding_metadata_and_scaling():
@@ -238,10 +238,10 @@ def test_angle_encoding_applies_scaling_in_quantum_layer():
         input_size=3,
         builder=builder,
         n_photons=1,
-        output_size=3,
-        output_mapping_strategy=OutputMappingStrategy.LINEAR,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
         dtype=torch.float32,
     )
+    torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
     x = torch.tensor([[0.1, 0.2, 0.3]], dtype=torch.float32)
     params = layer.prepare_parameters([x])
@@ -267,10 +267,10 @@ def test_angle_encoding_subset_combinations_in_quantum_layer():
         input_size=3,
         builder=builder,
         n_photons=1,
-        output_size=3,
-        output_mapping_strategy=OutputMappingStrategy.LINEAR,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
         dtype=torch.float32,
     )
+
     x = torch.tensor([[0.2, 0.3, 0.4]], dtype=torch.float32)
     encoded = layer.prepare_parameters([x])[-1]
 
@@ -415,18 +415,18 @@ def test_entangling_layer_models_forward_backward(model):
         input_size=4,
         builder=builder,
         n_photons=1,
-        output_size=4,
-        output_mapping_strategy=OutputMappingStrategy.LINEAR,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
         dtype=torch.float32,
     )
 
+    model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 4))
     x = torch.rand(2, 4)
-    logits = layer(x)
+    logits = model(x)
     loss = logits.sum()
     loss.backward()
 
     assert logits.shape == (2, 4)
-    grads = [p.grad for p in layer.parameters() if p.requires_grad]
+    grads = [p.grad for p in model.parameters() if p.requires_grad]
     assert any(g is not None and torch.any(g != 0) for g in grads)
 
 
@@ -449,19 +449,19 @@ def test_entangling_layer_layer_trains():
         input_size=4,
         builder=builder,
         n_photons=1,
-        output_size=4,
-        output_mapping_strategy=OutputMappingStrategy.LINEAR,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
         dtype=torch.float32,
     )
+    model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 4))
 
     x = torch.rand(5, 4)
-    logits = layer(x)
+    logits = model(x)
     loss = logits.sum()
     loss.backward()
     pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
     assert logits.shape == (5, 4)
     assert any(
-        p.grad is not None and torch.any(p.grad != 0) for p in layer.parameters()
+        p.grad is not None and torch.any(p.grad != 0) for p in model.parameters()
     )
 
 
@@ -476,19 +476,19 @@ def test_entangling_layer_with_additional_components_trains():
         input_size=5,
         builder=builder,
         n_photons=1,
-        output_size=5,
-        output_mapping_strategy=OutputMappingStrategy.LINEAR,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
         dtype=torch.float32,
     )
     pcvl.pdisplay(layer.computation_process.circuit, output_format=pcvl.Format.TEXT)
+    model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 5))
 
     x = torch.rand(3, 5)
-    logits = layer(x)
+    logits = model(x)
     loss = logits.sum()
     loss.backward()
 
     assert logits.shape == (3, 5)
-    grads = [p.grad for p in layer.parameters() if p.requires_grad]
+    grads = [p.grad for p in model.parameters() if p.requires_grad]
     assert any(g is not None and torch.any(g != 0) for g in grads)
 
 
@@ -508,8 +508,7 @@ def test_entangling_layer_models_on_gpu(model):
         input_size=4,
         builder=builder,
         n_photons=1,
-        output_size=4,
-        output_mapping_strategy=OutputMappingStrategy.LINEAR,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
         dtype=torch.float32,
     ).to(device)
 

@@ -5,7 +5,6 @@ import time
 
 from merlin.algorithms import QuantumLayer
 from merlin.builder.circuit_builder import CircuitBuilder
-from merlin.sampling.strategies import OutputMappingStrategy
 
 
 def spin_until(pred, timeout_s: float = 10.0, sleep_s: float = 0.02) -> bool:
@@ -33,9 +32,7 @@ def make_layer(
     b.add_angle_encoding(modes=list(range(input_size)), name="px")
     return QuantumLayer(
         input_size=input_size,
-        output_size=None,  # raw distribution
         builder=b,
         n_photons=n,
         no_bunching=no_bunching,
-        output_mapping_strategy=OutputMappingStrategy.NONE,
     ).eval()
