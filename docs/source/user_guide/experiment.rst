@@ -6,9 +6,9 @@ Experiments
 Photonic experiments in `Perceval <https://perceval.quandela.net/>`_ bundle a
 unitary circuit together with classical *detectors* that interpret the raw Fock
 state probabilities produced by the simulator. MerLin reuses this abstraction:
-passing a :class:`perceval.Experiment` to :class:`~merlin.algorithms.layer.QuantumLayer`
+passing a :class:`perceval.Experiment` to :class:`~merlin.algorithms.layer.QuantumLayer` or to :class:`~merlin.algorithms.kernels.FeatureMap`
 lets you specify how each optical mode should be measured without rewriting the
-quantum layer itself.
+quantum layer or quantum feature map itself.
 
 ---------------
 Why use an Experiment?
@@ -57,7 +57,7 @@ Usage example
    # 1. Build the base circuit
    circuit = pcvl.Circuit(3)
    circuit.add((0, 1), pcvl.BS())
-   circuit.add(2, pcvl.PS(torch.pi / 4))
+   circuit.add(2, pcvl.PS(pcvl.P("px")))
    circuit.add((1, 2), pcvl.BS())
 
    # 2. Wrap it in a Perceval Experiment and configure detectors
@@ -66,15 +66,34 @@ Usage example
    experiment.detectors[1] = pcvl.Detector.pnr()
    experiment.detectors[2] = pcvl.Detector.ppnr(n_wires=2)
 
-   # 3. Feed the experiment into a QuantumLayer with an input Fock state
+   # 3.1 Feed the experiment into a QuantumLayer with an input Fock state
    layer = ML.QuantumLayer(
        input_size=0,
        experiment=experiment,
        input_state=[1, 1, 1],
+       input_parameters=["px"],
+   )
+   
+   x = torch.rand(4, 1)  # Generate data 
+   probs = layer(x)  # Detector-aware probability tensor
+   keys = layer.get_output_keys()  # Classical outcomes produced by the detectors
+
+   # 3.2 Feed the experiment into a quantum kernel FeatureMap to build a FidelityKernel
+   feature_map = ML.FeatureMap(
+       input_size=1,
+       experiment=experiment,
+       input_parameters=["px"],
+   )
+   kernel = ML.FidelityKernel(
+       feature_map=feature_map,
+       input_state=[1, 1, 1],
    )
 
-   probs = layer()  # Detector-aware probability tensor
-   keys = layer.get_output_keys()  # Classical outcomes produced by the detectors
+   X_train = torch.rand(4, 1)
+   X_test = torch.rand(2, 1)
+   # Construct the training & test kernel matrices
+   K_train = kernel(X_train)
+   K_test = kernel(X_test, X_train)
 
 -----------
 Practical notes
@@ -88,7 +107,7 @@ Practical notes
   ``.detectors`` mapping interface. Out-of-range indices raise the original
   Perceval error.
 - Experiments are reusable: the same object can be passed to
-  :class:`~merlin.algorithms.kernels.FidelityKernel` or multiple QuantumLayers to
+  :class:`~merlin.algorithms.kernels.FeatureMap` or multiple QuantumLayers to
   guarantee consistent measurement semantics.
 
 -----------

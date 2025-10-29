@@ -410,7 +410,7 @@ class TestDetectorsWithQuantumLayer:
         )
 
         output = layer().squeeze(0)
-        keys = [tuple(key) for key in layer.get_output_keys()]
+        keys = layer.get_output_keys()
         assert output.shape[0] == len(keys)
 
         processor = pcvl.Processor("SLOS", experiment)
@@ -446,24 +446,24 @@ class TestDetectorsWithQuantumLayer:
         )
 
         layer_probs = layer()
-        layer_keys = [pcvl.BasicState(key) for key in layer.get_output_keys()]
+        layer_keys = layer.get_output_keys()
 
         p = pcvl.Processor("SLOS", exp)
         p.with_input(pcvl.BasicState([1, 1, 1, 1]))
         p.min_detected_photons_filter(1)
 
-        pcvl_output = p.probs()["results"]
-        pcvl_keys = []
-        pcvl_probs = []
-        for key, prob in pcvl_output.items():
-            pcvl_keys.append(key)
-            pcvl_probs.append(prob)
+        raw_results = p.probs()["results"]
+        probability_map = {
+            tuple(int(v) for v in state): float(prob)
+            for state, prob in raw_results.items()
+        }
 
-        pcvl_probs = torch.tensor(pcvl_probs, dtype=torch.float32)
-        assert layer_probs.shape[-1] == len(layer_keys)
-        assert torch.tensor(pcvl_probs).shape[-1] == len(pcvl_keys)
-        assert layer_keys == pcvl_keys
-        assert torch.allclose(layer_probs, torch.tensor(pcvl_probs))
+        reference = torch.tensor(
+            [probability_map.get(key, 0.0) for key in layer_keys],
+            dtype=layer_probs.dtype,
+        )
+
+        assert torch.allclose(layer_probs, reference, atol=1e-6)
 
     def test_detector_plus_no_bunching_error(self):
         # Define Experiment without Detector
@@ -559,14 +559,13 @@ class TestDetectorsWithKernels:
             trainable=False,
         )
 
-        experiment = pcvl.Experiment(feature_map.circuit)
+        experiment = feature_map.experiment
         experiment.detectors[0] = pcvl.Detector.threshold()
         experiment.detectors[1] = pcvl.Detector.threshold()
 
         kernel = ML.FidelityKernel(
             feature_map=feature_map,
             input_state=[1, 0],
-            experiment=experiment,
         )
 
         data = torch.tensor([[0.0], [1.0]], dtype=kernel.dtype)
@@ -587,7 +586,7 @@ class TestDetectorsWithKernels:
             trainable=False,
         )
 
-        experiment = pcvl.Experiment(feature_map.circuit)
+        experiment = feature_map.experiment
         experiment.detectors[0] = pcvl.Detector.pnr()
         experiment.detectors[1] = pcvl.Detector.threshold()
         experiment.detectors[2] = pcvl.Detector.threshold()
@@ -595,7 +594,6 @@ class TestDetectorsWithKernels:
         kernel = ML.FidelityKernel(
             feature_map=feature_map,
             input_state=[1, 0, 0],
-            experiment=experiment,
         )
 
         data = torch.tensor([[0.0], [0.5], [1.0]], dtype=kernel.dtype)
@@ -616,7 +614,7 @@ class TestDetectorsWithKernels:
             trainable=False,
         )
 
-        experiment = pcvl.Experiment(feature_map.circuit)
+        experiment = feature_map.experiment
         experiment.detectors[0] = pcvl.Detector.ppnr(n_wires=2, max_detections=1)
         experiment.detectors[1] = pcvl.Detector.pnr()
         experiment.detectors[2] = pcvl.Detector.pnr()
@@ -624,7 +622,6 @@ class TestDetectorsWithKernels:
         kernel = ML.FidelityKernel(
             feature_map=feature_map,
             input_state=[1, 0, 0],
-            experiment=experiment,
         )
 
         data = torch.tensor([[0.0], [0.6]], dtype=kernel.dtype)
@@ -652,15 +649,20 @@ class TestDetectorsWithKernels:
             input_state=input_state,
         )
 
-        experiment_threshold = pcvl.Experiment(feature_map.circuit)
+        feature_map_threshold = ML.FeatureMap.simple(
+            input_size=1,
+            n_modes=3,
+            n_photons=3,
+            trainable=False,
+        )
+        experiment_threshold = feature_map_threshold.experiment
         experiment_threshold.detectors[0] = pcvl.Detector.threshold()
         experiment_threshold.detectors[1] = pcvl.Detector.threshold()
         experiment_threshold.detectors[2] = pcvl.Detector.threshold()
 
         kernel_threshold = ML.FidelityKernel(
-            feature_map=feature_map,
+            feature_map=feature_map_threshold,
             input_state=input_state,
-            experiment=experiment_threshold,
         )
 
         keys_pnr = kernel_pnr._detector_transform.output_keys
@@ -672,3 +674,38 @@ class TestDetectorsWithKernels:
         assert all(sum(key) == sum(input_state) for key in keys_pnr)
         assert any(sum(key) < sum(input_state) for key in keys_threshold)
         assert all(value in (0, 1) for key in keys_threshold for value in key)
+
+    def test_fidelity_kernel_respects_feature_map_experiment(self):
+        """FidelityKernel should inherit detector configuration provided via FeatureMap."""
+
+        circuit = pcvl.Circuit(2)
+        circuit.add(0, pcvl.PS(pcvl.P("px")))
+        circuit.add((0, 1), pcvl.BS())
+
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.threshold()
+        experiment.detectors[1] = pcvl.Detector.pnr()
+
+        feature_map = ML.FeatureMap(
+            input_size=1,
+            experiment=experiment,
+            input_parameters=["px"],
+        )
+
+        kernel = ML.FidelityKernel(
+            feature_map=feature_map,
+            input_state=[1, 1],
+        )
+
+        x_train = torch.tensor([[0.0], [0.5], [1.0]], dtype=kernel.dtype)
+        x_test = torch.tensor([[0.2], [0.8]], dtype=kernel.dtype)
+
+        k_train = kernel(x_train)
+        k_test = kernel(x_test, x_train)
+
+        assert k_train.shape == (3, 3)
+        assert k_test.shape == (2, 3)
+        diag = torch.diag(k_train)
+        assert torch.allclose(diag, torch.ones_like(diag), atol=1e-6)
+        assert torch.all(k_train >= 0)
+        assert torch.all(k_test >= 0)

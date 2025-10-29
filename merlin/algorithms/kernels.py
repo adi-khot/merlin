@@ -29,6 +29,8 @@ class FeatureMap:
         circuit: Pre-compiled :class:`pcvl.Circuit` to encode features.
         input_size: Dimension of incoming classical data (required).
         builder: Optional :class:`CircuitBuilder` to compile into a circuit.
+        experiment: Optional :class:`pcvl.Experiment` providing both the circuit and detector configuration.
+                   Exactly one of ``circuit``, ``builder``, or ``experiment`` must be supplied.
         input_parameters: Parameter prefix(es) that host the classical data.
         dtype: Torch dtype used when constructing the unitary.
         device: Torch device on which unitaries are evaluated.
@@ -40,6 +42,7 @@ class FeatureMap:
         input_size: int | None = None,
         *,
         builder: CircuitBuilder | None = None,
+        experiment: pcvl.Experiment | None = None,
         input_parameters: str | list[str] | None,
         trainable_parameters: list[str] | None = None,
         dtype: str | torch.dtype = torch.float32,
@@ -50,28 +53,55 @@ class FeatureMap:
         builder_input: list[str] = []
 
         self._angle_encoding_specs: dict[str, dict[str, object]] = {}
+        self.experiment: pcvl.Experiment | None = None
 
-        if circuit is not None and builder is not None:
-            raise ValueError("Provide either 'circuit' or 'builder', not both")
+        # The feature map can be defined from exactly one artefact among circuit, builder, or experiment.
+        if sum(x is not None for x in (circuit, builder, experiment)) != 1:
+            raise ValueError(
+                "Provide exactly one of 'circuit', 'builder', or 'experiment'."
+            )
+
+        resolved_circuit: pcvl.Circuit | None = None
 
         if builder is not None:
             builder_trainable = builder.trainable_parameter_prefixes
             builder_input = builder.input_parameter_prefixes
             self._angle_encoding_specs = builder.angle_encoding_specs
-            circuit = builder.to_pcvl_circuit(pcvl)
+            resolved_circuit = builder.to_pcvl_circuit(pcvl)
+            self.experiment = pcvl.Experiment(resolved_circuit)
+        elif circuit is not None:
+            resolved_circuit = circuit
+            self.experiment = pcvl.Experiment(resolved_circuit)
+        elif experiment is not None:
+            if (
+                not experiment.is_unitary
+                or experiment.post_select_fn is not None
+                or experiment.heralds
+            ):
+                raise ValueError(
+                    "The provided experiment must be unitary, and must not have post-selection or heralding."
+                )
+            if experiment.min_photons_filter:
+                warnings.warn(
+                    "The 'min_photons_filter' from the experiment is currently ignored.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            self.experiment = experiment
+            resolved_circuit = experiment.unitary_circuit()
+        else:  # pragma: no cover - defensive guard
+            raise RuntimeError("Resolved circuit could not be determined.")
 
-        if circuit is None:
-            raise ValueError("Either 'circuit' or 'builder' must be provided")
-        self.circuit = circuit
+        self.circuit = resolved_circuit
         if input_size is None:
             raise TypeError("FeatureMap requires 'input_size' to be specified.")
         self.input_size = input_size
         if trainable_parameters is None:
             trainable_parameters = builder_trainable
-        self.trainable_parameters = trainable_parameters or []
+        self.trainable_parameters = list(trainable_parameters or [])
         self.dtype = to_torch_dtype(dtype)
         self.device = device or torch.device("cpu")
-        self.is_trainable = bool(trainable_parameters)
+        self.is_trainable = bool(self.trainable_parameters)
         self._encoder = encoder  # NEW
 
         if input_parameters is None:
@@ -94,7 +124,7 @@ class FeatureMap:
             self.circuit,
             [self.input_parameters] + self.trainable_parameters,
             dtype=self.dtype,
-            device=device,
+            device=self.device,
         )
         # Set training parameters as torch parameters
         self._training_dict: dict[str, torch.nn.Parameter] = {}
@@ -561,7 +591,6 @@ class FidelityKernel(torch.nn.Module):
     :param feature_map: Feature map object that encodes a given
         datapoint within its circuit
     :param input_state: Input state into circuit.
-    :param experiment: Optional Perceval experiment providing detector configuration.
     :param shots: Number of circuit shots. If `None`, the exact
         transition probabilities are returned. Default: `None`.
     :param sampling_method: Probability distributions are post-
@@ -605,7 +634,6 @@ class FidelityKernel(torch.nn.Module):
         feature_map: FeatureMap,
         input_state: list[int],
         *,
-        experiment: pcvl.Experiment | None = None,
         shots: int | None = None,
         sampling_method: str = "multinomial",
         no_bunching: bool = False,
@@ -641,25 +669,18 @@ class FidelityKernel(torch.nn.Module):
             for param_name, param in feature_map._training_dict.items():
                 self.register_parameter(param_name, param)
 
-        if experiment is not None:
-            if (
-                not experiment.is_unitary
-                or experiment.post_select_fn is not None
-                or experiment.heralds
-                or experiment.in_heralds
-            ):
-                raise ValueError(
-                    "The provided experiment must be unitary, and must not have post-selection or heralding."
-                )
-            if experiment.min_photons_filter:
-                warnings.warn(
-                    "The 'min_photons_filter' from the experiment is currently ignored.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-            self.experiment = experiment
-        else:
-            self.experiment = pcvl.Experiment(self.feature_map.circuit)
+        experiment = getattr(self.feature_map, "experiment", None)
+        if experiment is None:
+            experiment = pcvl.Experiment(self.feature_map.circuit)
+            self.feature_map.experiment = experiment
+
+        self._validate_experiment(experiment)
+        self.experiment = experiment
+        experiment_circuit = self.experiment.unitary_circuit()
+        if experiment_circuit.m != self.feature_map.circuit.m:
+            raise ValueError(
+                "Experiment circuit must have the same number of modes as the feature map circuit."
+            )
 
         if max(input_state) > 1 and no_bunching:
             raise ValueError(
@@ -992,3 +1013,22 @@ class FidelityKernel(torch.nn.Module):
         elif isinstance(x1, np.ndarray):
             return np.allclose(x1, x2)
         return False
+
+    @staticmethod
+    def _validate_experiment(experiment: pcvl.Experiment) -> None:
+        """Validate that the provided experiment is compatible with fidelity kernels."""
+        if (
+            not experiment.is_unitary
+            or experiment.post_select_fn is not None
+            or experiment.heralds
+            or experiment.in_heralds
+        ):
+            raise ValueError(
+                "The provided experiment must be unitary, and must not have post-selection or heralding."
+            )
+        if experiment.min_photons_filter:
+            warnings.warn(
+                "The 'min_photons_filter' from the experiment is currently ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
