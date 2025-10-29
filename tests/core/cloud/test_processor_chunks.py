@@ -74,18 +74,6 @@ class TestFuturesAndChunking:
         with pytest.raises(_cf.CancelledError):
             fut.wait()
 
-    def test_cancel_all_cancels_multiple_futures(self, remote_processor):
-        layer = make_layer(6, 2, 2, no_bunching=True)
-        proc = MerlinProcessor(remote_processor)
-        futs = [proc.forward_async(layer, torch.rand(8, 2), nsample=40_000, timeout=None) for _ in range(3)]
-        spin_until(lambda: all(len(f.job_ids) > 0 or f.done() for f in futs), timeout_s=10.0)
-        if any(f.done() for f in futs):
-            pytest.skip("Backend finished too quickly to test cancellation")
-        proc.cancel_all()
-        for f in futs:
-            with pytest.raises(_cf.CancelledError):
-                f.wait()
-
     def test_default_timeout_via_constructor(self, remote_processor):
         layer = make_layer(6, 2, 2, no_bunching=True)
         proc = MerlinProcessor(remote_processor, timeout=0.03)

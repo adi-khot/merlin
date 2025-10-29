@@ -41,7 +41,7 @@ Quick Start
     from merlin.algorithms import QuantumLayer
     from merlin.builder.circuit_builder import CircuitBuilder
     from merlin.core.merlin_processor import MerlinProcessor
-    from merlin.sampling.strategies import OutputMappingStrategy
+    from merlin.measurement.strategies import MeasurementStrategy
 
     # 1) Create the Perceval RemoteProcessor (token must already be configured)
     rp = pcvl.RemoteProcessor("sim:slos")
@@ -62,15 +62,17 @@ Quick Start
     b.add_entangling_layer()
 
     q = QuantumLayer(
-        input_size=2, output_size=None, builder=b,
-        n_photons=2, no_bunching=True,
-        output_mapping_strategy=OutputMappingStrategy.NONE
+        input_size=2,
+        builder=b,
+        n_photons=2,
+        no_bunching=True,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,  # raw probability vector
     ).eval()
 
     model = nn.Sequential(
         nn.Linear(3, 2, bias=False),
         q,
-        nn.Linear(15, 4, bias=False),
+        nn.Linear(15, 4, bias=False),   # 15 = C(6,2) from the chosen circuit
         nn.Softmax(dim=-1)
     ).eval()
 
@@ -134,9 +136,9 @@ Asynchronous
 
     fut = proc.forward_async(layer_or_model, X, nsample=3000, timeout=None)
     # Helpers injected on the Future:
-    fut.job_ids        # list[str]: job ids across all chunks/leaves
-    fut.status()       # dict: {state, progress, message, chunks_*}
-    fut.cancel_remote()# request cancellation; .wait() -> CancelledError
+    fut.job_ids         # list[str]: job ids across all chunks/leaves
+    fut.status()        # dict: {state, progress, message, chunks_*}
+    fut.cancel_remote() # request cancellation; .wait() -> CancelledError
     y = fut.wait()
 
 * **Cancellation**:
@@ -194,7 +196,7 @@ not** submit jobs:
         desired_samples_per_input=2_000
     )
     # -> list[int] length B (or 1 for a single vector).
-    #    0 means "not viable" under current platform/perfs/filters.
+    #    0 means "not viable" under current platform/perfs/filters).
 
 Behavior:
 
@@ -238,10 +240,11 @@ Controlling Shots Explicitly
 Workflow Recipes (End-to-End Examples)
 --------------------------------------
 
-The following examples mirror tested workflows (see ``tests/core/cloud/test_userguide_examples.py``).
+The following examples mirror tested workflows (see
+``tests/core/cloud/test_userguide_examples.py``).
 
 Mixed classical --> quantum --> classical
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: python
 
@@ -363,7 +366,7 @@ High-throughput batching with chunking
     X = torch.rand(64, q.input_size)  # big batch
     fut = proc.forward_async(q, X, nsample=3000)
     Y = fut.wait()
-    print("chunks_total/done/active:", proc.forward_async.__self__ if False else fut.status())
+    print("chunks_total/done/active:", fut.status())
 
 Troubleshooting
 ---------------
