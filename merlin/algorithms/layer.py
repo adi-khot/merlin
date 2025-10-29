@@ -29,7 +29,7 @@ from __future__ import annotations
 import warnings
 from typing import Any, cast
 
-import perceval as pcvl
+import perceval as pcvl  # type: ignore[import]
 import torch
 import torch.nn as nn
 
@@ -396,9 +396,10 @@ class QuantumLayer(nn.Module):
         if measurement_strategy == MeasurementStrategy.PROBABILITIES:
             self._output_size = dist_size
         elif measurement_strategy == MeasurementStrategy.MODE_EXPECTATIONS:
-            if type(self.circuit) is pcvl.Circuit:
+            # be defensive: `self.circuit` may be None or an untyped external object
+            if self.circuit is not None and hasattr(self.circuit, "m"):
                 self._output_size = self.circuit.m
-            elif type(self.circuit) is CircuitBuilder:
+            elif isinstance(self.circuit, CircuitBuilder):
                 self._output_size = self.circuit.n_modes
             else:
                 raise TypeError(f"Unknown circuit type: {type(self.circuit)}")
@@ -948,7 +949,9 @@ class QuantumLayer(nn.Module):
                 no_bunching=bool(no_bunching)
             )
 
-        quantum_layer = cls(**quantum_layer_kwargs)
+        # mypy: quantum_layer_kwargs is constructed dynamically; cast to satisfy
+        # the type checker that keys match the constructor signature.
+        quantum_layer = cls(**cast(dict[str, Any], quantum_layer_kwargs))
 
         class SimpleSequential(nn.Module):
             """Simple Sequential Module that contains the quantum layer as well as the post processing"""
@@ -991,8 +994,9 @@ class QuantumLayer(nn.Module):
     def __str__(self) -> str:
         """String representation of the quantum layer."""
         n_modes = None
-        if hasattr(self, "circuit") and getattr(self.circuit, "m", None) is not None:
-            n_modes = self.circuit.m
+        circuit = getattr(self, "circuit", None)
+        if circuit is not None and getattr(circuit, "m", None) is not None:
+            n_modes = circuit.m
 
         modes_fragment = f", modes={n_modes}" if n_modes is not None else ""
         base_str = (

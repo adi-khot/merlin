@@ -37,8 +37,7 @@ import torch
 import torch.jit as jit
 
 from merlin.core.computation_space import ComputationSpace
-
-from ..utils.dtypes import resolve_float_complex
+from merlin.utils.dtypes import resolve_float_complex
 
 
 def _get_complex_dtype_for_float(dtype: torch.dtype) -> torch.dtype:
