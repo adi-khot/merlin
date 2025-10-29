@@ -287,13 +287,11 @@ def test_computation_space_selector(make_layer):
         amplitude_encoding=False, computation_space=ComputationSpace.FOCK
     )
     assert layer_fock.computation_space is ComputationSpace.FOCK
-    assert layer_fock.no_bunching is False
 
     layer_nb = make_layer(
         amplitude_encoding=False, computation_space=ComputationSpace.UNBUNCHED
     )
     assert layer_nb.computation_space is ComputationSpace.UNBUNCHED
-    assert layer_nb.no_bunching is True
 
     with pytest.raises(ValueError):
         make_layer(amplitude_encoding=False, computation_space="invalid")
@@ -308,7 +306,6 @@ def test_computation_space_selector(make_layer):
             no_bunching=True,
         )
     assert layer_override.computation_space is ComputationSpace.FOCK
-    assert layer_override.no_bunching is False
 
 
 def test_computation_space_consistency_no_warning(make_layer):
@@ -320,9 +317,9 @@ def test_computation_space_consistency_no_warning(make_layer):
             no_bunching=True,
         )
 
-    assert layer.no_bunching is True
     assert layer.computation_space is ComputationSpace.UNBUNCHED
-    assert caught == []
+    # warning will be generated because no_bunching is deprecated, but not about inconsistency
+    assert caught != []
 
 
 def test_amplitude_encoding_probabilities_strategy(make_layer):

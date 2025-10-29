@@ -54,27 +54,58 @@ class QuantumLayer(nn.Module):
     This layer can be created either from a :class:`CircuitBuilder` instance or a pre-compiled :class:`pcvl.Circuit`.
     """
 
-    _deprecated_params: dict[str, str] = {
-        "__init__.ansatz": "Use 'circuit' or 'CircuitBuilder' to define the quantum circuit.",
-        "simple.reservoir_mode": "The 'reservoir_mode' argument is no longer supported in the 'simple' method.",
+    # Map of deprecated kwargs to (message, raise_error)
+    # If raise_error is True the presence of the deprecated parameter will raise a ValueError.
+    # If raise_error is False the presence will emit a DeprecationWarning but continue.
+    _deprecated_params: dict[str, tuple[str, bool]] = {
+        "__init__.ansatz": (
+            "Use 'circuit' or 'CircuitBuilder' to define the quantum circuit.",
+            True,
+        ),
+        "__init__.no_bunching": (
+            "The 'no_bunching' keyword is deprecated; prefer selecting the computation_space instead.",
+            False,
+        ),
+        "simple.reservoir_mode": (
+            "The 'reservoir_mode' argument is no longer supported in the 'simple' method.",
+            True,
+        ),
     }
 
     @classmethod
     def _validate_kwargs(cls, method_name: str, kwargs: dict[str, Any]) -> None:
         if not kwargs:
             return
-        deprecated: list[str] = []
+
+        deprecated_raise: list[str] = []
+        deprecated_warn: list[str] = []
         unknown: list[str] = []
+
         for key in sorted(kwargs):
             full_name = f"{method_name}.{key}"
             if full_name in cls._deprecated_params:
-                deprecated.append(
-                    f"Parameter '{key}' is deprecated. {cls._deprecated_params[full_name]}"
-                )
+                # support old-style str values for backwards compatibility
+                val = cls._deprecated_params[full_name]
+                if isinstance(val, tuple):
+                    message, raise_error = val
+                else:
+                    message, raise_error = (str(val), True)
+
+                if raise_error:
+                    deprecated_raise.append(f"Parameter '{key}' is deprecated. {message}")
+                else:
+                    deprecated_warn.append(f"Parameter '{key}' is deprecated. {message}")
             else:
                 unknown.append(key)
-        if deprecated:
-            raise ValueError(" ".join(deprecated))
+
+        # Emit non-fatal deprecation warnings
+        if deprecated_warn:
+            warnings.warn(" ".join(deprecated_warn), DeprecationWarning, stacklevel=2)
+
+        # Raise for deprecated parameters that are marked fatal
+        if deprecated_raise:
+            raise ValueError(" ".join(deprecated_raise))
+
         if unknown:
             unknown_list = ", ".join(unknown)
             raise ValueError(
@@ -94,24 +125,25 @@ class QuantumLayer(nn.Module):
         # For both custom circuits and builder
         input_state: list[int] | None = None,
         n_photons: int | None = None,
-        # Amplitude encoding
-        amplitude_encoding: bool = False,
-        computation_space: ComputationSpace | str | None = None,
         # only for custom circuits and experiments
         trainable_parameters: list[str] | None = None,
         input_parameters: list[str] | None = None,
         # Common parameters
+        amplitude_encoding: bool = False,
+        computation_space: ComputationSpace | str | None = None,
         measurement_strategy: MeasurementStrategy = MeasurementStrategy.PROBABILITIES,
+        # device and dtype
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
+        # TODO: shots and sampling_method to be moved to forward() - see #101
         shots: int = 0,
         sampling_method: str = "multinomial",
-        no_bunching: bool | None = None,
         **kwargs,
     ):
         super().__init__()
 
         self._validate_kwargs("__init__", kwargs)
+        no_bunching = kwargs.pop("no_bunching", None)
 
         self.device = device
         self.dtype = dtype or torch.float32
@@ -136,46 +168,25 @@ class QuantumLayer(nn.Module):
                     "Amplitude encoding cannot be combined with classical input parameters."
                 )
         else:
-            self.input_size = int(input_size)
+            self.input_size = input_size is not None and (int(input_size) or 0)
 
-        # computation_space and no_bunching arguments management
-        # no_bunching cannot be True by default, to fit with "fock" computation_space
-        # to avoid situation such that no_bunching=True and computation_space="fock"
-        # TODO: warning for no_bunching deprecation -> map it to computation_space
-
+        # computation_space management - default is UNBUNCHED except if overridden by deprecated no_bunching
         if computation_space is None:
-            computation_space_value: ComputationSpace | None = None
+            computation_space_value = ComputationSpace.default(no_bunching=no_bunching)
         else:
             computation_space_value = ComputationSpace.coerce(computation_space)
-
-        if no_bunching is None:
-            no_bunching_value = True
-        else:
-            no_bunching_value = bool(no_bunching)
-
-        if computation_space_value is None:
-            # if computation_space is not provided, derive it from no_bunching
-            computation_space_value = ComputationSpace.default(
-                no_bunching=no_bunching_value
+        # if no_bunching is provided, check consistency with ComputationSpace
+        derived_no_bunching = computation_space_value is ComputationSpace.UNBUNCHED
+        if no_bunching is not None and no_bunching != derived_no_bunching:
+            warnings.warn(
+                "Overriding 'no_bunching' to match the requested computation_space. "
+                f"Expected {derived_no_bunching} for computation_space='{computation_space_value.value}', "
+                f"received {no_bunching}.",
+                UserWarning,
+                stacklevel=2,
             )
-        else:
-            # if it is provided, check consistency with no_bunching
-            derived_no_bunching = computation_space_value in {
-                ComputationSpace.UNBUNCHED,
-                ComputationSpace.DUAL_RAIL,
-            }
-            if no_bunching is not None and no_bunching_value != derived_no_bunching:
-                warnings.warn(
-                    "Overriding 'no_bunching' to match the requested computation_space. "
-                    f"Expected {derived_no_bunching} for computation_space='{computation_space_value.value}', "
-                    f"received {no_bunching_value}.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-            no_bunching_value = derived_no_bunching
 
         self.computation_space = computation_space_value
-        self.no_bunching = no_bunching_value
 
         # ensure exclusivity of circuit/builder/experiment
         if sum(x is not None for x in (circuit, builder, experiment)) != 1:
@@ -278,7 +289,6 @@ class QuantumLayer(nn.Module):
             n_photons=n_photons,
             device=self.device,
             dtype=self.dtype,
-            no_bunching=self.no_bunching,
             computation_space=self.computation_space,
         )
 
@@ -393,7 +403,7 @@ class QuantumLayer(nn.Module):
         # Create output mapping
         self.measurement_mapping = OutputMapper.create_mapping(
             measurement_strategy,
-            self.computation_process.no_bunching,
+            self.computation_process.computation_space is ComputationSpace.UNBUNCHED,
             keys,
         )
 
@@ -733,7 +743,7 @@ class QuantumLayer(nn.Module):
             needs_gradient, apply_sampling or False, shots or self.shots
         )
         distribution = amplitudes.real**2 + amplitudes.imag**2
-        if self.no_bunching:
+        if self.computation_space is ComputationSpace.UNBUNCHED:
             sum_probs = distribution.sum(dim=1, keepdim=True)
 
             # Only normalize when sum > 0 to avoid division by zero
@@ -912,16 +922,26 @@ class QuantumLayer(nn.Module):
                 f"{total_trainable} trainable parameters but {expected_trainable} were expected."
             )
 
-        quantum_layer = cls(
+        # Translate legacy no_bunching argument into the computation_space enum to
+        # avoid triggering deprecation in QuantumLayer.__init__ when callers use
+        # the `simple` convenience constructor. If no_bunching was not provided
+        # (None), let QuantumLayer decide the default.
+        quantum_layer_kwargs = dict(
             input_size=input_size,
             builder=builder,
             n_photons=n_photons,
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
             shots=shots,
-            no_bunching=no_bunching,
             device=device,
             dtype=dtype,
         )
+
+        if no_bunching is not None:
+            quantum_layer_kwargs["computation_space"] = ComputationSpace.default(
+                no_bunching=bool(no_bunching)
+            )
+
+        quantum_layer = cls(**quantum_layer_kwargs)
 
         class SimpleSequential(nn.Module):
             """Simple Sequential Module that contains the quantum layer as well as the post processing"""

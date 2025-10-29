@@ -48,8 +48,8 @@ class ComputationProcess(AbstractComputationProcess):
         reservoir_mode: bool = False,
         dtype: torch.dtype = torch.float32,
         device: torch.device | None = None,
-        computation_space: ComputationSpace | str | None = None,
-        no_bunching: bool = None,
+        computation_space: ComputationSpace | None = None,
+        no_bunching: bool | None = None,
         output_map_func=None,
     ):
         self.circuit = circuit
@@ -60,15 +60,16 @@ class ComputationProcess(AbstractComputationProcess):
         self.reservoir_mode = reservoir_mode
         self.dtype = dtype
         self.device = device
-        self.no_bunching = no_bunching
+
+        if computation_space is None:
+            # Default computation space based on deprecated no_bunching flag
+            computation_space = ComputationSpace.default(no_bunching=no_bunching)
+
+        self.computation_space = computation_space
         self.output_map_func = output_map_func
         # Dual-rail configuration runs after graph construction, so stash whether
         # we still need to re-check any tensor-shaped input state once the logical
         # basis has been narrowed.
-        if computation_space is None:
-            self.computation_space: ComputationSpace | None = None
-        else:
-            self.computation_space = ComputationSpace.coerce(computation_space)
         self._pending_state_validation = False
 
         # Extract circuit parameters for graph building
@@ -83,10 +84,7 @@ class ComputationProcess(AbstractComputationProcess):
             self.n_photons = n_photons
         # Build computation graphs
         self._setup_computation_graphs()
-        if self.computation_space is None:
-            self.computation_space = ComputationSpace.default(
-                no_bunching=bool(self.no_bunching)
-            )
+
         # Delay validation here because dual-rail may override the logical basis
         # immediately after graph setup; the follow-up call handles the actual setup.
         self.configure_computation_space(self.computation_space, validate_input=False)
@@ -115,7 +113,7 @@ class ComputationProcess(AbstractComputationProcess):
         self.simulation_graph = build_slos_distribution_computegraph(
             m=self.m,  # Number of modes
             n_photons=self.n_photons,  # Total number of photons
-            no_bunching=self.no_bunching,
+            no_bunching=self.computation_space is ComputationSpace.UNBUNCHED,
             keep_keys=True,  # Usually want to keep keys for output interpretation
             device=self.device,
             dtype=self.dtype,
@@ -377,10 +375,10 @@ class ComputationProcess(AbstractComputationProcess):
                 )
             # Dual-rail limits to 2**n logical states (one photon per rail pair).
             return 2**self.n_photons
-        if self.no_bunching:
+        if self.computation_space is ComputationSpace.UNBUNCHED:
             if self.n_photons > self.m:
                 raise ValueError(
-                    "Invalid configuration: no_bunching=True requires "
+                    "Invalid configuration: ComputationSpace.UNBUNCHED requires "
                     "n_photons to be less than or equal to the number of modes."
                 )
             return math.comb(self.m, self.n_photons)
@@ -411,19 +409,16 @@ class ComputationProcess(AbstractComputationProcess):
                 explanation = (
                     f"expected 2**n_photons = 2**{self.n_photons} = {expected}"
                 )
-                space = ComputationSpace.DUAL_RAIL.value
-            elif self.no_bunching:
+            elif self.computation_space is ComputationSpace.UNBUNCHED:
                 explanation = f"expected C(m, n_photons) = C({self.m}, {self.n_photons}) = {expected}"
-                space = ComputationSpace.UNBUNCHED.value
             else:
                 explanation = (
                     f"expected C(m + n_photons - 1, n_photons) = "
                     f"C({self.m + self.n_photons - 1}, {self.n_photons}) = {expected}"
                 )
-                space = ComputationSpace.FOCK.value
             raise ValueError(
                 "Input state dimension mismatch for computation_space "
-                f"'{space}': got {state_dim}, {explanation}."
+                f"'{self.computation_space}': got {state_dim}, {explanation}."
             )
 
     def _should_defer_state_validation(self, tensor: torch.Tensor) -> bool:
@@ -439,7 +434,7 @@ class ComputationProcess(AbstractComputationProcess):
             return False
 
         return (
-            self.no_bunching
+            self.computation_space is ComputationSpace.UNBUNCHED
             and self.m == 2 * self.n_photons
             and state_dim == 2**self.n_photons
         )
@@ -495,17 +490,11 @@ class ComputationProcess(AbstractComputationProcess):
 
     def configure_computation_space(
         self,
-        computation_space: ComputationSpace | str | None,
+        computation_space: ComputationSpace = ComputationSpace.UNBUNCHED,
         *,
         validate_input: bool = True,
     ) -> None:
         """Reconfigure the logical basis according to the desired computation space."""
-        if computation_space is None:
-            self.computation_space = ComputationSpace.default(
-                no_bunching=bool(self.no_bunching)
-            )
-        else:
-            self.computation_space = ComputationSpace.coerce(computation_space)
 
         effective_space = self.computation_space
         if effective_space is ComputationSpace.DUAL_RAIL:
@@ -537,8 +526,7 @@ class ComputationProcessFactory:
         trainable_parameters: list[str],
         input_parameters: list[str],
         reservoir_mode: bool = False,
-        no_bunching: bool = None,
-        output_map_func=None,
+        computation_space: ComputationSpace | None = None,
         **kwargs,
     ) -> ComputationProcess:
         """Create a computation process."""
@@ -548,7 +536,6 @@ class ComputationProcessFactory:
             trainable_parameters=trainable_parameters,
             input_parameters=input_parameters,
             reservoir_mode=reservoir_mode,
-            no_bunching=no_bunching,
-            output_map_func=output_map_func,
+            computation_space=computation_space,
             **kwargs,
         )
