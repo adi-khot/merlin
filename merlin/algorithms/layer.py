@@ -38,9 +38,12 @@ from ..builder.circuit_builder import (
     CircuitBuilder,
 )
 from ..core.process import ComputationProcessFactory
-from ..sampling.autodiff import AutoDiffProcess
-from ..sampling.strategies import OutputMappingStrategy
-from ..torch_utils.torch_codes import OutputMapper
+from ..measurement import OutputMapper
+from ..measurement.autodiff import AutoDiffProcess
+from ..measurement.strategies import (
+    MeasurementStrategy,
+)
+from ..utils.grouping import ModGrouping
 
 
 class QuantumLayer(nn.Module):
@@ -81,7 +84,6 @@ class QuantumLayer(nn.Module):
     def __init__(
         self,
         input_size: int,
-        output_size: int | None = None,
         # Builder-based construction
         builder: CircuitBuilder | None = None,
         # Custom circuit construction
@@ -92,10 +94,10 @@ class QuantumLayer(nn.Module):
         input_state: list[int] | None = None,
         n_photons: int | None = None,
         # only for custom circuits and experiments
-        trainable_parameters: list[str] = None,
-        input_parameters: list[str] = None,
+        trainable_parameters: list[str] | None = None,
+        input_parameters: list[str] | None = None,
         # Common parameters
-        output_mapping_strategy: OutputMappingStrategy = OutputMappingStrategy.LINEAR,
+        measurement_strategy: MeasurementStrategy = MeasurementStrategy.PROBABILITIES,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         shots: int = 0,
@@ -111,6 +113,7 @@ class QuantumLayer(nn.Module):
         self.dtype = dtype or torch.float32
         self.input_size = input_size
         self.no_bunching = no_bunching
+        self.input_state = input_state
 
         # ensure exclusivity of circuit/builder/experiment
         if sum(x is not None for x in (circuit, builder, experiment)) != 1:
@@ -131,7 +134,6 @@ class QuantumLayer(nn.Module):
                 not experiment.is_unitary
                 or experiment.post_select_fn is not None
                 or experiment.heralds
-                or experiment.in_heralds
             ):
                 raise ValueError(
                     "The provided experiment must be unitary, and must not have post-selection or heralding."
@@ -179,8 +181,7 @@ class QuantumLayer(nn.Module):
             n_photons,
             trainable_parameters,
             input_parameters,
-            output_size,
-            output_mapping_strategy,
+            measurement_strategy,
         )
 
         # Setup sampling
@@ -195,8 +196,7 @@ class QuantumLayer(nn.Module):
         n_photons: int | None,
         trainable_parameters: list[str],
         input_parameters: list[str],
-        output_size: int | None,
-        output_mapping_strategy: OutputMappingStrategy,
+        measurement_strategy: MeasurementStrategy,
     ):
         """Initialize from custom circuit (backward compatible mode)."""
         if input_state is not None:
@@ -258,8 +258,8 @@ class QuantumLayer(nn.Module):
         # Setup parameters
         self._setup_parameters_from_custom(trainable_parameters)
 
-        # Setup output mapping
-        self._setup_output_mapping_from_custom(output_size, output_mapping_strategy)
+        # Setup measurement strategy
+        self._setup_measurement_strategy_from_custom(measurement_strategy)
 
     def _setup_parameters_from_custom(self, trainable_parameters: list[str] | None):
         """Setup parameters from custom circuit configuration."""
@@ -283,36 +283,43 @@ class QuantumLayer(nn.Module):
                 self.register_parameter(tp, parameter)
                 self.thetas.append(parameter)
 
-    def _setup_output_mapping_from_custom(
-        self, output_size: int | None, output_mapping_strategy: OutputMappingStrategy
+    def _setup_measurement_strategy_from_custom(
+        self, measurement_strategy: MeasurementStrategy
     ):
         """Setup output mapping for custom circuit construction."""
         # Get distribution size
         dummy_params = self._create_dummy_parameters()
-        distribution = self.computation_process.compute(dummy_params)
+        if self.input_state is not None and type(self.input_state) is torch.Tensor:
+            keys, distribution = self.computation_process.compute_superposition_state(
+                dummy_params, return_keys=True
+            )
+        else:
+            keys, distribution = self.computation_process.compute_with_keys(
+                dummy_params
+            )
         dist_size = distribution.shape[-1]
 
         # Determine output size
-        if output_size is None:
-            if output_mapping_strategy == OutputMappingStrategy.NONE:
-                self.output_size = dist_size
+        if measurement_strategy == MeasurementStrategy.PROBABILITIES:
+            self._output_size = dist_size
+        elif measurement_strategy == MeasurementStrategy.MODE_EXPECTATIONS:
+            if type(self.circuit) is pcvl.Circuit:
+                self._output_size = self.circuit.m
+            elif type(self.circuit) is CircuitBuilder:
+                self._output_size = self.circuit.n_modes
             else:
-                raise ValueError(
-                    "output_size must be specified for non-NONE strategies"
-                )
+                raise TypeError(f"Unknown circuit type: {type(self.circuit)}")
+        elif measurement_strategy == MeasurementStrategy.AMPLITUDES:
+            self._output_size = dist_size
         else:
-            self.output_size = output_size
+            raise TypeError(f"Unknown measurement_strategy: {measurement_strategy}")
 
         # Create output mapping
-        self.output_mapping = OutputMapper.create_mapping(
-            output_mapping_strategy, dist_size, self.output_size
+        self.measurement_mapping = OutputMapper.create_mapping(
+            measurement_strategy,
+            self.computation_process.no_bunching,
+            keys,
         )
-
-        # Ensure output mapping has correct dtype and device
-        if hasattr(self.output_mapping, "weight"):
-            self.output_mapping = self.output_mapping.to(
-                dtype=self.dtype, device=self.device
-            )
 
     def _create_dummy_parameters(self) -> list[torch.Tensor]:
         """Create dummy parameters for initialization."""
@@ -504,7 +511,6 @@ class QuantumLayer(nn.Module):
         *input_parameters: torch.Tensor,
         apply_sampling: bool | None = None,
         shots: int | None = None,
-        return_amplitudes: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
         """Forward pass through the quantum layer."""
         # Prepare parameters
@@ -525,7 +531,13 @@ class QuantumLayer(nn.Module):
         apply_sampling, shots = self.autodiff_process.autodiff_backend(
             needs_gradient, apply_sampling or False, shots or self.shots
         )
-        distribution = amplitudes.real**2 + amplitudes.imag**2
+        if type(amplitudes) is torch.Tensor:
+            distribution = amplitudes.real**2 + amplitudes.imag**2
+        elif type(amplitudes) is tuple:
+            amplitudes = amplitudes[1]
+            distribution = amplitudes.real**2 + amplitudes.imag**2
+        else:
+            raise TypeError(f"Unexpected amplitudes type: {type(amplitudes)}")
         if self.no_bunching:
             sum_probs = distribution.sum(dim=1, keepdim=True)
 
@@ -547,14 +559,15 @@ class QuantumLayer(nn.Module):
                     amplitudes,
                 )
         if apply_sampling and shots > 0:
-            distribution = self.autodiff_process.sampling_noise.pcvl_sampler(
+            counts = self.autodiff_process.sampling_noise.pcvl_sampler(
                 distribution, shots
             )
-        if return_amplitudes:
-            return self.output_mapping(distribution), amplitudes
-        # Apply output mapping
+            results = counts
+        else:
+            results = amplitudes
 
-        return self.output_mapping(distribution)
+        # Apply measurements mapping
+        return self.measurement_mapping(results)
 
     def set_sampling_config(self, shots: int | None = None, method: str | None = None):
         """Update sampling configuration."""
@@ -584,14 +597,15 @@ class QuantumLayer(nn.Module):
             self.computation_process.converter = self.computation_process.converter.to(
                 self.dtype, device
             )
-            if hasattr(self.output_mapping, "weight"):
-                self.output_mapping = self.output_mapping.to(
-                    dtype=self.dtype, device=self.device
-                )
         return self
 
-    def get_output_keys(self):
+    @property
+    def state_keys(self):
         return self.computation_process.simulation_graph.mapped_keys
+
+    @property
+    def output_size(self):
+        return self._output_size
 
     @classmethod
     def simple(
@@ -600,7 +614,6 @@ class QuantumLayer(nn.Module):
         n_params: int = 100,
         shots: int = 0,
         output_size: int | None = None,
-        output_mapping_strategy: OutputMappingStrategy = OutputMappingStrategy.NONE,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         no_bunching: bool = True,
@@ -623,7 +636,6 @@ class QuantumLayer(nn.Module):
                 amount because each added MZI exposes two parameters.
             shots: Number of sampling shots for stochastic evaluation.
             output_size: Optional classical output width.
-            output_mapping_strategy: Strategy used to post-process the quantum distribution.
             device: Optional target device for tensors.
             dtype: Optional tensor dtype.
             no_bunching: Whether to restrict to states without photon bunching.
@@ -703,17 +715,54 @@ class QuantumLayer(nn.Module):
                 f"{total_trainable} trainable parameters but {expected_trainable} were expected."
             )
 
-        return cls(
+        quantum_layer = cls(
             input_size=input_size,
-            output_size=output_size,
             builder=builder,
             n_photons=n_photons,
-            output_mapping_strategy=output_mapping_strategy,
+            measurement_strategy=MeasurementStrategy.PROBABILITIES,
             shots=shots,
             no_bunching=no_bunching,
             device=device,
             dtype=dtype,
         )
+
+        class SimpleSequential(nn.Module):
+            """Simple Sequential Module that contains the quantum layer as well as the post processing"""
+
+            def __init__(self, quantum_layer: QuantumLayer, post_processing: nn.Module):
+                super().__init__()
+                self.quantum_layer = quantum_layer
+                self.post_processing = post_processing
+                self.add_module("quantum_layer", quantum_layer)
+                self.add_module("post_processing", post_processing)
+                self.circuit = quantum_layer.circuit
+                if hasattr(post_processing, "output_size"):
+                    self._output_size = post_processing.output_size  # type: ignore[attr-defined]
+                else:
+                    self._output_size = quantum_layer.output_size
+
+            @property
+            def output_size(self):
+                return self._output_size
+
+            def forward(self, x: torch.Tensor) -> torch.Tensor:
+                return self.post_processing(self.quantum_layer(x))
+
+        if output_size is not None:
+            if not isinstance(output_size, int):
+                raise TypeError("output_size must be an integer.")
+            if output_size <= 0:
+                raise ValueError("output_size must be a positive integer.")
+            if output_size != quantum_layer.output_size:
+                model = SimpleSequential(
+                    quantum_layer, ModGrouping(quantum_layer.output_size, output_size)
+                )
+            else:
+                model = SimpleSequential(quantum_layer, nn.Identity())
+        else:
+            model = SimpleSequential(quantum_layer, nn.Identity())
+
+        return model
 
     def __str__(self) -> str:
         """String representation of the quantum layer."""

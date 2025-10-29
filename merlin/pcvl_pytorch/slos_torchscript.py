@@ -448,7 +448,7 @@ class SLOSComputeGraph:
         Returns:
             Tuple[List[Tuple[int, ...]], torch.Tensor]:
                 - List of tuples representing output Fock state configurations
-                - Probability amplitudes distribution tensor
+                - Amplitudes distribution tensor
         """
         if len(unitary.shape) == 2:
             unitary = unitary.unsqueeze(0)  # Add batch dimension [1 x m x m]

@@ -139,8 +139,9 @@ Example
 
 .. code-block:: python
 
-   from MerLin import QuantumLayer, FeedforwardBlock
    import torch
+   import merlin as ML
+   from merlin.algorithms.feed_forward import PoolingFeedForward
 
    quantum_dim = 10
    # Define Quantum Layer before pff layer
@@ -153,9 +154,14 @@ Example
     ansatz = ML.AnsatzFactory.create(
         experiment=experiment,
         input_size=quantum_dim,
-        output_size=quantum_dim * 2
+        output_size=quantum_dim * 2,
+        measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
     )
-    q_layer_pre_pff = ML.QuantumLayer(input_size=quantum_dim, ansatz=ansatz)
+    q_layer_pre_pff = ML.QuantumLayer(
+        input_size=quantum_dim,
+        ansatz=ansatz,
+        measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
+    )
 
     # Define pff layer
     pff = PoolingFeedForward(n_modes=16, n_photons=4, n_output_modes=8)
@@ -170,14 +176,19 @@ Example
     ansatz = ML.AnsatzFactory.create(
         experiment=experiment,
         input_size=0,
-        output_size=quantum_dim * 2
+        output_size=quantum_dim * 2,
+        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
     )
-    q_layer_post_pff = ML.QuantumLayer(input_size=quantum_dim, ansatz=ansatz)
+    q_layer_post_pff = ML.QuantumLayer(
+        input_size=quantum_dim,
+        ansatz=ansatz,
+        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+    )
 
     # Example of a forward pass
     x = torch.rand(quantum_dim)
-    #Get the amplitudes and not the output probabilities to perform the pooling
-    _, amplitudes = q_layer_pre_pff(x, return_amplitudes=True)
+    # The AMPLITUDES strategy returns the simulated amplitudes directly
+    amplitudes = q_layer_pre_pff(x)
     # Going from amplitudes in the space with 16 modes, 4 photons, to 8 modes, 4 photons
     amplitudes = pff(amplitudes)
     # Set input state : If we provide a tensor -> Every component of the tensor refers to the amplitude of a different fock state -> Entangled input state

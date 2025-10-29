@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from perceval.utils import allstate_iterator
 
-from merlin import OutputMappingStrategy, QuantumLayer
+from merlin import MeasurementStrategy, QuantumLayer
 
 
 class BosonSampler:
@@ -108,11 +108,10 @@ class BosonSampler:
         start = time.time()
         self.model = QuantumLayer(
             input_size=0,
-            output_size=None,
             circuit=self.circuit,
             n_photons=self.n,
             trainable_parameters=trainable_parameters,
-            output_mapping_strategy=OutputMappingStrategy.NONE,
+            measurement_strategy=MeasurementStrategy.PROBABILITIES,
             device=self.device,
             dtype=torch.float32,
             shots=1000,

@@ -96,10 +96,12 @@ def test_quantum_layer_forward_benchmark(benchmark, config: dict, device: str):
 
     layer = ML.QuantumLayer(
         input_size=config["input_size"],
-        output_size=config["output_size"],
         n_photons=config["n_photons"],
         builder=builder,
-        output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+    )
+
+    model = torch.nn.Sequential(
+        layer, torch.nn.Linear(layer.output_size, config["output_size"])
     )
 
     # Create larger batch for meaningful timing
@@ -107,7 +109,7 @@ def test_quantum_layer_forward_benchmark(benchmark, config: dict, device: str):
     x = torch.rand(batch_size, config["input_size"])
 
     def forward_pass():
-        return layer(x)
+        return model(x)
 
     # Run benchmark
     result = benchmark(forward_pass)
@@ -132,16 +134,18 @@ def test_batched_computation_benchmark(
 
     layer = ML.QuantumLayer(
         input_size=config["input_size"],
-        output_size=config["output_size"],
         n_photons=config["n_photons"],
         builder=builder,
-        output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+    )
+
+    model = torch.nn.Sequential(
+        layer, torch.nn.Linear(layer.output_size, config["output_size"])
     )
 
     x = torch.rand(batch_size, config["input_size"])
 
     def batched_forward():
-        return layer(x)
+        return model(x)
 
     # Run benchmark
     result = benchmark(batched_forward)
@@ -165,16 +169,18 @@ def test_gradient_computation_benchmark(benchmark, config: dict, device: str):
 
     layer = ML.QuantumLayer(
         input_size=config["input_size"],
-        output_size=config["output_size"],
         n_photons=config["n_photons"],
         builder=builder,
-        output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+    )
+
+    model = torch.nn.Sequential(
+        layer, torch.nn.Linear(layer.output_size, config["output_size"])
     )
 
     x = torch.rand(16, config["input_size"], requires_grad=True)
 
     def compute_gradients():
-        output = layer(x)
+        output = model(x)
         loss = output.sum()
         loss.backward()
         return loss
@@ -188,7 +194,7 @@ def test_gradient_computation_benchmark(benchmark, config: dict, device: str):
 
     # Check that layer parameters have gradients
     has_trainable_params = False
-    for param in layer.parameters():
+    for param in model.parameters():
         if param.requires_grad and param.grad is not None:
             has_trainable_params = True
             assert torch.all(torch.isfinite(param.grad))
@@ -217,14 +223,16 @@ def test_multiple_circuit_types_benchmark(benchmark, config: dict, device: str):
 
             layer = ML.QuantumLayer(
                 input_size=config["input_size"],
-                output_size=config["output_size"],
                 n_photons=config["n_photons"],
                 builder=builder,
-                output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+            )
+
+            model = torch.nn.Sequential(
+                layer, torch.nn.Linear(layer.output_size, config["output_size"])
             )
 
             x = torch.rand(16, config["input_size"])
-            output = layer(x)
+            output = model(x)
             results.append(output)
 
         return results
@@ -246,9 +254,18 @@ def test_multiple_circuit_types_benchmark(benchmark, config: dict, device: str):
 def test_output_mapping_strategies_benchmark(benchmark, config: dict, device: str):
     """Benchmark different output mapping strategies."""
     strategies = [
-        ML.OutputMappingStrategy.LINEAR,
-        ML.OutputMappingStrategy.LEXGROUPING,
-        ML.OutputMappingStrategy.MODGROUPING,
+        {
+            "measurement_strategy": ML.MeasurementStrategy.PROBABILITIES,
+            "grouping_policy": None,
+        },
+        {
+            "measurement_strategy": ML.MeasurementStrategy.PROBABILITIES,
+            "grouping_policy": ML.LexGrouping,
+        },
+        {
+            "measurement_strategy": ML.MeasurementStrategy.PROBABILITIES,
+            "grouping_policy": ML.ModGrouping,
+        },
     ]
 
     def test_all_strategies():
@@ -264,16 +281,35 @@ def test_output_mapping_strategies_benchmark(benchmark, config: dict, device: st
             )
             builder.add_entangling_layer(trainable=True, name="U2")
 
-            layer = ML.QuantumLayer(
-                input_size=config["input_size"],
-                output_size=config["output_size"],
-                n_photons=config["n_photons"],
-                builder=builder,
-                output_mapping_strategy=strategy,
-            )
-            x = torch.rand(16, config["input_size"])
-            output = layer(x)
-            results.append(output)
+            if strategy["grouping_policy"] is None:
+                layer = ML.QuantumLayer(
+                    input_size=config["input_size"],
+                    n_photons=config["n_photons"],
+                    builder=builder,
+                    measurement_strategy=strategy["measurement_strategy"],
+                )
+                model = torch.nn.Sequential(
+                    layer, torch.nn.Linear(layer.output_size, config["output_size"])
+                )
+                x = torch.rand(16, config["input_size"])
+                output = model(x)
+                results.append(output)
+            else:
+                layer = ML.QuantumLayer(
+                    input_size=config["input_size"],
+                    n_photons=config["n_photons"],
+                    builder=builder,
+                    measurement_strategy=strategy["measurement_strategy"],
+                )
+                model = torch.nn.Sequential(
+                    layer,
+                    strategy["grouping_policy"](
+                        layer.output_size, config["output_size"]
+                    ),
+                )
+                x = torch.rand(16, config["input_size"])
+                output = model(x)
+                results.append(output)
 
         return results
 
@@ -305,16 +341,16 @@ class TestLayerPerformanceRegression:
 
         layer = ML.QuantumLayer(
             input_size=6,
-            output_size=10,
             n_photons=3,
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
         )
+
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 10))
 
         x = torch.rand(32, 6)
 
         start_time = time.time()
-        output = layer(x)
+        output = model(x)
         forward_time = time.time() - start_time
 
         # Assert reasonable performance bounds
@@ -335,16 +371,16 @@ class TestLayerPerformanceRegression:
 
         layer = ML.QuantumLayer(
             input_size=4,
-            output_size=6,
             n_photons=2,
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
         )
+
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 6))
 
         x = torch.rand(16, 4, requires_grad=True)
 
         start_time = time.time()
-        output = layer(x)
+        output = model(x)
         loss = output.sum()
         loss.backward()
         gradient_time = time.time() - start_time
@@ -398,16 +434,16 @@ if __name__ == "__main__":
 
     layer = ML.QuantumLayer(
         input_size=4,
-        output_size=8,
         n_photons=3,
         builder=builder,
-        output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
     )
+
+    model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 8))
 
     print("Testing forward pass performance...")
     x = torch.rand(32, 4)
     start = time.time()
-    output = layer(x)
+    output = model(x)
     forward_time = time.time() - start
     print(f"Forward pass time: {forward_time:.4f}s")
 

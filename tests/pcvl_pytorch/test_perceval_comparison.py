@@ -91,7 +91,7 @@ class TestPercevalComparison:
             n_photons=self.N_PHOTONS,
             input_parameters=["φ"],
             trainable_parameters=[],
-            output_mapping_strategy=ML.OutputMappingStrategy.NONE,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
             shots=0,
         )
 
@@ -121,7 +121,7 @@ class TestPercevalComparison:
                     / torch.where(valid_entries, sum_probs, torch.ones_like(sum_probs)),
                     probabilities,
                 )
-            merlin_probs = probabilities.numpy()
+            merlin_probs = probabilities.detach().numpy()
 
         # Set parameter values to match MerLin's computation
         for param_tensor in merlin_params:
