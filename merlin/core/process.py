@@ -113,7 +113,7 @@ class ComputationProcess(AbstractComputationProcess):
         self.simulation_graph = build_slos_distribution_computegraph(
             m=self.m,  # Number of modes
             n_photons=self.n_photons,  # Total number of photons
-            no_bunching=self.computation_space is ComputationSpace.UNBUNCHED,
+            computation_space=self.computation_space,
             keep_keys=True,  # Usually want to keep keys for output interpretation
             device=self.device,
             dtype=self.dtype,

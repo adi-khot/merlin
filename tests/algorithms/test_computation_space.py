@@ -35,7 +35,7 @@ def test_computation_space_members():
         ComputationSpace.DUAL_RAIL,
     ]
     assert ComputationSpace.FOCK.value == "fock"
-    assert ComputationSpace.UNBUNCHED.value == "no_bunching"
+    assert ComputationSpace.UNBUNCHED.value == "unbunched"
     assert ComputationSpace.DUAL_RAIL.value == "dual_rail"
 
 
@@ -48,7 +48,7 @@ def test_computation_space_default_mapping():
 def test_computation_space_coerce_accepts_strings():
     """Case-insensitive string inputs are normalized into enum members."""
     assert ComputationSpace.coerce("fock") is ComputationSpace.FOCK
-    assert ComputationSpace.coerce("NO_BUNCHING") is ComputationSpace.UNBUNCHED
+    assert ComputationSpace.coerce("unbunched") is ComputationSpace.UNBUNCHED
     assert ComputationSpace.coerce("Dual_Rail".lower()) is ComputationSpace.DUAL_RAIL
 
 

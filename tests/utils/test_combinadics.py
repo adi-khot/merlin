@@ -72,19 +72,21 @@ def test_dual_rail_requires_twice_as_many_modes():
 
 
 @pytest.mark.parametrize(
-    ("scheme", "no_bunching"),
+    ("scheme"),
     [
-        ("unbunched", True),
-        ("fock", False),
+        "unbunched",
+        "dual_rail",
+        "fock",
     ],
 )
-def test_iteration_order_matches_quantum_layer(scheme: str, no_bunching: bool):
+def test_iteration_order_matches_quantum_layer(scheme: str):
+    print("Testing scheme:", scheme)
     n, m = 4, 8
     ql = QuantumLayer(
         input_size=0,
         circuit=pcvl.Circuit(m),
         n_photons=n,
-        no_bunching=no_bunching,
+        computation_space=scheme,
     )
 
     mapped_keys = [

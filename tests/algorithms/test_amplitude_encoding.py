@@ -533,7 +533,9 @@ def test_dual_rail_requires_even_mode_count():
     circuit = pcvl.Circuit(6)
 
     # Newer error message includes the provided counts for clarity
-    with pytest.raises(ValueError, match=r"6 modes and 2 photons were provided"):
+    with pytest.raises(
+        ValueError, match=r"dual_rail compute space requires n_photons = m // 2"
+    ):
         QuantumLayer(
             circuit=circuit,
             n_photons=2,

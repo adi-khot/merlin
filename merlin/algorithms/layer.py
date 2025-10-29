@@ -280,8 +280,11 @@ class QuantumLayer(nn.Module):
         if input_state is not None:
             self.input_state = input_state
         elif n_photons is not None:
-            # Default behavior: place photons in first n_photons modes
-            self.input_state = [1] * n_photons + [0] * (circuit.m - n_photons)
+            # Default behavior: place [1,0,1,0,...] in dual-rail, else first n_photons modes
+            if self.computation_space is ComputationSpace.DUAL_RAIL:
+                self.input_state = [1, 0] * n_photons
+            else:
+                self.input_state = [1] * n_photons + [0] * (circuit.m - n_photons)
         else:
             raise ValueError("Either input_state or n_photons must be provided")
 

@@ -29,7 +29,7 @@ class ComputationSpace(str, Enum):
     """Enumeration of supported computational subspaces."""
 
     FOCK = "fock"
-    UNBUNCHED = "no_bunching"
+    UNBUNCHED = "unbunched"
     DUAL_RAIL = "dual_rail"
 
     @classmethod

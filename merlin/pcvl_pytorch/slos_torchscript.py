@@ -36,6 +36,8 @@ from collections.abc import Callable
 import torch
 import torch.jit as jit
 
+from merlin.core.computation_space import ComputationSpace
+
 
 def _get_complex_dtype_for_float(dtype):
     """Helper function to get the corresponding complex dtype for a float dtype."""
@@ -318,7 +320,7 @@ class SLOSComputeGraph:
     """
     A class that builds and stores the computation graph for SLOS algorithm.
 
-    This separates the graph construction (which depends only on input state, no_bunching,
+    This separates the graph construction (which depends only on input state, computation_space,
     and output_map_func) from the actual computation using the unitary matrix.
     """
 
@@ -327,7 +329,7 @@ class SLOSComputeGraph:
         m: int,
         n_photons: int,
         output_map_func: Callable[[tuple[int, ...]], tuple[int, ...] | None] = None,
-        no_bunching: bool = True,
+        computation_space: ComputationSpace = ComputationSpace.UNBUNCHED,
         keep_keys: bool = True,
         device=None,  # Optional device parameter
         dtype: torch.dtype = torch.float,  # Optional dtype parameter
@@ -340,7 +342,7 @@ class SLOSComputeGraph:
             m (int): Number of modes in the circuit
             n_photons (int): Number of photons in the input state given to the model during the forward pass
             output_map_func (callable, optional): Function that maps output states
-            no_bunching (bool): If True, the algorithm is optimized for no-bunching states only
+            computation_space (ComputationSpace): Enumeration domain.
             keep_keys (bool): If True, output state keys are returned
             device: Optional device to place tensors on (CPU, CUDA, etc.)
             dtype: Data type precision for floating point calculations (default: torch.float)
@@ -353,7 +355,14 @@ class SLOSComputeGraph:
         self.m = m
         self.n_photons = n_photons
         self.output_map_func = output_map_func
-        self.no_bunching = no_bunching
+        if computation_space is ComputationSpace.DUAL_RAIL:
+            if m % 2 != 0:
+                raise ValueError("dual_rail compute space requires even m")
+            if n_photons != m // 2:
+                raise ValueError("dual_rail compute space requires n_photons = m // 2")
+
+        print("computation_space:", computation_space)
+        self.computation_space = computation_space
         self.keep_keys = keep_keys
         self.device = device
         self.prev_amplitudes = None
@@ -400,8 +409,16 @@ class SLOSComputeGraph:
                 for i in range(
                     self.index_photons[idx][0], self.index_photons[idx][1] + 1
                 ):
-                    if nstate[i] and self.no_bunching:
+                    if (
+                        self.computation_space
+                        in (ComputationSpace.UNBUNCHED, ComputationSpace.DUAL_RAIL)
+                        and nstate[i]
+                    ):
                         continue
+                    if self.computation_space is ComputationSpace.DUAL_RAIL:
+                        pair_start = (i // 2) * 2
+                        if nstate[pair_start] + nstate[pair_start + 1] >= 1:
+                            continue
 
                     nstate[i] += 1
                     nstate_tuple = tuple(nstate)
@@ -564,10 +581,18 @@ class SLOSComputeGraph:
         if any(n < 0 for n in input_state) or sum(input_state) == 0:
             raise ValueError("Photon numbers cannot be negative or all zeros")
 
-        if self.no_bunching and not all(x in [0, 1] for x in input_state):
+        if self.computation_space is ComputationSpace.UNBUNCHED and not all(
+            x in (0, 1) for x in input_state
+        ):
             raise ValueError(
-                "Input state must be binary (0s and 1s only) in non-bunching mode"
+                "Input state must be binary (0s and 1s only) in unbunched mode"
             )
+        if self.computation_space is ComputationSpace.DUAL_RAIL:
+            for k in range(0, self.m, 2):
+                if input_state[k] + input_state[k + 1] != 1:
+                    raise ValueError(
+                        "Input state must contain exactly one photon per pair in dual_rail mode"
+                    )
 
         batch_size, m, m2 = unitary.shape
         if m != m2 or m != self.m:
@@ -651,10 +676,18 @@ class SLOSComputeGraph:
         if any(n < 0 for n in input_states[0]) or sum(input_states[0]) == 0:
             raise ValueError("Photon numbers cannot be negative or all zeros")
 
-        if self.no_bunching and not all(x in [0, 1] for x in input_states[0]):
+        if self.computation_space is ComputationSpace.UNBUNCHED and not all(
+            x in (0, 1) for x in input_states[0]
+        ):
             raise ValueError(
-                "Input state must be binary (0s and 1s only) in non-bunching mode"
+                "Input state must be binary (0s and 1s only) in unbunched mode"
             )
+        if self.computation_space is ComputationSpace.DUAL_RAIL:
+            for k in range(0, self.m, 2):
+                if input_states[0][k] + input_states[0][k + 1] != 1:
+                    raise ValueError(
+                        "Input state must contain exactly one photon per pair in dual_rail mode"
+                    )
 
         batch_size, m, m2 = unitary.shape
         if m != m2 or m != self.m:
@@ -776,10 +809,18 @@ class SLOSComputeGraph:
         if any(n < 0 for n in input_state) or sum(input_state) == 0:
             raise ValueError("Photon numbers cannot be negative or all zeros")
 
-        if self.no_bunching and not all(x in [0, 1] for x in input_state):
+        if self.computation_space is ComputationSpace.UNBUNCHED and not all(
+            x in (0, 1) for x in input_state
+        ):
             raise ValueError(
-                "Input state must be binary (0s and 1s only) in non-bunching mode"
+                "Input state must be binary (0s and 1s only) in unbunched mode"
             )
+        if self.computation_space is ComputationSpace.DUAL_RAIL:
+            for k in range(0, self.m, 2):
+                if input_state[k] + input_state[k + 1] != 1:
+                    raise ValueError(
+                        "Input state must contain exactly one photon per pair in dual_rail mode"
+                    )
 
         batch_size, m, m2 = unitary.shape
         if m != m2 or m != self.m:
@@ -860,7 +901,10 @@ class SLOSComputeGraph:
             probabilities = self.mapping_function(probabilities)
             keys = self.mapped_keys
         else:
-            if self.no_bunching:
+            if self.computation_space in (
+                ComputationSpace.UNBUNCHED,
+                ComputationSpace.DUAL_RAIL,
+            ):
                 sum_probs = probabilities.sum(dim=1, keepdim=True)
                 # Only normalize when sum > 0 to avoid division by zero
                 valid_entries = sum_probs > 0
@@ -885,24 +929,50 @@ def build_slos_distribution_computegraph(
     m,
     n_photons,
     output_map_func: Callable[[tuple[int, ...]], tuple[int, ...] | None] | None = None,
-    no_bunching: bool = False,
+    computation_space: ComputationSpace | None = None,
+    no_bunching: bool | None = None,
     keep_keys: bool = True,
     device=None,
     dtype: torch.dtype = torch.float,
     index_photons: list[tuple[int, ...]] | None = None,
 ) -> SLOSComputeGraph:
-    """
-    Build a computation graph for Strong Linear Optical Simulation (SLOS) algorithm
-    that can be reused for multiple unitaries.
+    """Construct a reusable SLOS computation graph.
 
-    [existing docstring...]
+    Parameters
+    ----------
+    m : int
+        Number of modes in the circuit.
+    n_photons : int
+        Total number of photons injected in the circuit.
+    output_map_func : callable, optional
+        Mapping applied to each output Fock state, allowing post-processing.
+    computation_space : ComputationSpace, optional
+    keep_keys : bool, optional
+        Whether to keep the list of mapped Fock states.
+    device : torch.device, optional
+        Device on which tensors should be allocated.
+    dtype : torch.dtype, optional
+        Real dtype controlling numerical precision.
+    index_photons : list[tuple[int, ...]], optional
+        Bounds for each photon placement.
+
+    Returns
+    -------
+    SLOSComputeGraph
+        Pre-built computation graph ready for repeated evaluations.
     """
+
+    # backward compatibility for deprecated no_bunching parameter
+    if computation_space is None:
+        computation_space = (
+            ComputationSpace.UNBUNCHED if no_bunching else ComputationSpace.FOCK
+        )
 
     compute_graph = SLOSComputeGraph(
         m,
         n_photons,
         output_map_func,
-        no_bunching,
+        computation_space,
         keep_keys,
         device,
         dtype,
@@ -926,7 +996,7 @@ def build_slos_distribution_computegraph(
         metadata = {
             "m": compute_graph.m,
             "n_photons": compute_graph.n_photons,
-            "no_bunching": compute_graph.no_bunching,
+            "computation_space": compute_graph.computation_space.value,
             "keep_keys": compute_graph.keep_keys,
             "dtype_str": str(compute_graph.dtype),
             "has_output_map_func": output_map_func is not None,
@@ -988,7 +1058,7 @@ def load_slos_distribution_computegraph(path):
     # Create a minimal graph instance
     m = metadata["m"]
     n_photons = metadata["n_photons"]
-    no_bunching = metadata["no_bunching"]
+    computation_space = ComputationSpace.coerce(metadata.get("computation_space"))
     keep_keys = metadata["keep_keys"]
 
     # Parse dtype
@@ -1001,7 +1071,9 @@ def load_slos_distribution_computegraph(path):
         dtype = torch.float32
 
     # Create basic graph (without output_map_func for now)
-    graph = SLOSComputeGraph(m, n_photons, None, no_bunching, keep_keys, dtype=dtype)
+    graph = SLOSComputeGraph(
+        m, n_photons, None, computation_space, keep_keys, dtype=dtype
+    )
     # Restore saved attributes
     graph.vectorized_operations = saved_data["vectorized_operations"]
     graph.final_keys = saved_data["final_keys"]
@@ -1034,7 +1106,7 @@ def compute_slos_distribution(
     unitary: torch.Tensor,
     input_state: list[int],
     output_map_func: Callable[[tuple[int, ...]], tuple[int, ...] | None] | None = None,
-    no_bunching: bool = False,
+    computation_space: ComputationSpace = ComputationSpace.UNBUNCHED,
     keep_keys: bool = True,
     index_photons: list[tuple[int, ...]] | None = None,
 ) -> tuple[list[tuple[int, ...]], torch.Tensor]:
@@ -1049,7 +1121,7 @@ def compute_slos_distribution(
         unitary (torch.Tensor): Single unitary matrix [m x m] or batch of unitaries [b x m x m]
         input_state (List[int]): Number of photons in every mode of the circuit
         output_map_func (callable, optional): Function that maps output states
-        no_bunching (bool): If True, the algorithm is optimized for no-bunching states only
+        computation_space ComputationSpace): Enumeration domain.
         keep_keys (bool): If True, output state keys are returned
         index_photons: List of tuples (first_integer, second_integer). The first_integer is the\
                   lowest index layer a photon can take and the second_integer is the highest index
@@ -1071,7 +1143,7 @@ def compute_slos_distribution(
         len(input_state),
         sum(input_state),
         output_map_func,
-        no_bunching,
+        computation_space,
         keep_keys,
         device=device,
         dtype=dtype,
