@@ -33,9 +33,9 @@ Could be optimized further using numba, and caching of binomial coefficients.
 from __future__ import annotations
 
 import math
-from typing import Iterable, Tuple
+from collections.abc import Iterable
 
-TupleInt = Tuple[int, ...]
+TupleInt = tuple[int, ...]
 
 
 class Combinadics:
@@ -276,4 +276,3 @@ class Combinadics:
             else:
                 counts[i], counts[i + 1] = 0, 1
         return tuple(counts)
-

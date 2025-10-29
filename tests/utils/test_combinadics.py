@@ -9,7 +9,7 @@ def _enumerate_states(combo: Combinadics, total: int):
     states = [combo.index_to_fock(i) for i in range(total)]
     assert len(states) == total
     # ensure descending lexicographic order
-    for prev, curr in zip(states, states[1:]):
+    for prev, curr in zip(states, states[1:], strict=False):
         assert prev >= curr
     # check bidirectional consistency
     for idx, state in enumerate(states):
