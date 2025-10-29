@@ -667,7 +667,7 @@ class QuantumLayer(nn.Module):
                     )
                 else:
                     amplitudes = self.computation_process.compute_superposition_state(
-                        params,
+                        params
                     )
             else:
                 amplitudes = self.computation_process.compute(params)
@@ -685,13 +685,7 @@ class QuantumLayer(nn.Module):
         apply_sampling, shots = self.autodiff_process.autodiff_backend(
             needs_gradient, apply_sampling or False, shots or self.shots
         )
-        if type(amplitudes) is torch.Tensor:
-            distribution = amplitudes.real**2 + amplitudes.imag**2
-        elif type(amplitudes) is tuple:
-            amplitudes = amplitudes[1]
-            distribution = amplitudes.real**2 + amplitudes.imag**2
-        else:
-            raise TypeError(f"Unexpected amplitudes type: {type(amplitudes)}")
+        distribution = amplitudes.real**2 + amplitudes.imag**2
         if self.no_bunching:
             sum_probs = distribution.sum(dim=1, keepdim=True)
 
