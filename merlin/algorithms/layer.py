@@ -37,6 +37,7 @@ from ..builder.circuit_builder import (
     ANGLE_ENCODING_MODE_ERROR,
     CircuitBuilder,
 )
+from ..core.computation_space import ComputationSpace
 from ..core.process import ComputationProcessFactory
 from ..measurement import OutputMapper
 from ..measurement.autodiff import AutoDiffProcess
@@ -95,9 +96,7 @@ class QuantumLayer(nn.Module):
         n_photons: int | None = None,
         # Amplitude encoding
         amplitude_encoding: bool = False,
-        # TODO: add enum for computation_space
-        # ComputationSpace.FOCK, ComputationSpace.UNBUNCHED, ComputationSpace.DUAL_RAIL
-        computation_space: str | None = None,
+        computation_space: ComputationSpace | str | None = None,
         # only for custom circuits and experiments
         trainable_parameters: list[str] | None = None,
         input_parameters: list[str] | None = None,
@@ -140,33 +139,35 @@ class QuantumLayer(nn.Module):
             self.input_size = int(input_size)
 
         # computation_space and no_bunching arguments management
-        allowed_spaces = {"fock", "no_bunching", "dual_rail"}
-        if computation_space is not None and computation_space not in allowed_spaces:
-            raise ValueError(
-                f"Invalid computation_space '{computation_space}'. "
-                "Supported values are 'fock', 'no_bunching', and 'dual_rail'."
-            )
         # no_bunching cannot be True by default, to fit with "fock" computation_space
         # to avoid situation such that no_bunching=True and computation_space="fock"
         # TODO: warning for no_bunching deprecation -> map it to computation_space
+
+        if computation_space is None:
+            computation_space_value: ComputationSpace | None = None
+        else:
+            computation_space_value = ComputationSpace.coerce(computation_space)
+
         if no_bunching is None:
             no_bunching_value = True
         else:
             no_bunching_value = bool(no_bunching)
-        if computation_space is None:
+
+        if computation_space_value is None:
             # if computation_space is not provided, derive it from no_bunching
-            computation_space_value = "no_bunching" if no_bunching_value else "fock"
+            computation_space_value = ComputationSpace.default(
+                no_bunching=no_bunching_value
+            )
         else:
             # if it is provided, check consistency with no_bunching
-            computation_space_value = computation_space
             derived_no_bunching = computation_space_value in {
-                "no_bunching",
-                "dual_rail",
+                ComputationSpace.UNBUNCHED,
+                ComputationSpace.DUAL_RAIL,
             }
             if no_bunching is not None and no_bunching_value != derived_no_bunching:
                 warnings.warn(
                     "Overriding 'no_bunching' to match the requested computation_space. "
-                    f"Expected {derived_no_bunching} for computation_space='{computation_space_value}', "
+                    f"Expected {derived_no_bunching} for computation_space='{computation_space_value.value}', "
                     f"received {no_bunching_value}.",
                     UserWarning,
                     stacklevel=2,

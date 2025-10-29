@@ -32,6 +32,7 @@ import torch
 
 from ..pcvl_pytorch import CircuitConverter, build_slos_distribution_computegraph
 from .base import AbstractComputationProcess
+from .computation_space import ComputationSpace
 
 
 class ComputationProcess(AbstractComputationProcess):
@@ -47,7 +48,7 @@ class ComputationProcess(AbstractComputationProcess):
         reservoir_mode: bool = False,
         dtype: torch.dtype = torch.float32,
         device: torch.device | None = None,
-        computation_space: str | None = None,
+        computation_space: ComputationSpace | str | None = None,
         no_bunching: bool = None,
         output_map_func=None,
     ):
@@ -64,7 +65,10 @@ class ComputationProcess(AbstractComputationProcess):
         # Dual-rail configuration runs after graph construction, so stash whether
         # we still need to re-check any tensor-shaped input state once the logical
         # basis has been narrowed.
-        self.computation_space = computation_space
+        if computation_space is None:
+            self.computation_space: ComputationSpace | None = None
+        else:
+            self.computation_space = ComputationSpace.coerce(computation_space)
         self._pending_state_validation = False
 
         # Extract circuit parameters for graph building
@@ -80,7 +84,9 @@ class ComputationProcess(AbstractComputationProcess):
         # Build computation graphs
         self._setup_computation_graphs()
         if self.computation_space is None:
-            self.computation_space = "no_bunching" if self.no_bunching else "fock"
+            self.computation_space = ComputationSpace.default(
+                no_bunching=bool(self.no_bunching)
+            )
         # Delay validation here because dual-rail may override the logical basis
         # immediately after graph setup; the follow-up call handles the actual setup.
         self.configure_computation_space(self.computation_space, validate_input=False)
@@ -121,7 +127,7 @@ class ComputationProcess(AbstractComputationProcess):
         self.logical_keys: list[tuple[int, ...]] = mapped_keys
         self.logical_indices: torch.Tensor | None = None
 
-        if self.computation_space == "dual_rail":
+        if self.computation_space is ComputationSpace.DUAL_RAIL:
             if self.n_photons is None:
                 raise ValueError("Dual-rail encoding requires 'n_photons'.")
             if self.m != 2 * self.n_photons:
@@ -362,7 +368,7 @@ class ComputationProcess(AbstractComputationProcess):
         """Expected number of Fock states given current computation space."""
         if self.n_photons < 0:
             raise ValueError("Number of photons must be non-negative.")
-        if self.computation_space == "dual_rail":
+        if self.computation_space is ComputationSpace.DUAL_RAIL:
             if self.n_photons is None:
                 raise ValueError("Dual-rail encoding requires 'n_photons'.")
             if self.m != 2 * self.n_photons:
@@ -396,24 +402,25 @@ class ComputationProcess(AbstractComputationProcess):
 
         expected = self._expected_superposition_size()
         if state_dim != expected:
-            if self.computation_space == "dual_rail" and state_dim == len(
-                self.simulation_graph.mapped_keys
+            if (
+                self.computation_space is ComputationSpace.DUAL_RAIL
+                and state_dim == len(self.simulation_graph.mapped_keys)
             ):
                 return
-            if self.computation_space == "dual_rail":
+            if self.computation_space is ComputationSpace.DUAL_RAIL:
                 explanation = (
                     f"expected 2**n_photons = 2**{self.n_photons} = {expected}"
                 )
-                space = "dual_rail"
+                space = ComputationSpace.DUAL_RAIL.value
             elif self.no_bunching:
                 explanation = f"expected C(m, n_photons) = C({self.m}, {self.n_photons}) = {expected}"
-                space = "no_bunching"
+                space = ComputationSpace.UNBUNCHED.value
             else:
                 explanation = (
                     f"expected C(m + n_photons - 1, n_photons) = "
                     f"C({self.m + self.n_photons - 1}, {self.n_photons}) = {expected}"
                 )
-                space = "fock"
+                space = ComputationSpace.FOCK.value
             raise ValueError(
                 "Input state dimension mismatch for computation_space "
                 f"'{space}': got {state_dim}, {explanation}."
@@ -487,21 +494,21 @@ class ComputationProcess(AbstractComputationProcess):
         return expanded
 
     def configure_computation_space(
-        self, computation_space: str | None, *, validate_input: bool = True
+        self,
+        computation_space: ComputationSpace | str | None,
+        *,
+        validate_input: bool = True,
     ) -> None:
         """Reconfigure the logical basis according to the desired computation space."""
         if computation_space is None:
-            self.computation_space = "no_bunching" if self.no_bunching else "fock"
+            self.computation_space = ComputationSpace.default(
+                no_bunching=bool(self.no_bunching)
+            )
         else:
-            allowed = {"fock", "no_bunching", "dual_rail"}
-            if computation_space not in allowed:
-                raise ValueError(
-                    f"Invalid computation_space '{computation_space}'. Supported values are {sorted(allowed)}."
-                )
-            self.computation_space = computation_space
+            self.computation_space = ComputationSpace.coerce(computation_space)
 
         effective_space = self.computation_space
-        if effective_space == "dual_rail":
+        if effective_space is ComputationSpace.DUAL_RAIL:
             n_photons = self.n_photons
             if n_photons is None:
                 raise ValueError("Dual-rail encoding requires 'n_photons'.")

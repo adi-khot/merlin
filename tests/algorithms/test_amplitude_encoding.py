@@ -19,6 +19,7 @@ import perceval as pcvl
 import pytest
 import torch
 
+from merlin import ComputationSpace
 from merlin.algorithms.layer import QuantumLayer
 from merlin.measurement.strategies import MeasurementStrategy
 
@@ -39,7 +40,7 @@ def make_layer():
             "input_parameters": [],
             "dtype": torch.float32,
             "amplitude_encoding": True,
-            "computation_space": "no_bunching",
+            "computation_space": ComputationSpace.UNBUNCHED,
         }
         params.update(overrides)
         if not params.get("amplitude_encoding", False):
@@ -89,13 +90,13 @@ def _normalised_state(n_states: int, dtype: torch.dtype) -> torch.Tensor:
 @pytest.mark.parametrize(
     ("space", "n_photons", "n_modes", "expected_size"),
     [
-        ("fock", 3, 5, math.comb(5 + 3 - 1, 3)),
-        ("no_bunching", 3, 5, math.comb(5, 3)),
-        ("dual_rail", 3, 6, 2**3),
+        (ComputationSpace.FOCK, 3, 5, math.comb(5 + 3 - 1, 3)),
+        (ComputationSpace.UNBUNCHED, 3, 5, math.comb(5, 3)),
+        (ComputationSpace.DUAL_RAIL, 3, 6, 2**3),
     ],
 )
 def test_amplitude_encoding_output_matches_computation_space(
-    space: str, n_photons: int, n_modes: int, expected_size: int
+    space: ComputationSpace, n_photons: int, n_modes: int, expected_size: int
 ) -> None:
     circuit = pcvl.components.GenericInterferometer(
         n_modes,
@@ -123,13 +124,13 @@ def test_amplitude_encoding_output_matches_computation_space(
 @pytest.mark.parametrize(
     ("space", "n_photons", "n_modes", "expected_size"),
     [
-        ("fock", 3, 5, math.comb(5 + 3 - 1, 3)),
-        ("no_bunching", 3, 5, math.comb(5, 3)),
-        ("dual_rail", 3, 6, 2**3),
+        (ComputationSpace.FOCK, 3, 5, math.comb(5 + 3 - 1, 3)),
+        (ComputationSpace.UNBUNCHED, 3, 5, math.comb(5, 3)),
+        (ComputationSpace.DUAL_RAIL, 3, 6, 2**3),
     ],
 )
 def test_amplitude_encoding_gradients_follow_computation_space(
-    space: str, n_photons: int, n_modes: int, expected_size: int
+    space: ComputationSpace, n_photons: int, n_modes: int, expected_size: int
 ) -> None:
     circuit = pcvl.components.GenericInterferometer(
         n_modes,
@@ -174,13 +175,13 @@ def test_amplitude_encoding_gradients_follow_computation_space(
 @pytest.mark.parametrize(
     ("space", "n_photons", "n_modes", "expected_size"),
     [
-        ("fock", 3, 5, math.comb(5 + 3 - 1, 3)),
-        ("no_bunching", 3, 5, math.comb(5, 3)),
-        ("dual_rail", 3, 6, 2**3),
+        (ComputationSpace.FOCK, 3, 5, math.comb(5 + 3 - 1, 3)),
+        (ComputationSpace.UNBUNCHED, 3, 5, math.comb(5, 3)),
+        (ComputationSpace.DUAL_RAIL, 3, 6, 2**3),
     ],
 )
 def test_amplitude_encoding_gpu_roundtrip(
-    space: str, n_photons: int, n_modes: int, expected_size: int
+    space: ComputationSpace, n_photons: int, n_modes: int, expected_size: int
 ) -> None:
     device = torch.device("cuda")
     circuit = pcvl.components.GenericInterferometer(
@@ -282,12 +283,16 @@ def test_amplitude_encoding_validates_dimension(make_layer):
 
 
 def test_computation_space_selector(make_layer):
-    layer_fock = make_layer(amplitude_encoding=False, computation_space="fock")
-    assert layer_fock.computation_space == "fock"
+    layer_fock = make_layer(
+        amplitude_encoding=False, computation_space=ComputationSpace.FOCK
+    )
+    assert layer_fock.computation_space is ComputationSpace.FOCK
     assert layer_fock.no_bunching is False
 
-    layer_nb = make_layer(amplitude_encoding=False, computation_space="no_bunching")
-    assert layer_nb.computation_space == "no_bunching"
+    layer_nb = make_layer(
+        amplitude_encoding=False, computation_space=ComputationSpace.UNBUNCHED
+    )
+    assert layer_nb.computation_space is ComputationSpace.UNBUNCHED
     assert layer_nb.no_bunching is True
 
     with pytest.raises(ValueError):
@@ -299,10 +304,10 @@ def test_computation_space_selector(make_layer):
     ):
         layer_override = make_layer(
             amplitude_encoding=False,
-            computation_space="fock",
+            computation_space=ComputationSpace.FOCK,
             no_bunching=True,
         )
-    assert layer_override.computation_space == "fock"
+    assert layer_override.computation_space is ComputationSpace.FOCK
     assert layer_override.no_bunching is False
 
 
@@ -311,12 +316,12 @@ def test_computation_space_consistency_no_warning(make_layer):
         warnings.simplefilter("always")
         layer = make_layer(
             amplitude_encoding=False,
-            computation_space="no_bunching",
+            computation_space=ComputationSpace.UNBUNCHED,
             no_bunching=True,
         )
 
     assert layer.no_bunching is True
-    assert layer.computation_space == "no_bunching"
+    assert layer.computation_space is ComputationSpace.UNBUNCHED
     assert caught == []
 
 
@@ -355,7 +360,7 @@ def test_mapped_keys_no_bunching_space():
         input_parameters=[],
         dtype=torch.float32,
         amplitude_encoding=True,
-        computation_space="no_bunching",
+        computation_space=ComputationSpace.UNBUNCHED,
         no_bunching=True,
     )
 
@@ -384,7 +389,7 @@ def test_mapped_keys_fock_space():
         input_parameters=[],
         dtype=torch.float32,
         amplitude_encoding=True,
-        computation_space="fock",
+        computation_space=ComputationSpace.FOCK,
         no_bunching=False,
     )
 
@@ -413,7 +418,7 @@ def test_mapped_keys_dual_rail_space():
         input_parameters=[],
         dtype=torch.float32,
         amplitude_encoding=True,
-        computation_space="dual_rail",
+        computation_space=ComputationSpace.DUAL_RAIL,
     )
 
     mapped_keys = layer.state_keys
@@ -422,8 +427,15 @@ def test_mapped_keys_dual_rail_space():
     assert set(mapped_keys) == _dual_rail_keys(circuit.m, n_photons)
 
 
-@pytest.mark.parametrize("computation_space", ["fock", "no_bunching", "dual_rail"])
-def test_ebs_batches_group_fock_states(computation_space):
+@pytest.mark.parametrize(
+    "computation_space",
+    [
+        ComputationSpace.FOCK,
+        ComputationSpace.UNBUNCHED,
+        ComputationSpace.DUAL_RAIL,
+    ],
+)
+def test_ebs_batches_group_fock_states(computation_space: ComputationSpace):
     circuit = pcvl.components.GenericInterferometer(
         4,
         pcvl.components.catalog["mzi phase last"].generate,
@@ -441,7 +453,10 @@ def test_ebs_batches_group_fock_states(computation_space):
         dtype=torch.float32,
         amplitude_encoding=True,
         computation_space=computation_space,
-        no_bunching=computation_space in {"no_bunching", "dual_rail"},
+        no_bunching=(
+            computation_space
+            in {ComputationSpace.UNBUNCHED, ComputationSpace.DUAL_RAIL}
+        ),
     )
 
     expected_states = layer.input_size
@@ -470,12 +485,14 @@ def test_ebs_batches_group_fock_states(computation_space):
 @pytest.mark.parametrize(
     ("space", "n_photons", "n_modes", "expected_size"),
     [
-        ("fock", 4, 8, math.comb(8 + 4 - 1, 4)),
-        ("no_bunching", 4, 8, math.comb(8, 4)),
-        ("dual_rail", 4, 8, 2**4),
+        (ComputationSpace.FOCK, 4, 8, math.comb(8 + 4 - 1, 4)),
+        (ComputationSpace.UNBUNCHED, 4, 8, math.comb(8, 4)),
+        (ComputationSpace.DUAL_RAIL, 4, 8, 2**4),
     ],
 )
-def test_amplitude_encoding_input_size(space, n_photons, n_modes, expected_size):
+def test_amplitude_encoding_input_size(
+    space: ComputationSpace, n_photons: int, n_modes: int, expected_size: int
+):
     """QuantumLayer computes the correct input size for amplitude encoding."""
 
     circuit = pcvl.Circuit(n_modes)
@@ -524,7 +541,7 @@ def test_dual_rail_requires_even_mode_count():
             circuit=circuit,
             n_photons=2,
             amplitude_encoding=True,
-            computation_space="dual_rail",
+            computation_space=ComputationSpace.DUAL_RAIL,
         )
 
 
@@ -535,7 +552,7 @@ def test_dual_rail_rejects_incorrect_amplitude_length():
         circuit=circuit,
         n_photons=n_photons,
         amplitude_encoding=True,
-        computation_space="dual_rail",
+        computation_space=ComputationSpace.DUAL_RAIL,
     )
     invalid = torch.rand((2**n_photons) + 1, dtype=torch.float32)
 
@@ -557,7 +574,7 @@ def test_amplitude_encoding_superposition_matches_basis_sum():
         n_photons=n_photons,
         measurement_strategy=MeasurementStrategy.AMPLITUDES,
         amplitude_encoding=True,
-        computation_space="dual_rail",
+        computation_space=ComputationSpace.DUAL_RAIL,
     )
 
     basis_indices = [0, 1, 2]

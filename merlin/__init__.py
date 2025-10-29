@@ -35,6 +35,7 @@ from .builder.circuit_builder import CircuitBuilder
 
 # Essential enums
 # Advanced components (for power users)
+from .core.computation_space import ComputationSpace
 from .core.generators import CircuitGenerator, CircuitType, StateGenerator, StatePattern
 from .core.photonicbackend import PhotonicBackend
 from .measurement import (
@@ -63,6 +64,7 @@ __all__ = [
     # Configuration enums
     "CircuitType",
     "StatePattern",
+    "ComputationSpace",
     "MeasurementStrategy",
     # Advanced components
     "CircuitGenerator",
