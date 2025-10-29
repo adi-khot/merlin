@@ -24,7 +24,7 @@
 Quantum computation processes and factories.
 """
 
-import itertools
+import itertools  # Used to enumerate dual-rail occupancy patterns.
 import math
 
 import perceval as pcvl
@@ -47,8 +47,8 @@ class ComputationProcess(AbstractComputationProcess):
         reservoir_mode: bool = False,
         dtype: torch.dtype = torch.float32,
         device: torch.device | None = None,
-        no_bunching: bool = None,
         computation_space: str | None = None,
+        no_bunching: bool = None,
         output_map_func=None,
     ):
         self.circuit = circuit
@@ -60,11 +60,11 @@ class ComputationProcess(AbstractComputationProcess):
         self.dtype = dtype
         self.device = device
         self.no_bunching = no_bunching
-        self.computation_space = computation_space
         self.output_map_func = output_map_func
         # Dual-rail configuration runs after graph construction, so stash whether
         # we still need to re-check any tensor-shaped input state once the logical
         # basis has been narrowed.
+        self.computation_space = computation_space
         self._pending_state_validation = False
 
         # Extract circuit parameters for graph building
@@ -142,8 +142,7 @@ class ComputationProcess(AbstractComputationProcess):
                     index = key_to_index[state_tuple]
                 except KeyError as exc:  # pragma: no cover - defensive guard
                     raise ValueError(
-                        "Dual-rail state missing from computation graph: "
-                        f"{state_tuple}"
+                        f"Dual-rail state missing from computation graph: {state_tuple}"
                     ) from exc
                 allowed_states.append(state_tuple)
                 indices.append(index)
@@ -164,6 +163,9 @@ class ComputationProcess(AbstractComputationProcess):
             input_state = self.input_state
 
         keys, amplitudes = self.simulation_graph.compute(unitary, input_state)
+        # When the logical basis is smaller than the simulator basis (e.g. dual-rail),
+        # trim the tensor so forward callers keep seeing the contracted subspace.
+        amplitudes = self._filter_tensor(amplitudes)
         return amplitudes
 
     def compute_superposition_state(
@@ -232,6 +234,7 @@ class ComputationProcess(AbstractComputationProcess):
         input_state = prepared_state.to(amplitudes.dtype)
 
         final_amplitudes = input_state @ amplitudes
+        # Keep output tensors aligned with the currently configured logical subspace.
         final_amplitudes = self._filter_tensor(final_amplitudes)
         keys_out = (
             self.logical_keys
@@ -334,6 +337,8 @@ class ComputationProcess(AbstractComputationProcess):
         input_state = prepared_state.to(amplitudes.dtype)
 
         final_amplitudes = input_state @ amplitudes
+        # Matching the logical basis prevents downstream shape changes when
+        # switching computation spaces
         return self._filter_tensor(final_amplitudes)
 
     def compute_with_keys(self, parameters: list[torch.Tensor]):
@@ -343,6 +348,7 @@ class ComputationProcess(AbstractComputationProcess):
 
         # Compute output distribution using the input state
         keys, amplitudes = self.simulation_graph.compute(unitary, self.input_state)
+        # Surface the logical keys alongside the trimmed tensor so callers stay consistent.
         amplitudes = self._filter_tensor(amplitudes)
         keys_out = (
             self.logical_keys
@@ -363,7 +369,8 @@ class ComputationProcess(AbstractComputationProcess):
                 raise ValueError(
                     "Dual-rail encoding requires the number of modes to equal 2 * n_photons."
                 )
-            return 2 ** self.n_photons
+            # Dual-rail limits to 2**n logical states (one photon per rail pair).
+            return 2**self.n_photons
         if self.no_bunching:
             if self.n_photons > self.m:
                 raise ValueError(
@@ -389,9 +396,8 @@ class ComputationProcess(AbstractComputationProcess):
 
         expected = self._expected_superposition_size()
         if state_dim != expected:
-            if (
-                self.computation_space == "dual_rail"
-                and state_dim == len(self.simulation_graph.mapped_keys)
+            if self.computation_space == "dual_rail" and state_dim == len(
+                self.simulation_graph.mapped_keys
             ):
                 return
             if self.computation_space == "dual_rail":
@@ -428,7 +434,7 @@ class ComputationProcess(AbstractComputationProcess):
         return (
             self.no_bunching
             and self.m == 2 * self.n_photons
-            and state_dim == 2 ** self.n_photons
+            and state_dim == 2**self.n_photons
         )
 
     def _prepare_superposition_tensor(self) -> torch.Tensor:
@@ -454,9 +460,10 @@ class ComputationProcess(AbstractComputationProcess):
         if (
             self.logical_indices is not None
             and tensor.shape[-1] == len(self.logical_keys)
-            and len(self.logical_keys)
-            != len(self.simulation_graph.mapped_keys)
+            and len(self.logical_keys) != len(self.simulation_graph.mapped_keys)
         ):
+            # Superposition tensors captured before dual-rail was configured still
+            # match the full SLOS basis; scatter them so the simulator can process them.
             tensor = self._scatter_logical_to_full(tensor)
 
         norm = tensor.abs().pow(2).sum(dim=1, keepdim=True).sqrt()
@@ -492,6 +499,18 @@ class ComputationProcess(AbstractComputationProcess):
                     f"Invalid computation_space '{computation_space}'. Supported values are {sorted(allowed)}."
                 )
             self.computation_space = computation_space
+
+        effective_space = self.computation_space
+        if effective_space == "dual_rail":
+            n_photons = self.n_photons
+            if n_photons is None:
+                raise ValueError("Dual-rail encoding requires 'n_photons'.")
+            expected_modes = 2 * n_photons
+            if self.m != expected_modes:
+                raise ValueError(
+                    "Dual-rail encoding requires the number of modes to equal 2 * n_photons. "
+                    f"Here {self.m} modes and {n_photons} photons were provided."
+                )
 
         self._init_logical_basis()
         # If validation was postponed while the space was unresolved, finish it now.

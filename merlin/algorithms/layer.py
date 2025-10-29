@@ -95,7 +95,7 @@ class QuantumLayer(nn.Module):
         n_photons: int | None = None,
         # Amplitude encoding
         amplitude_encoding: bool = False,
-        #TODO: add enum for computation_space
+        # TODO: add enum for computation_space
         # ComputationSpace.FOCK, ComputationSpace.UNBUNCHED, ComputationSpace.DUAL_RAIL
         computation_space: str | None = None,
         # only for custom circuits and experiments
@@ -148,7 +148,7 @@ class QuantumLayer(nn.Module):
             )
         # no_bunching cannot be True by default, to fit with "fock" computation_space
         # to avoid situation such that no_bunching=True and computation_space="fock"
-        #TODO: warning for no_bunching deprecation -> map it to computation_space
+        # TODO: warning for no_bunching deprecation -> map it to computation_space
         if no_bunching is None:
             no_bunching_value = True
         else:
@@ -159,7 +159,10 @@ class QuantumLayer(nn.Module):
         else:
             # if it is provided, check consistency with no_bunching
             computation_space_value = computation_space
-            derived_no_bunching = computation_space_value in {"no_bunching", "dual_rail"}
+            derived_no_bunching = computation_space_value in {
+                "no_bunching",
+                "dual_rail",
+            }
             if no_bunching is not None and no_bunching_value != derived_no_bunching:
                 warnings.warn(
                     "Overriding 'no_bunching' to match the requested computation_space. "
@@ -234,10 +237,6 @@ class QuantumLayer(nn.Module):
             resolved_circuit = experiment.unitary_circuit()
 
         self.circuit = resolved_circuit
-        # dual-rail needs n photons and 2n modes
-        if self.computation_space == "dual_rail" and self.circuit.m != int(2*n_photons):
-            raise ValueError("Dual-rail encoding requires the number of modes to be be two times the number of modes. Here "
-                             f"{self.circuit.m} modes and {n_photons} photons were provided.")
         self._init_from_custom_circuit(
             resolved_circuit,
             input_state,
@@ -279,6 +278,7 @@ class QuantumLayer(nn.Module):
             device=self.device,
             dtype=self.dtype,
             no_bunching=self.no_bunching,
+            computation_space=self.computation_space,
         )
 
         # Pick the effective state space after the factory creates the process so

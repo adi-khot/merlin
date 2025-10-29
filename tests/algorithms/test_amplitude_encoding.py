@@ -86,6 +86,143 @@ def _normalised_state(n_states: int, dtype: torch.dtype) -> torch.Tensor:
     return state / norm
 
 
+@pytest.mark.parametrize(
+    ("space", "n_photons", "n_modes", "expected_size"),
+    [
+        ("fock", 3, 5, math.comb(5 + 3 - 1, 3)),
+        ("no_bunching", 3, 5, math.comb(5, 3)),
+        ("dual_rail", 3, 6, 2**3),
+    ],
+)
+def test_amplitude_encoding_output_matches_computation_space(
+    space: str, n_photons: int, n_modes: int, expected_size: int
+) -> None:
+    circuit = pcvl.components.GenericInterferometer(
+        n_modes,
+        pcvl.components.catalog["mzi phase last"].generate,
+        shape=pcvl.InterferometerShape.RECTANGLE,
+    )
+    layer = QuantumLayer(
+        circuit=circuit,
+        n_photons=n_photons,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
+        amplitude_encoding=True,
+        computation_space=space,
+        trainable_parameters=["phi"],
+        input_parameters=[],
+        dtype=torch.float32,
+    )
+
+    amplitude_input = _normalised_state(expected_size, dtype=torch.float32).squeeze(0)
+    outputs = layer(amplitude_input)
+
+    assert len(layer.state_keys) == expected_size
+    assert outputs.shape[-1] == expected_size
+
+
+@pytest.mark.parametrize(
+    ("space", "n_photons", "n_modes", "expected_size"),
+    [
+        ("fock", 3, 5, math.comb(5 + 3 - 1, 3)),
+        ("no_bunching", 3, 5, math.comb(5, 3)),
+        ("dual_rail", 3, 6, 2**3),
+    ],
+)
+def test_amplitude_encoding_gradients_follow_computation_space(
+    space: str, n_photons: int, n_modes: int, expected_size: int
+) -> None:
+    circuit = pcvl.components.GenericInterferometer(
+        n_modes,
+        pcvl.components.catalog["mzi phase last"].generate,
+        shape=pcvl.InterferometerShape.RECTANGLE,
+    )
+    layer = QuantumLayer(
+        circuit=circuit,
+        n_photons=n_photons,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
+        amplitude_encoding=True,
+        computation_space=space,
+        trainable_parameters=["phi"],
+        input_parameters=[],
+        dtype=torch.float32,
+    )
+    layer.zero_grad()
+
+    amplitude_input = torch.randn(
+        expected_size, dtype=torch.float32, requires_grad=True
+    )
+
+    outputs = layer(amplitude_input)
+    loss = outputs.real.sum()
+    loss.backward()
+
+    assert amplitude_input.grad is not None
+    assert amplitude_input.grad.shape == amplitude_input.shape
+
+    trainable_params = [p for p in layer.parameters() if p.requires_grad]
+    assert trainable_params, (
+        "Expected at least one trainable parameter for gradient check"
+    )
+    for param in trainable_params:
+        assert param.grad is not None
+        assert param.grad.shape == param.shape
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="CUDA is required for GPU sanity checks."
+)
+@pytest.mark.parametrize(
+    ("space", "n_photons", "n_modes", "expected_size"),
+    [
+        ("fock", 3, 5, math.comb(5 + 3 - 1, 3)),
+        ("no_bunching", 3, 5, math.comb(5, 3)),
+        ("dual_rail", 3, 6, 2**3),
+    ],
+)
+def test_amplitude_encoding_gpu_roundtrip(
+    space: str, n_photons: int, n_modes: int, expected_size: int
+) -> None:
+    device = torch.device("cuda")
+    circuit = pcvl.components.GenericInterferometer(
+        n_modes,
+        pcvl.components.catalog["mzi phase last"].generate,
+        shape=pcvl.InterferometerShape.RECTANGLE,
+    )
+    layer = QuantumLayer(
+        circuit=circuit,
+        n_photons=n_photons,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
+        amplitude_encoding=True,
+        computation_space=space,
+        trainable_parameters=["phi"],
+        input_parameters=[],
+        dtype=torch.float32,
+    ).to(device)
+    layer.zero_grad()
+
+    amplitude_input = torch.randn(
+        expected_size, dtype=torch.float32, device=device, requires_grad=True
+    )
+
+    outputs = layer(amplitude_input)
+
+    assert outputs.shape[-1] == expected_size
+    assert outputs.device == device
+
+    loss = outputs.real.sum()
+    loss.backward()
+
+    assert amplitude_input.grad is not None
+    assert amplitude_input.grad.device == device
+    assert amplitude_input.grad.shape == amplitude_input.shape
+
+    trainable_params = [p for p in layer.parameters() if p.requires_grad]
+    for param in trainable_params:
+        assert param.grad is not None
+        assert param.grad.device == device
+        assert param.grad.shape == param.shape
+
+
 def test_amplitude_encoding_matches_superposition(make_layer):
     layer = make_layer()
     num_states = len(layer.computation_process.simulation_graph.mapped_keys)
@@ -367,7 +504,8 @@ def test_amplitude_encoding_requires_valid_configuration():
         )
 
     with pytest.raises(
-        ValueError, match="Amplitude encoding cannot be combined with classical input parameters"
+        ValueError,
+        match="Amplitude encoding cannot be combined with classical input parameters",
     ):
         QuantumLayer(
             circuit=circuit,
@@ -412,7 +550,7 @@ def test_amplitude_encoding_superposition_matches_basis_sum():
     n_modes = 8
     circuit = pcvl.Circuit(n_modes)
     for k in range(0, n_modes, 2):
-        for mode in range(k%2, n_modes, 2):
+        for mode in range(k % 2, n_modes, 2):
             circuit.add(mode, pcvl.BS())
     layer = QuantumLayer(
         circuit=circuit,
@@ -437,9 +575,9 @@ def test_amplitude_encoding_superposition_matches_basis_sum():
     combined_output = layer(amplitude_input)
     expected_output = torch.sum(coefficients[:, None, None] * basis_outputs, dim=0)
     difference = combined_output - expected_output
-    assert torch.allclose(
-        combined_output, expected_output, atol=1e-6, rtol=1e-6
-    ), f"Max deviation {difference.abs().max().item():.2e}"
+    assert torch.allclose(combined_output, expected_output, atol=1e-6, rtol=1e-6), (
+        f"Max deviation {difference.abs().max().item():.2e}"
+    )
 
     with pytest.raises(ValueError, match="Amplitude input expects"):
         layer(torch.ones(layer.input_size + 1, dtype=torch.complex64))
