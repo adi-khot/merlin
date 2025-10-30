@@ -645,6 +645,7 @@ class QuantumLayer(nn.Module):
 
         return self
 
+    @property
     def state_keys(self):
         if getattr(self, "_detector_transform", None) is None:
             return self.computation_process.simulation_graph.mapped_keys
