@@ -42,6 +42,7 @@ from ..core.process import ComputationProcessFactory
 from ..measurement import OutputMapper
 from ..measurement.autodiff import AutoDiffProcess
 from ..measurement.detectors import DetectorTransform, resolve_detectors
+from ..measurement.photon_loss import PhotonLossTransform, resolve_photon_loss
 from ..measurement.strategies import (
     MeasurementStrategy,
 )
@@ -144,6 +145,7 @@ class QuantumLayer(nn.Module):
                 not experiment.is_unitary
                 or experiment.post_select_fn is not None
                 or experiment.heralds
+                or experiment.in_heralds
             ):
                 raise ValueError(
                     "The provided experiment must be unitary, and must not have post-selection or heralding."
@@ -186,23 +188,31 @@ class QuantumLayer(nn.Module):
             raise RuntimeError("Experiment must be initialised.")
 
         self.circuit = resolved_circuit
+
+        self._photon_survival_probs, empty_noise_model = resolve_photon_loss(
+            self.experiment, resolved_circuit.m
+        )
+        self.has_custom_noise_model = not empty_noise_model
+
         self._detectors, empty_detectors = resolve_detectors(
             self.experiment, resolved_circuit.m
         )
         self._has_custom_detectors = not empty_detectors
         self.detectors = self._detectors  # Backward compatibility alias
 
-        # Verify that detectors are allowed:
+        # Verify that detectors and noise model are allowed:
+
+        # Detector not allowed with no_bunching=True
         if self._has_custom_detectors and no_bunching:
             raise RuntimeError(
                 "no_bunching must be False if Experiement contains at least one Detector."
             )
+        # Detector and NoiseModel not allowed with MeasurementStrategy.AMPLITUDES
         if (
-            self._has_custom_detectors
-            and measurement_strategy == MeasurementStrategy.AMPLITUDES
-        ):
+            self._has_custom_detectors or self.has_custom_noise_model
+        ) and measurement_strategy == MeasurementStrategy.AMPLITUDES:
             raise RuntimeError(
-                "measurement_strategy=MeasurementStrategy.AMPLITUDES cannot be used when Experiment contains at least one Detector."
+                "measurement_strategy=MeasurementStrategy.AMPLITUDES cannot be used when Experiment contains at least one Detector or when it contains a defined NoiseModel."
             )
 
         self._init_from_custom_circuit(
@@ -256,6 +266,7 @@ class QuantumLayer(nn.Module):
         self.n_photons = self.computation_process.n_photons
         raw_keys = self.computation_process.simulation_graph.mapped_keys
         self._raw_output_keys = [self._normalize_output_key(key) for key in raw_keys]
+        self._initialize_photon_loss_transform()
         self._initialize_detector_transform()
 
         # Validate that the declared input size matches the builder-provided parameters
@@ -327,9 +338,14 @@ class QuantumLayer(nn.Module):
         self, measurement_strategy: MeasurementStrategy
     ):
         """Setup output mapping for custom circuit construction."""
+        if self._photon_loss_transform is None:
+            raise RuntimeError(
+                "Photon loss transform must be initialised before sizing."
+            )
         if self._detector_transform is None:
             raise RuntimeError("Detector transform must be initialised before sizing.")
 
+        # TODO get dist_size if no_bunching is True
         dist_size = self._detector_transform.output_size
 
         # Determine output size
@@ -597,6 +613,7 @@ class QuantumLayer(nn.Module):
             MeasurementStrategy.PROBABILITIES,
             MeasurementStrategy.MODE_EXPECTATIONS,
         ):
+            distribution = self._apply_photon_loss_transform(distribution)
             distribution = self._apply_detector_transform(distribution)
 
             if apply_sampling and shots > 0:
@@ -639,6 +656,10 @@ class QuantumLayer(nn.Module):
                 self.dtype, device
             )
 
+            # Photon loss Module
+            if self._photon_loss_transform is not None:
+                self._photon_loss_transform = self._photon_loss_transform.to(device)
+            # Detector Module
             if self._detector_transform is not None:
                 self._detector_transform = self._detector_transform.to(device)
 
@@ -661,9 +682,19 @@ class QuantumLayer(nn.Module):
     def has_custom_detectors(self) -> bool:
         return self._has_custom_detectors
 
+    def _initialize_photon_loss_transform(self) -> None:
+        self._photon_loss_transform = PhotonLossTransform(
+            self._raw_output_keys,
+            self._photon_survival_probs,
+            dtype=self.dtype,
+            device=self.device,
+        )
+        self._photon_loss_keys = self._photon_loss_transform.output_keys
+        self._photon_loss_is_identity = self._photon_loss_transform.is_identity
+
     def _initialize_detector_transform(self) -> None:
         self._detector_transform = DetectorTransform(
-            self._raw_output_keys,
+            self._photon_loss_keys,
             self._detectors,
             dtype=self.dtype,
             device=self.device,
@@ -678,6 +709,15 @@ class QuantumLayer(nn.Module):
         if isinstance(key, torch.Tensor):
             return tuple(int(v) for v in key.tolist())
         return tuple(int(v) for v in key)
+
+    def _apply_photon_loss_transform(self, distribution: torch.Tensor) -> torch.Tensor:
+        if self._photon_loss_transform is None:
+            raise RuntimeError(
+                "Photon loss transform must be initialised before applying photon loss."
+            )
+        if self._photon_loss_is_identity:
+            return distribution
+        return self._photon_loss_transform(distribution)
 
     def _apply_detector_transform(self, distribution: torch.Tensor) -> torch.Tensor:
         if self._detector_transform is None:
