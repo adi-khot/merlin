@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import math
 from collections.abc import Iterable, Sequence
+from typing import cast
 
 import perceval as pcvl
 import torch
@@ -265,7 +266,7 @@ class DetectorTransform(torch.nn.Module):
         if self._is_identity:
             return distribution
 
-        matrix = self._matrix  # type: ignore[attr-defined]
+        matrix: torch.Tensor = cast(torch.Tensor, self._matrix)  # type: ignore[attr-defined]
         if distribution.dtype != matrix.dtype:
             matrix = matrix.to(distribution.dtype)
         if distribution.device != matrix.device:

@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import Any, cast
 
 import perceval as pcvl
 import torch
@@ -840,7 +840,7 @@ class QuantumLayer(nn.Module):
                 self.add_module("post_processing", post_processing)
                 self.circuit = quantum_layer.circuit
                 if hasattr(post_processing, "output_size"):
-                    self._output_size: int = post_processing.output_size
+                    self._output_size = cast(int, post_processing.output_size)
                 else:
                     self._output_size = quantum_layer.output_size
 
