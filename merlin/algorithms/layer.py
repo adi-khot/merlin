@@ -617,25 +617,6 @@ class QuantumLayer(nn.Module):
 
         return amplitude
 
-    def _infer_batch_mode(
-        self,
-        amplitude_input: torch.Tensor | None,
-        classical_inputs: list[torch.Tensor],
-        fallback_state: torch.Tensor | None,
-    ) -> bool:
-        """Derive batch behaviour from provided inputs."""
-        if amplitude_input is not None and amplitude_input.dim() > 1:
-            return amplitude_input.size(0) > 1
-
-        for tensor in classical_inputs:
-            if isinstance(tensor, torch.Tensor) and tensor.dim() > 1:
-                return tensor.size(0) > 1
-
-        if isinstance(fallback_state, torch.Tensor) and fallback_state.dim() > 1:
-            return fallback_state.size(0) > 1
-
-        return False
-
     def set_input_state(self, input_state):
         self.input_state = input_state
         self.computation_process.input_state = input_state
@@ -677,7 +658,7 @@ class QuantumLayer(nn.Module):
         *input_parameters: torch.Tensor,
         apply_sampling: bool | None = None,
         shots: int | None = None,
-        simultaneous_processes: int = 1,
+        simultaneous_processes: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
         """Forward pass through the quantum layer.
 
@@ -704,32 +685,28 @@ class QuantumLayer(nn.Module):
             # amplitude_input becomes the new input_state
             self.set_input_state(amplitude_input)
 
-        classical_inputs = [
-            tensor for tensor in inputs if isinstance(tensor, torch.Tensor)
-        ]
+        # classical_inputs = [
+        #    tensor for tensor in inputs if isinstance(tensor, torch.Tensor)
+        # ]
 
         # Prepare circuit parameters and any remaining classical inputs
         params = self.prepare_parameters(inputs)
 
-        # Determine batch mode directly from provided inputs
         inferred_state = getattr(self.computation_process, "input_state", None)
-        batch_mode = self._infer_batch_mode(
-            amplitude_input, classical_inputs, inferred_state
-        )
-
         amplitudes: torch.Tensor
 
+        # TODO: challenge the need for trying/finally here
         try:
             if isinstance(inferred_state, torch.Tensor):
-                if batch_mode:
-                    amplitudes = self.computation_process.compute_ebs_simultaneously(
-                        params, simultaneous_processes=simultaneous_processes
-                    )
+                if simultaneous_processes is not None:
+                    batch_size = simultaneous_processes
                 else:
-                    amplitudes = cast(
-                        torch.Tensor,
-                        self.computation_process.compute_superposition_state(params),
+                    batch_size = (
+                        inferred_state.dim() == 1 and 1 or inferred_state.shape[0]
                     )
+                amplitudes = self.computation_process.compute_ebs_simultaneously(
+                    params, simultaneous_processes=batch_size
+                )
             else:
                 amplitudes = self.computation_process.compute(params)
         finally:

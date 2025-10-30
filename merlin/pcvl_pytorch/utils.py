@@ -90,6 +90,6 @@ def pcvl_to_tensor(
                 )
 
         index = combinadics.fock_to_index(state)
-        tensor[index] = complex(amplitude)
+        tensor[index] = amplitude
 
     return tensor

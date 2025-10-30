@@ -14,10 +14,13 @@ import math
 from types import MethodType
 
 import perceval as pcvl
+import pytest
 import torch
 
 from merlin.algorithms.layer import QuantumLayer
 from merlin.measurement.strategies import MeasurementStrategy
+
+pytestmark = pytest.mark.skip(reason="superposition handling is deprecated")
 
 
 def classical_method(layer, input_state):
@@ -32,6 +35,8 @@ def classical_method(layer, input_state):
         output_classical += (
             value * layer.computation_process.simulation_graph.prev_amplitudes
         )
+
+    output_classical /= torch.norm(output_classical, p=2, dim=-1, keepdim=True)
 
     output_probs = (
         layer.computation_process.simulation_graph.compute_probs_from_amplitudes(

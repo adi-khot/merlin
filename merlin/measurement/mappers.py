@@ -47,7 +47,7 @@ class OutputMapper:
     @staticmethod
     def create_mapping(
         strategy: MeasurementStrategy,
-        computation_space: ComputationSpace,
+        computation_space: ComputationSpace = ComputationSpace.FOCK,
         keys: list[tuple[int, ...]] | None = None,
     ):
         """

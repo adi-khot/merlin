@@ -247,7 +247,9 @@ class TestModeExpectationsMapping:
     def test_no_bunching_probability(self):
         """no_bunching=True should compute per-mode occupancy probability."""
         keys = [(1, 0), (0, 1), (1, 1)]
-        mapper = ML.ModeExpectations(no_bunching=True, keys=keys)
+        mapper = ML.ModeExpectations(
+            computation_space=ML.ComputationSpace.UNBUNCHED, keys=keys
+        )
 
         probability_distribution = torch.tensor([0.2, 0.3, 0.5])
         expected = torch.tensor([0.7, 0.8])
@@ -258,7 +260,9 @@ class TestModeExpectationsMapping:
     def test_expectation_counts(self):
         """no_bunching=False should compute expected photon counts per mode."""
         keys = [(2, 0), (0, 2), (1, 1)]
-        mapper = ML.ModeExpectations(no_bunching=False, keys=keys)
+        mapper = ML.ModeExpectations(
+            computation_space=ML.ComputationSpace.FOCK, keys=keys
+        )
 
         probability_distribution = torch.tensor([[0.1, 0.2, 0.7]])
         expected = torch.tensor([[0.9, 1.1]])
@@ -269,7 +273,12 @@ class TestModeExpectationsMapping:
     def test_invalid_keys(self):
         """Empty or mismatched keys should raise."""
         with pytest.raises(ValueError, match="Keys list cannot be empty"):
-            ML.ModeExpectations(no_bunching=True, keys=[])
+            ML.ModeExpectations(
+                computation_space=ML.ComputationSpace.UNBUNCHED, keys=[]
+            )
 
         with pytest.raises(ValueError, match="All keys must have the same length"):
-            ML.ModeExpectations(no_bunching=True, keys=[(1, 0), (0, 1, 0)])
+            ML.ModeExpectations(
+                computation_space=ML.ComputationSpace.UNBUNCHED,
+                keys=[(1, 0), (0, 1, 0)],
+            )

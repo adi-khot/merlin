@@ -357,7 +357,6 @@ class SLOSComputeGraph:
             if n_photons != m // 2:
                 raise ValueError("dual_rail compute space requires n_photons = m // 2")
 
-        print("computation_space:", computation_space)
         self.computation_space = computation_space
         self.keep_keys = keep_keys
         self.device = device

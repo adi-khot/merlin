@@ -298,19 +298,23 @@ class ComputationProcess(AbstractComputationProcess):
               ``self.input_state`` live on the same device.
         """
 
+        # input state was validated by _prepare_superposition_tensor, ie: renormalized, typed, and converted from logical basis to fock basis (if shape did not match)
+        # we don't want anymore the logical basis but normalization and typing cannot hurt even if it is a small overhead
         prepared_state = self._prepare_superposition_tensor()
+
+        print("prepared_state.shape:", prepared_state.shape)
 
         unitary = self.converter.to_tensor(*parameters)
 
-        # Find non-zero input states
+        # Find non-zero input states - for efficient processing of only not zero amplitude states
         mask = (prepared_state.real**2 + prepared_state.imag**2 < 1e-13).all(dim=0)
         masked_input_state = (~mask).int().tolist()
-
         input_states = [
             (k, self.simulation_graph.mapped_keys[k])
             for k, mask in enumerate(masked_input_state)
             if mask == 1
         ]
+
         # Initialize amplitudes tensor
         amplitudes = torch.zeros(
             (prepared_state.shape[-1], len(self.simulation_graph.mapped_keys)),
@@ -340,7 +344,15 @@ class ComputationProcess(AbstractComputationProcess):
         # Apply input state coefficients
         input_state = prepared_state.to(amplitudes.dtype)
 
+        print("input_state.shape:", input_state.shape)
+        print("amplitudes.shape:", amplitudes.shape)
+
+        amplitudes = amplitudes / amplitudes.norm(p=2, dim=-1, keepdim=True).clamp_min(
+            1e-12
+        )
+        # The actual sum of amplitudes weighted by input coefficients (for each batch element) is done here
         final_amplitudes = input_state @ amplitudes
+
         # Matching the logical basis prevents downstream shape changes when
         # switching computation spaces
         return self._filter_tensor(final_amplitudes)
