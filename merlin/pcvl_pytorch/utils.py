@@ -51,17 +51,13 @@ def pcvl_to_tensor(
             or non consistent number of photons across the states.
 
     """
-    # Perceval StateVector.n can be either an int or an iterable of allowed photon numbers.
-    ns = state_vector.n
-    if isinstance(ns, int):
-        n_photons = ns
-    else:
-        ns_list = list(ns)
-        if len(ns_list) != 1:
-            raise ValueError(
-                "StateVector must have a fixed number of photons for conversion to tensor."
-            )
-        n_photons = ns_list[0]
+    # Perceval StateVector.n is a set.
+    ns_set = state_vector.n
+    if len(ns_set) != 1:
+        raise ValueError(
+            "StateVector must have a fixed number of photons for conversion to tensor."
+        )
+    n_photons = ns_set.pop()
 
     n_modes = state_vector.m
 

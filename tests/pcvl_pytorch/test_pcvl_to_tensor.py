@@ -50,3 +50,11 @@ def test_pcvl_to_tensor_dualrail_bunching_error():
 
     with pytest.raises(ValueError):
         pcvl_to_tensor(sv, computation_space=ComputationSpace.DUAL_RAIL)
+
+
+def test_pcvl_to_tensor_inconsistent_photon_number():
+    sv = StateVector()
+    sv += StateVector(BasicState([0, 1])) + StateVector(BasicState([1, 1]))
+
+    with pytest.raises(ValueError):
+        pcvl_to_tensor(sv)
