@@ -32,7 +32,6 @@ class MerlinProcessor:
       - Global timeouts that cancel in-flight jobs
     """
 
-    MAX_BATCH_SIZE: int = 32
     DEFAULT_MAX_SHOTS: int = 100_000
     DEFAULT_SHOTS_PER_CALL: int = 10_000
 
@@ -63,13 +62,7 @@ class MerlinProcessor:
         else:
             self.available_commands = []
 
-        self.max_batch_size = min(max_batch_size, self.MAX_BATCH_SIZE)
-        if max_batch_size > self.MAX_BATCH_SIZE:
-            warnings.warn(
-                f"Requested batch size {max_batch_size} exceeds limit {self.MAX_BATCH_SIZE}. "
-                f"Using maximum: {self.MAX_BATCH_SIZE}",
-                stacklevel=2,
-            )
+        self.max_batch_size = max_batch_size
 
         self.default_timeout = float(timeout)
         # When using RemoteProcessor, Perceval requires an explicit bound.
