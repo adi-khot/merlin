@@ -95,7 +95,7 @@ class TestFuturesAndChunking:
         X = torch.rand(B, 2)
         proc = MerlinProcessor(
             remote_processor,
-            max_batch_size=max_bs,
+            microbatch_size=max_bs,
             chunk_concurrency=2,
             max_shots_per_call=50_000,
         )
@@ -122,7 +122,7 @@ class TestFuturesAndChunking:
         X = torch.rand(7, 3)
         proc = MerlinProcessor(
             remote_processor,
-            max_batch_size=3,
+            microbatch_size=3,
             chunk_concurrency=2,
             max_shots_per_call=60_000,
         )

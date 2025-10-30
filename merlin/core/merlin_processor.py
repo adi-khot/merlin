@@ -38,7 +38,7 @@ class MerlinProcessor:
     def __init__(
         self,
         remote_processor: RemoteProcessor,
-        max_batch_size: int = 32,
+        microbatch_size: int = 32,
         timeout: float = 3600.0,
         max_shots_per_call: int | None = None,
         chunk_concurrency: int = 1,
@@ -62,7 +62,7 @@ class MerlinProcessor:
         else:
             self.available_commands = []
 
-        self.max_batch_size = max_batch_size
+        self.microbatch_size = microbatch_size
 
         self.default_timeout = float(timeout)
         # When using RemoteProcessor, Perceval requires an explicit bound.
@@ -248,7 +248,7 @@ class MerlinProcessor:
             input_tensor = input_tensor.cpu()
 
         B = input_tensor.shape[0]
-        if B <= self.max_batch_size and self.chunk_concurrency == 1:
+        if B <= self.microbatch_size and self.chunk_concurrency == 1:
             # Fast path: single chunk, single job.
             return self._run_chunk_wrapper(
                 layer, input_tensor, nsample, state, deadline
@@ -275,7 +275,7 @@ class MerlinProcessor:
         chunks: list[tuple[int, int]] = []
         start = 0
         while start < B:
-            end = min(start + self.max_batch_size, B)
+            end = min(start + self.microbatch_size, B)
             chunks.append((start, end))
             start = end
 
@@ -376,9 +376,9 @@ class MerlinProcessor:
         from concurrent.futures import CancelledError  # used for cancellation mapping
 
         batch_size = input_chunk.shape[0]
-        if batch_size > self.max_batch_size:
+        if batch_size > self.microbatch_size:
             raise ValueError(
-                f"Chunk size {batch_size} exceeds cloud limit {self.max_batch_size}. "
+                f"Chunk size {batch_size} exceeds cloud limit {self.microbatch_size}. "
                 "Please report this bug."
             )
 

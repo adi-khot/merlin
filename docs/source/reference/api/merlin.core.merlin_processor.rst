@@ -49,7 +49,7 @@ Quick Start
     # 2) Wrap it with MerlinProcessor
     proc = MerlinProcessor(
         rp,
-        max_batch_size=32,        # batch chunk size per cloud call (<=32)
+        microbatch_size=32,        # batch chunk size per cloud call (<=32)
         timeout=3600.0,           # default wall-time per forward (seconds)
         max_shots_per_call=None,  # optional cap per cloud call (see below)
         chunk_concurrency=1       # parallel chunk jobs within a quantum leaf
@@ -93,7 +93,7 @@ max_shots_per_call=None, chunk_concurrency=1)``
 
 * **max_batch_size (int)**: maximum number of input rows per **cloud job**.
   If your input batch ``B`` is larger, the batch is split into chunks of size
-  ``<= max_batch_size``. Hard-capped by Merlin at 32.
+  ``<= microbatch_size``. Hard-capped by Merlin at 32.
 
 * **timeout (float)**: default wall-clock limit (in seconds) for each
   ``forward/forward_async`` call. Use per-call override (see below). This must
@@ -154,8 +154,8 @@ Asynchronous
 Batching & Chunking
 -------------------
 
-* If ``len(X) > max_batch_size``, Merlin splits into chunks of size
-  ``<= max_batch_size`` and submits up to ``chunk_concurrency`` chunk-jobs in
+* If ``len(X) > microbatch_size``, Merlin splits into chunks of size
+  ``<= microbatch_size`` and submits up to ``chunk_concurrency`` chunk-jobs in
   parallel **for that quantum leaf**.
 * The Future aggregates **all job IDs** across leaves in
   ``future.job_ids``. It also exposes chunk counters via ``future.status()``:
@@ -360,7 +360,7 @@ High-throughput batching with chunking
 
     proc = MerlinProcessor(
         pcvl.RemoteProcessor("sim:slos"),
-        max_batch_size=8,          # split big batches into <=8 rows per job
+        microbatch_size=8,          # split big batches into <=8 rows per job
         chunk_concurrency=2        # up to 2 chunk-jobs in flight per quantum leaf
     )
     X = torch.rand(64, q.input_size)  # big batch

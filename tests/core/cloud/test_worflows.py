@@ -53,7 +53,7 @@ class TestUserGuideExamples:
         # RemoteProcessor already configured by fixture
         proc = MerlinProcessor(
             remote_processor,
-            max_batch_size=32,
+            microbatch_size=32,
             timeout=3600.0,
             max_shots_per_call=None,
             chunk_concurrency=1,
@@ -128,7 +128,7 @@ class TestUserGuideExamples:
 
         proc = MerlinProcessor(
             remote_processor,
-            max_batch_size=8,   # as in docs
+            microbatch_size=8,   # as in docs
             chunk_concurrency=2,
         )
 
