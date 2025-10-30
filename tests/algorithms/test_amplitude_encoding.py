@@ -622,8 +622,6 @@ def test_ebs_wrt_quantumlayer(space: ComputationSpace) -> None:
         circuit=circuit,
         n_photons=n_photons,
         measurement_strategy=MeasurementStrategy.AMPLITUDES,
-        trainable_parameters=[],
-        input_parameters=[],
         amplitude_encoding=True,
         computation_space=space,
     )
@@ -637,7 +635,7 @@ def test_ebs_wrt_quantumlayer(space: ComputationSpace) -> None:
     magnitudes = torch.rand(batch_size, num_states, dtype=torch.float32)
     norms = magnitudes.norm(dim=1, keepdim=True).clamp_min(1e-12)
     magnitudes = magnitudes / norms
-    
+
     phases = torch.rand(batch_size, num_states, dtype=torch.float32) * (
         2 * math.pi
     )
@@ -657,44 +655,45 @@ def test_ebs_wrt_quantumlayer(space: ComputationSpace) -> None:
     print(f"\n -- EBS output: {ebs_output} -- \n")
     print(f"\n -- Expected output: {expected_output} -- \n")
     for idx, state in enumerate(ebs_layer.state_keys):
-        single_layer = QuantumLayer(
-            circuit=copy.deepcopy(circuit),
-            n_photons=n_photons,
-            measurement_strategy=MeasurementStrategy.AMPLITUDES,
-            input_state=list(state),
-            trainable_parameters=[],
-            input_parameters=[],
-            amplitude_encoding=False,
-            computation_space=space,
-            dtype=torch.float32,
-        )
-
-        single_layer.load_state_dict(shared_state, strict=False)
-
-        single_params = single_layer.prepare_parameters([])
-        single_unitary = single_layer.computation_process.converter.to_tensor(
-            *single_params
-        )
-        assert torch.allclose(
-            single_unitary, ebs_unitary, rtol=1e-6, atol=1e-8
-        ), "Expected identical unitaries between EBS and single-state layers."
-        assert (
-            single_layer.computation_process.simulation_graph.mapped_keys
-            == ebs_layer.computation_process.simulation_graph.mapped_keys
-        ), "Computation graphs diverge between EBS and single-state layers."
-
-        basis_output = single_layer()
-        if basis_output.dim() > 1:
-            basis_output = basis_output.squeeze(0)
-        basis_output = basis_output.to(ebs_output.dtype)
-
         coefficients = amplitude_input[:, idx].to(ebs_output.dtype).unsqueeze(-1)
-        print(f"\n -- Basis output for state {state}: {basis_output} -- \n")
-        expected_output = expected_output + coefficients * basis_output
-    
+        if coefficients.abs().max() > 1e-8:
+            single_layer = QuantumLayer(
+                circuit=copy.deepcopy(circuit),
+                n_photons=n_photons,
+                measurement_strategy=MeasurementStrategy.AMPLITUDES,
+                input_state=list(state),
+                amplitude_encoding=False,
+                computation_space=space,
+                dtype=torch.float32,
+            )
+
+            single_layer.load_state_dict(shared_state, strict=False)
+
+            single_params = single_layer.prepare_parameters([])
+            single_unitary = single_layer.computation_process.converter.to_tensor(
+                *single_params
+            )
+            assert torch.allclose(
+                single_unitary, ebs_unitary, rtol=1e-6, atol=1e-8
+            ), "Expected identical unitaries between EBS and single-state layers."
+            assert (
+                single_layer.computation_process.simulation_graph.mapped_keys
+                == ebs_layer.computation_process.simulation_graph.mapped_keys
+            ), "Computation graphs diverge between EBS and single-state layers."
+
+            basis_output = single_layer()
+            if basis_output.dim() > 1:
+                basis_output = basis_output.squeeze(0)
+            basis_output = basis_output.to(ebs_output.dtype)
+
+            
+            print(f"\n -- Basis output for state {state}: {basis_output} -- \n")
+            expected_output = expected_output + coefficients * basis_output
+    #expected_output = expected_output/expected_output.norm(dim=1, keepdim=True).clamp_min(1e-12)
+    #ebs_output = ebs_output/ebs_output.norm(dim=1, keepdim=True).clamp_min(1e-12)
     print(f"\n Expected output shape: {expected_output.shape} -- \n")
-    print(f"\n EBS output shape: {ebs_output.shape} -- \n")
-    print(f"\n Expected output: {expected_output} -- \n")
+    print(f"\n EBS output: {ebs_output} with norm {ebs_output.norm(dim = 1)} -- \n")
+    print(f"\n Expected output: {expected_output} with norm {expected_output.norm(dim=1)} -- \n")
     assert torch.allclose(
         ebs_output, expected_output, rtol=1e-6, atol=1e-8
     ), "EBS output deviates from the superposed QuantumLayer results."
