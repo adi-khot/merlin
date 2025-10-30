@@ -597,3 +597,92 @@ def test_amplitude_encoding_superposition_matches_basis_sum():
 
     with pytest.raises(ValueError, match="Amplitude input expects"):
         layer(torch.ones(layer.input_size + 1, dtype=torch.complex64))
+
+@pytest.mark.parametrize(
+    "space",
+    [
+        ComputationSpace.FOCK,
+        ComputationSpace.UNBUNCHED,
+        ComputationSpace.DUAL_RAIL,
+    ],
+)
+def test_ebs_wrt_quantumlayer(space: ComputationSpace) -> None:
+    # define circuit
+    circuit = pcvl.components.GenericInterferometer(
+        4,
+        pcvl.components.catalog["mzi phase last"].generate,
+        shape=pcvl.InterferometerShape.RECTANGLE,
+    )
+    n_photons = 2
+    no_bunching = space in {
+        ComputationSpace.UNBUNCHED,
+        ComputationSpace.DUAL_RAIL,
+    }
+    
+    
+    # define EBS layer
+
+    ebs_layer = QuantumLayer(
+        circuit=circuit,
+        n_photons=n_photons,
+        measurement_strategy=MeasurementStrategy.AMPLITUDES,
+        trainable_parameters=["phi"],
+        amplitude_encoding=True,
+        computation_space=space,
+        no_bunching=no_bunching,
+    )
+
+    num_states = len(ebs_layer.state_keys)
+    batch_size = min(3, num_states)
+    if batch_size < 2:
+        batch_size = 2
+
+    # generate random amplitude input
+    magnitudes = torch.rand(batch_size, num_states, dtype=torch.float32)
+    norms = magnitudes.norm(dim=1, keepdim=True).clamp_min(1e-12)
+    magnitudes = magnitudes / norms
+    phases = torch.rand(batch_size, num_states, dtype=torch.float32) * (
+        2 * math.pi
+    )
+    # out = magnitute (cos(phases) + j sin(phases))
+    amplitude_input = torch.polar(magnitudes, phases)
+
+    ebs_output = ebs_layer(amplitude_input)
+    if ebs_output.dim() == 1:
+        ebs_output = ebs_output.unsqueeze(0)
+    print(f" - EBS output = {ebs_output}")
+    shared_state = ebs_layer.state_dict()
+    expected_output = torch.zeros_like(ebs_output, dtype=ebs_output.dtype)
+
+    for idx, state in enumerate(ebs_layer.state_keys):
+        single_layer = QuantumLayer(
+            circuit=pcvl.components.GenericInterferometer(
+                circuit.m,
+                pcvl.components.catalog["mzi phase last"].generate,
+                shape=pcvl.InterferometerShape.RECTANGLE,
+            ),
+            n_photons=n_photons,
+            measurement_strategy=MeasurementStrategy.AMPLITUDES,
+            input_state=list(state),
+            trainable_parameters=["phi"],
+            input_parameters=[],
+            amplitude_encoding=False,
+            computation_space=space,
+            dtype=torch.float32,
+            no_bunching=no_bunching,
+        )
+        # we want the same parameters is these 2 models
+        single_layer.load_state_dict(shared_state, strict=False)
+        
+        # get the output (with no input parameters)
+        out_idx = single_layer()
+        if out_idx.dim() > 1:
+            out_idx = out_idx.squeeze(0)
+        out_idx = out_idx.to(ebs_output.dtype)
+
+        alpha_idx = amplitude_input[:, idx].to(ebs_output.dtype).unsqueeze(-1)
+        expected_output = expected_output + alpha_idx * out_idx
+        print(f"\n - Basis state {state}, coefficient {alpha_idx.squeeze().item():.4f}, output {out_idx}")
+    assert torch.allclose(
+        ebs_output, expected_output, rtol=1e-6, atol=1e-8
+    ), "EBS output deviates from the superposed QuantumLayer results."
