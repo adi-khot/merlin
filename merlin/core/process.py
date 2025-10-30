@@ -24,8 +24,6 @@
 Quantum computation processes and factories.
 """
 
-import warnings
-
 import perceval as pcvl
 import torch
 
@@ -105,10 +103,6 @@ class ComputationProcess(AbstractComputationProcess):
             input_state = self.input_state
 
         keys, amplitudes = self.simulation_graph.compute(unitary, input_state)
-
-        # Save keys and amplitudes
-        self.keys = keys
-        self.amplitudes = amplitudes
 
         return amplitudes
 
@@ -205,20 +199,7 @@ class ComputationProcess(AbstractComputationProcess):
         # Compute output distribution using the input state
         keys, amplitudes = self.simulation_graph.compute(unitary, self.input_state)
 
-        # Save keys and amplitudes
-        self.keys = keys
-        self.amplitudes = amplitudes
-
         return keys, amplitudes
-
-    def get_keys_and_amplitudes(self):
-        if self.keys is None or self.amplitudes is None:
-            warnings.warn(
-                "Keys or amplitudes not yet acquired. Run any computation method beforehand.",
-                stacklevel=2,
-            )
-        else:
-            return self.keys, self.amplitudes
 
 
 class ComputationProcessFactory:
