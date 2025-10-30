@@ -526,6 +526,7 @@ class FeedForwardBlock(torch.nn.Module):
             if len(tup) == k * self.n_cond
         ]
 
+    @property
     def state_keys(self):
         """Return cached output keys, or compute them via a dummy forward pass."""
         if self.output_keys is None:
@@ -759,7 +760,7 @@ if __name__ == "__main__":
     print(feed_forward.get_output_size())
     print(feed_forward.input_size_ff_layer(1))
     print(feed_forward.size_ff_layer(1))
-    print(feed_forward.state_keys())
+    print(feed_forward.state_keys)
     feed_forward.define_ff_layer(1, layers[1:5])
     x = torch.rand(1, 20)
     for _ in range(10):
