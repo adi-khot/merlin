@@ -144,6 +144,7 @@ class QuantumLayer(nn.Module):
                 not experiment.is_unitary
                 or experiment.post_select_fn is not None
                 or experiment.heralds
+                or experiment.in_heralds
             ):
                 raise ValueError(
                     "The provided experiment must be unitary, and must not have post-selection or heralding."
