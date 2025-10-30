@@ -10,10 +10,12 @@ Keeping these checks here ensures the public algorithms facade keeps exposing
 the right behaviour for amplitude-centric users without dipping into lower-level tests.
 """
 
+import copy
 import itertools
 import math
 import warnings
 from types import MethodType
+import numpy as np
 
 import perceval as pcvl
 import pytest
@@ -608,28 +610,22 @@ def test_amplitude_encoding_superposition_matches_basis_sum():
 )
 def test_ebs_wrt_quantumlayer(space: ComputationSpace) -> None:
     # define circuit
-    circuit = pcvl.components.GenericInterferometer(
+    circuit = pcvl.GenericInterferometer(
         4,
-        pcvl.components.catalog["mzi phase last"].generate,
-        shape=pcvl.InterferometerShape.RECTANGLE,
+        lambda i: pcvl.BS() // pcvl.PS(phi=np.pi/4 * i) //
+                 pcvl.BS() // pcvl.PS(phi=np.pi/8 * i),
+        shape=pcvl.InterferometerShape.RECTANGLE
     )
     n_photons = 2
-    no_bunching = space in {
-        ComputationSpace.UNBUNCHED,
-        ComputationSpace.DUAL_RAIL,
-    }
-    
-    
-    # define EBS layer
 
     ebs_layer = QuantumLayer(
         circuit=circuit,
         n_photons=n_photons,
         measurement_strategy=MeasurementStrategy.AMPLITUDES,
-        trainable_parameters=["phi"],
+        trainable_parameters=[],
+        input_parameters=[],
         amplitude_encoding=True,
         computation_space=space,
-        no_bunching=no_bunching,
     )
 
     num_states = len(ebs_layer.state_keys)
@@ -641,6 +637,7 @@ def test_ebs_wrt_quantumlayer(space: ComputationSpace) -> None:
     magnitudes = torch.rand(batch_size, num_states, dtype=torch.float32)
     norms = magnitudes.norm(dim=1, keepdim=True).clamp_min(1e-12)
     magnitudes = magnitudes / norms
+    
     phases = torch.rand(batch_size, num_states, dtype=torch.float32) * (
         2 * math.pi
     )
@@ -650,39 +647,54 @@ def test_ebs_wrt_quantumlayer(space: ComputationSpace) -> None:
     ebs_output = ebs_layer(amplitude_input)
     if ebs_output.dim() == 1:
         ebs_output = ebs_output.unsqueeze(0)
-    print(f" - EBS output = {ebs_output}")
-    shared_state = ebs_layer.state_dict()
-    expected_output = torch.zeros_like(ebs_output, dtype=ebs_output.dtype)
 
+    expected_output = torch.zeros_like(ebs_output, dtype=ebs_output.dtype)
+    shared_state = ebs_layer.state_dict()
+
+    ebs_params = ebs_layer.prepare_parameters([])
+    ebs_unitary = ebs_layer.computation_process.converter.to_tensor(*ebs_params)
+
+    print(f"\n -- EBS output: {ebs_output} -- \n")
+    print(f"\n -- Expected output: {expected_output} -- \n")
     for idx, state in enumerate(ebs_layer.state_keys):
         single_layer = QuantumLayer(
-            circuit=pcvl.components.GenericInterferometer(
-                circuit.m,
-                pcvl.components.catalog["mzi phase last"].generate,
-                shape=pcvl.InterferometerShape.RECTANGLE,
-            ),
+            circuit=copy.deepcopy(circuit),
             n_photons=n_photons,
             measurement_strategy=MeasurementStrategy.AMPLITUDES,
             input_state=list(state),
-            trainable_parameters=["phi"],
+            trainable_parameters=[],
             input_parameters=[],
             amplitude_encoding=False,
             computation_space=space,
             dtype=torch.float32,
-            no_bunching=no_bunching,
         )
-        # we want the same parameters is these 2 models
-        single_layer.load_state_dict(shared_state, strict=False)
-        
-        # get the output (with no input parameters)
-        out_idx = single_layer()
-        if out_idx.dim() > 1:
-            out_idx = out_idx.squeeze(0)
-        out_idx = out_idx.to(ebs_output.dtype)
 
-        alpha_idx = amplitude_input[:, idx].to(ebs_output.dtype).unsqueeze(-1)
-        expected_output = expected_output + alpha_idx * out_idx
-        print(f"\n - Basis state {state}, coefficient {alpha_idx.squeeze().item():.4f}, output {out_idx}")
+        single_layer.load_state_dict(shared_state, strict=False)
+
+        single_params = single_layer.prepare_parameters([])
+        single_unitary = single_layer.computation_process.converter.to_tensor(
+            *single_params
+        )
+        assert torch.allclose(
+            single_unitary, ebs_unitary, rtol=1e-6, atol=1e-8
+        ), "Expected identical unitaries between EBS and single-state layers."
+        assert (
+            single_layer.computation_process.simulation_graph.mapped_keys
+            == ebs_layer.computation_process.simulation_graph.mapped_keys
+        ), "Computation graphs diverge between EBS and single-state layers."
+
+        basis_output = single_layer()
+        if basis_output.dim() > 1:
+            basis_output = basis_output.squeeze(0)
+        basis_output = basis_output.to(ebs_output.dtype)
+
+        coefficients = amplitude_input[:, idx].to(ebs_output.dtype).unsqueeze(-1)
+        print(f"\n -- Basis output for state {state}: {basis_output} -- \n")
+        expected_output = expected_output + coefficients * basis_output
+    
+    print(f"\n Expected output shape: {expected_output.shape} -- \n")
+    print(f"\n EBS output shape: {ebs_output.shape} -- \n")
+    print(f"\n Expected output: {expected_output} -- \n")
     assert torch.allclose(
         ebs_output, expected_output, rtol=1e-6, atol=1e-8
     ), "EBS output deviates from the superposed QuantumLayer results."
