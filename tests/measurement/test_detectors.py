@@ -48,7 +48,7 @@ class TestDetectorsWithQuantumLayer:
         )
 
         output = layer()
-        keys = [tuple(key) for key in layer.state_keys()]
+        keys = [tuple(key) for key in layer.state_keys]
         # All keys must be binary tuples
         assert all(all(value in (0, 1) for value in key) for key in keys)
         # Probability mass should sit entirely on the observed detection pattern
@@ -112,8 +112,8 @@ class TestDetectorsWithQuantumLayer:
         probs_default = default_layer()
         probs_detector = detector_layer()
         assert torch.allclose(probs_detector, probs_default, atol=1e-6)
-        assert [tuple(key) for key in detector_layer.state_keys()] == [
-            tuple(key) for key in default_layer.state_keys()
+        assert [tuple(key) for key in detector_layer.state_keys] == [
+            tuple(key) for key in default_layer.state_keys
         ]
 
     def test_interleaved_n_wire_1_equals_threshold(self):
@@ -147,10 +147,10 @@ class TestDetectorsWithQuantumLayer:
         assert torch.allclose(
             output_threshold.sum(dim=1), torch.ones_like(output_threshold[:, 0])
         )
-        assert output.shape[-1] == len(layer.state_keys())
+        assert output.shape[-1] == len(layer.state_keys)
         assert torch.all(output >= 0)
-        keys = [tuple(key) for key in layer.state_keys()]
-        keys_threshold = [tuple(key) for key in layer_threshold.state_keys()]
+        keys = [tuple(key) for key in layer.state_keys]
+        keys_threshold = [tuple(key) for key in layer_threshold.state_keys]
         assert keys == keys_threshold
         assert all(value in (0, 1) for key in keys for value in key[:1])
         assert all(
@@ -172,7 +172,7 @@ class TestDetectorsWithQuantumLayer:
 
         output = layer()
         assert torch.allclose(torch.sum(output, dim=1), torch.ones_like(output[:, 0]))
-        keys = [tuple(key) for key in layer.state_keys()]
+        keys = [tuple(key) for key in layer.state_keys]
         assert all(key[0] in (0, 1, 2) for key in keys)
         assert all(key[1] in (0, 1, 2, 3, 4, 5) for key in keys)
         assert all(any(key[0] == i for key in keys) for i in range(3))
@@ -198,7 +198,7 @@ class TestDetectorsWithQuantumLayer:
         )
 
         output = layer()
-        keys = [tuple(key) for key in layer.state_keys()]
+        keys = [tuple(key) for key in layer.state_keys]
         assert output.shape[-1] == len(keys)
         assert torch.allclose(
             output.sum(dim=1), torch.ones_like(output[:, 0]), atol=1e-6
@@ -244,7 +244,7 @@ class TestDetectorsWithQuantumLayer:
         )
 
         output = layer()
-        keys = [tuple(key) for key in layer.state_keys()]
+        keys = [tuple(key) for key in layer.state_keys]
         assert (0, 0, 2) in keys
         idx = keys.index((0, 0, 2))
         assert torch.allclose(output[:, idx], torch.ones_like(output[:, idx]))
@@ -267,7 +267,7 @@ class TestDetectorsWithQuantumLayer:
         )
 
         output = layer().squeeze(0)
-        keys = [tuple(key) for key in layer.state_keys()]
+        keys = [tuple(key) for key in layer.state_keys]
         assert output.shape[0] == len(keys)
 
         experiment_reference = pcvl.Experiment(circuit)
@@ -306,7 +306,7 @@ class TestDetectorsWithQuantumLayer:
         )
 
         output = layer().squeeze(0)
-        keys = [tuple(key) for key in layer.state_keys()]
+        keys = [tuple(key) for key in layer.state_keys]
         assert output.shape[0] == len(keys)
 
         processor = pcvl.Processor("SLOS", experiment)
@@ -340,7 +340,7 @@ class TestDetectorsWithQuantumLayer:
         )
 
         pnr_output_size = pnr_layer.output_size
-        assert pnr_output_size == len(pnr_layer.state_keys())
+        assert pnr_output_size == len(pnr_layer.state_keys)
 
         experiment = pcvl.Experiment(circuit)
         experiment.detectors[0] = pcvl.Detector.threshold()
@@ -355,7 +355,7 @@ class TestDetectorsWithQuantumLayer:
         )
 
         threshold_output_size = threshold_layer.output_size
-        assert threshold_output_size == len(threshold_layer.state_keys())
+        assert threshold_output_size == len(threshold_layer.state_keys)
         assert threshold_output_size < pnr_output_size
 
     def test_detector_autograd_compatibility(self):
@@ -410,7 +410,7 @@ class TestDetectorsWithQuantumLayer:
         )
 
         output = layer().squeeze(0)
-        keys = layer.state_keys()
+        keys = layer.state_keys
         assert output.shape[0] == len(keys)
 
         processor = pcvl.Processor("SLOS", experiment)
@@ -446,7 +446,7 @@ class TestDetectorsWithQuantumLayer:
         )
 
         layer_probs = layer()
-        layer_keys = layer.state_keys()
+        layer_keys = layer.state_keys
 
         p = pcvl.Processor("SLOS", exp)
         p.with_input(pcvl.BasicState([1, 1, 1, 1]))

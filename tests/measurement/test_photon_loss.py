@@ -25,6 +25,7 @@ Tests for the main QuantumLayer class.
 """
 
 import itertools
+import math
 
 import perceval as pcvl
 import pytest
@@ -53,7 +54,7 @@ class TestPhotonLossWithQuantumLayer:
         )
 
         output = layer()
-        keys = layer.state_keys()
+        keys = layer.state_keys
         expected_keys = {(1, 1), (1, 0), (0, 0), (0, 1), (1, 0), (2, 0), (0, 2)}
         assert set(keys) == expected_keys
         assert torch.allclose(output.sum(dim=1), torch.ones_like(output[:, 0]))
@@ -87,7 +88,7 @@ class TestPhotonLossWithQuantumLayer:
         )
 
         output = layer()
-        keys = layer.state_keys()
+        keys = layer.state_keys
         assert set(keys) == {(1, 1), (2, 0), (0, 2)}
         assert output.shape == (1, 3)
         assert torch.allclose(
@@ -130,7 +131,7 @@ class TestPhotonLossWithQuantumLayer:
         )
         prob_output = prob_layer()
         expectation_output = expectation_layer()
-        keys = prob_layer.state_keys()
+        keys = prob_layer.state_keys
 
         assert prob_output.shape[-1] == len(keys)
         assert expectation_output.shape[-1] == len(keys[0])
@@ -165,7 +166,7 @@ class TestPhotonLossWithQuantumLayer:
             )
 
         output = layer()
-        keys = [tuple(key) for key in layer.state_keys()]
+        keys = [tuple(key) for key in layer.state_keys]
         assert len(keys) == 8  # 2^3 survivals
         assert all(all(value in (0, 1) for value in key) for key in keys)
         assert torch.allclose(
@@ -187,7 +188,7 @@ class TestPhotonLossWithQuantumLayer:
         )
 
         output = layer()
-        keys = layer.state_keys()
+        keys = layer.state_keys
         raw_keys = list(layer.computation_process.simulation_graph.mapped_keys)
 
         assert keys == raw_keys
@@ -203,7 +204,7 @@ class TestPhotonLossWithQuantumLayer:
         )
 
         output = layer()
-        keys = layer.state_keys()
+        keys = layer.state_keys
         raw_keys = list(layer.computation_process.simulation_graph.mapped_keys)
 
         assert keys == raw_keys
@@ -239,9 +240,9 @@ class TestPhotonLossWithQuantumLayer:
         assert torch.allclose(layer_direct(), layer_experiment(), atol=1e-6)
         assert torch.allclose(layer_direct(), layer_experiment_unbunched(), atol=1e-6)
         assert (
-            layer_direct.state_keys()
-            == layer_experiment.state_keys()
-            == layer_experiment_unbunched.state_keys()
+            layer_direct.state_keys
+            == layer_experiment.state_keys
+            == layer_experiment_unbunched.state_keys
         )
 
     def test_photon_loss_incomplete_noise_model(self):
@@ -275,9 +276,9 @@ class TestPhotonLossWithQuantumLayer:
             no_bunching=False,
         )
 
-        keys = base_layer.state_keys()
-        keys_brightness = loss_layer_brightness.state_keys()
-        keys_transmittance = loss_layer_transmittance.state_keys()
+        keys = base_layer.state_keys
+        keys_brightness = loss_layer_brightness.state_keys
+        keys_transmittance = loss_layer_transmittance.state_keys
 
         assert all(sum(key) == 2 for key in keys)
         assert any(sum(key_b) < sum(keys[0]) for key_b in keys_brightness)
@@ -310,7 +311,7 @@ class TestPhotonLossWithQuantumLayer:
         )
 
         output = layer()
-        keys = [tuple(key) for key in layer.state_keys()]
+        keys = [tuple(key) for key in layer.state_keys]
         distribution = dict(zip(keys, output.squeeze(0).tolist(), strict=False))
 
         assert set(distribution) == {(1, 0), (0, 0), (0, 1)}
@@ -327,7 +328,7 @@ class TestPhotonLossWithQuantumLayer:
         )
 
         output_4 = layer_4_photons()
-        keys_4 = layer_4_photons.state_keys()
+        keys_4 = layer_4_photons.state_keys
         prob_disapearance = 0.7**4
         assert set(keys_4) == {
             (1, 0),
@@ -366,8 +367,7 @@ class TestPhotonLossWithQuantumLayer:
         loss_output = loss_layer()
 
         assert torch.count_nonzero(base_output) < torch.count_nonzero(loss_output)
-        # assert loss_layer.output_size > base_layer.output_size
-        assert len(loss_layer.state_keys()) == loss_layer.output_size
+        assert len(loss_layer.state_keys) == loss_layer.output_size
 
         layer_unbunched = ML.QuantumLayer(
             input_size=0,
@@ -383,129 +383,123 @@ class TestPhotonLossWithQuantumLayer:
         )
 
         assert loss_layer_unbunched.output_size > layer_unbunched.output_size
-        assert (
-            len(loss_layer_unbunched.state_keys()) == loss_layer_unbunched.output_size
-        )
+        assert len(loss_layer_unbunched.state_keys) == loss_layer_unbunched.output_size
 
-    '''def test_detector_autograd_compatibility(self):
+    def test_detector_autograd_compatibility(self):
         """Photon loss transforms must preserve autograd support."""
-        #TODO Update
         circuit = pcvl.Circuit(2)
-        theta = pcvl.Parameter("phi")
-        circuit.add((0, 1), pcvl.BS())
+        theta = pcvl.P("phi")
         circuit.add(0, pcvl.PS(theta))
+        circuit.add((0, 1), pcvl.BS())
 
         experiment = pcvl.Experiment(circuit)
-        experiment.noise_model = SimpleNamespace(brightness=[0.9, 0.7])
+        experiment.noise = pcvl.NoiseModel(brightness=0.9, transmittance=0.85)
 
         layer = ML.QuantumLayer(
-            input_size=0,
+            input_size=1,
             experiment=experiment,
             input_state=[1, 1],
-            trainable_parameters=["phi"],
+            input_parameters=["phi"],
             no_bunching=False,
         )
 
+        x = torch.rand(3, 1, requires_grad=True)
         layer.train()
-        output = layer()
-        weights = torch.arange(
-            output.shape[-1], dtype=output.dtype, device=output.device
-        )
-        loss = torch.matmul(output.squeeze(0), weights)
+        probabilities = layer(x)
+        probabilities = probabilities
+        target = torch.tensor([
+            [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        ])
+
+        cel = torch.nn.CrossEntropyLoss()
+        loss = cel(probabilities, target)
         loss.backward()
 
-        assert any(theta_param.grad is not None for theta_param in layer.thetas)
+        for param in layer.parameters():
+            assert param.grad is not None
+            assert not torch.isclose(
+                param.grad, torch.zeros_like(param.grad), atol=1e-6
+            ).all()
+
+        # TODO Add test for trainable parameters as well
 
     def test_simple_experiment_layer_photon_loss_vs_perceval(self):
         """Layer outputs must match manual photon-loss transformation for simple circuits."""
-        #TODO Update
         circuit = pcvl.Circuit(2)
         circuit.add((0, 1), pcvl.BS())
-        base_layer = ML.QuantumLayer(
-            input_size=0,
-            circuit=circuit,
-            input_state=[1, 1],
-            no_bunching=False,
-        )
 
-        survival = [0.75, 0.6]
         experiment = pcvl.Experiment(circuit)
-        experiment.noise_model = SimpleNamespace(brightness=survival, transmittance=1.0)
+        experiment.noise = pcvl.NoiseModel(brightness=0.75, transmittance=0.9)
+
+        input_state = [1, 1]
 
         loss_layer = ML.QuantumLayer(
             input_size=0,
             experiment=experiment,
-            input_state=[1, 1],
+            input_state=input_state,
             no_bunching=False,
         )
 
-        transform = PhotonLossTransform(
-            base_layer.state_keys(),
-            survival,
-            dtype=loss_layer.dtype,
-        )
-        expected = transform(base_layer())
-        expected_map = dict(zip(transform.output_keys(), expected.squeeze(0).tolist()))
-        actual = loss_layer()
-        actual_map = dict(zip(loss_layer.state_keys(), actual.squeeze(0).tolist()))
+        output = loss_layer()
+        keys = loss_layer.state_keys
 
-        assert set(actual_map) == set(expected_map)
-        for key in expected_map:
-            assert pytest.approx(actual_map[key], rel=1e-6, abs=1e-6) == expected_map[key]
+        # Perceval version
+        processor = pcvl.Processor("SLOS", experiment)
+        processor.with_input(pcvl.BasicState(input_state))
+        processor.min_detected_photons_filter(0)
+
+        raw_results = processor.probs()["results"]
+        probability_map = {
+            tuple(int(v) for v in state): float(prob)
+            for state, prob in raw_results.items()
+        }
+
+        reference = torch.tensor(
+            [probability_map.get(key, 0.0) for key in keys],
+            dtype=output.dtype,
+        )
+
+        assert torch.allclose(output, reference, atol=1e-6)
 
     def test_complex_experiment_layer_photon_loss_vs_perceval(self):
         """Photon loss must match manual transform on multi-photon, multi-mode circuits."""
-        # Update
         circuit = pcvl.Circuit(3)
         circuit.add((0, 1), pcvl.BS())
+        circuit.add(0, pcvl.PS(math.pi / 4))
         circuit.add((1, 2), pcvl.BS())
-        circuit.add(0, pcvl.PS(torch.pi / 4))
 
-        base_layer = ML.QuantumLayer(
-            input_size=0,
-            circuit=circuit,
-            input_state=[2, 1, 0],
-            no_bunching=False,
-        )
+        input_state = [2, 1, 0]
 
-        survival = [0.9, 0.4, 0.7]
         experiment = pcvl.Experiment(circuit)
-        experiment.noise_model = SimpleNamespace(brightness=survival, transmittance=[1.0, 0.8, 1.0])
+        experiment.noise = pcvl.NoiseModel(brightness=0.9, transmittance=1.0)
+        experiment.detectors[1] = pcvl.Detector.threshold()
 
         loss_layer = ML.QuantumLayer(
             input_size=0,
             experiment=experiment,
-            input_state=[2, 1, 0],
+            input_state=input_state,
             no_bunching=False,
         )
 
-        per_mode_survival = [b * t for b, t in zip(survival, [1.0, 0.8, 1.0], strict=True)]
-        transform = PhotonLossTransform(
-            base_layer.state_keys(),
-            per_mode_survival,
-            dtype=loss_layer.dtype,
+        output = loss_layer()
+        keys = loss_layer.state_keys
+
+        # Perceval version
+        processor = pcvl.Processor("SLOS", experiment)
+        processor.with_input(pcvl.BasicState(input_state))
+        processor.min_detected_photons_filter(0)
+
+        raw_results = processor.probs()["results"]
+        probability_map = {
+            tuple(int(v) for v in state): float(prob)
+            for state, prob in raw_results.items()
+        }
+
+        reference = torch.tensor(
+            [probability_map.get(key, 0.0) for key in keys],
+            dtype=output.dtype,
         )
-        expected = transform(base_layer())
-        expected_map = dict(zip(transform.output_keys(), expected.squeeze(0).tolist()))
-        actual = loss_layer()
-        actual_map = dict(zip(loss_layer.state_keys(), actual.squeeze(0).tolist()))
 
-        assert set(actual_map) == set(expected_map)
-        for key in expected_map:
-            assert pytest.approx(actual_map[key], rel=1e-6, abs=1e-6) == expected_map[key]'''
-
-
-class TestPhotonLossWithKernels:
-    """Test suite for photon loss integration with Kernels."""
-
-    def test_fidelity_kernel_respects_photon_loss_experiment(self):
-        """FidelityKernel should inherit photon loss from Experiment.NoiseModel provided via FeatureMap."""
-        # TODO
-
-    def test_fidelity_kernel_with_noise_model_vs_without(self):
-        """FidelityKernel supports photon loss via Experiment.NoiseModel."""
-        # TODO
-
-    def test_fidelity_kernel_photon_loss_adjusts_key_space(self):
-        """Photon loss should change the size of the kernel detection basis."""
-        # TODO
+        assert torch.allclose(output, reference, atol=1e-6)
