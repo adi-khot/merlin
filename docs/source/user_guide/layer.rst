@@ -137,7 +137,7 @@ is the one that gives the user the most options when utilizing a QuantumLayer.
    )
 
    probs = layer()
-   detector_keys = layer.state_keys()
+   detector_keys = layer.state_keys
 
 -----------
 Detector integration
