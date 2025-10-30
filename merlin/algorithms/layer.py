@@ -264,7 +264,9 @@ class QuantumLayer(nn.Module):
 
         # Setup DetectorTransform
         self.n_photons = self.computation_process.n_photons
-        raw_keys = self.computation_process.simulation_graph.mapped_keys
+        raw_keys = cast(
+            list[tuple[int, ...]], self.computation_process.simulation_graph.mapped_keys
+        )
         self._raw_output_keys = [self._normalize_output_key(key) for key in raw_keys]
         self._initialize_photon_loss_transform()
         self._initialize_detector_transform()
@@ -345,8 +347,16 @@ class QuantumLayer(nn.Module):
         if self._detector_transform is None:
             raise RuntimeError("Detector transform must be initialised before sizing.")
 
-        # TODO get dist_size if no_bunching is True
-        dist_size = self._detector_transform.output_size
+        if measurement_strategy == MeasurementStrategy.AMPLITUDES:
+            keys = list(self._raw_output_keys)
+        else:
+            keys = (
+                list(self._photon_loss_keys)
+                if self._detector_is_identity
+                else list(self._detector_keys)
+            )
+
+        dist_size = len(keys)
 
         # Determine output size
         if measurement_strategy == MeasurementStrategy.PROBABILITIES:
@@ -362,8 +372,6 @@ class QuantumLayer(nn.Module):
             self._output_size = dist_size
         else:
             raise TypeError(f"Unknown measurement_strategy: {measurement_strategy}")
-
-        keys = self._detector_keys
 
         # Create output mapping
         self.measurement_mapping = OutputMapper.create_mapping(
@@ -666,13 +674,17 @@ class QuantumLayer(nn.Module):
         return self
 
     def state_keys(self):
-        if getattr(self, "_detector_transform", None) is None:
-            return self.computation_process.simulation_graph.mapped_keys
+        """Return the Fock basis associated with the layer outputs."""
+        if (
+            getattr(self, "_photon_loss_transform", None) is None
+            or getattr(self, "_detector_transform", None) is None
+        ):
+            return [self._normalize_output_key(key) for key in self._raw_output_keys]
         if self.measurement_strategy == MeasurementStrategy.AMPLITUDES:
-            return self._raw_output_keys
-        return (
-            self._raw_output_keys if self._detector_is_identity else self._detector_keys
-        )
+            return list(self._raw_output_keys)
+        if self._detector_is_identity:
+            return list(self._photon_loss_keys)
+        return list(self._detector_keys)
 
     @property
     def output_size(self) -> int:

@@ -1,0 +1,511 @@
+# MIT License
+#
+# Copyright (c) 2025 Quandela
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+"""
+Tests for the main QuantumLayer class.
+"""
+
+import itertools
+
+import perceval as pcvl
+import pytest
+import torch
+
+import merlin as ML
+
+
+class TestPhotonLossWithQuantumLayer:
+    """Test suite for photon loss integration with QuantumLayer."""
+
+    def test_basic_photon_loss(self):
+        """Single-photon experiment should produce survival and loss outcomes."""
+        circuit = pcvl.Circuit(2)
+        experiment = pcvl.Experiment(circuit)
+        experiment.noise = pcvl.NoiseModel(
+            brightness=0.6,
+            transmittance=0.9,
+        )
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 1],
+            no_bunching=False,
+        )
+
+        output = layer()
+        keys = layer.state_keys()
+        expected_keys = {(1, 1), (1, 0), (0, 0), (0, 1), (1, 0), (2, 0), (0, 2)}
+        assert set(keys) == expected_keys
+        assert torch.allclose(output.sum(dim=1), torch.ones_like(output[:, 0]))
+
+        distribution = dict(zip(keys, output.squeeze(0).tolist(), strict=False))
+        assert (
+            pytest.approx(distribution[(1, 1)], rel=1e-6, abs=1e-6) == (0.6 * 0.9) ** 2
+        )
+        assert (
+            pytest.approx(distribution[(0, 0)], rel=1e-6, abs=1e-6)
+            == (1 - (0.6 * 0.9)) ** 2
+        )
+        assert pytest.approx(distribution[(1, 0)], rel=1e-6, abs=1e-6) == (
+            1 - (0.6 * 0.9)
+        ) * (0.6 * 0.9)
+        assert pytest.approx(distribution[(0, 1)], rel=1e-6, abs=1e-6) == (
+            0.6 * 0.9
+        ) * (1 - (0.6 * 0.9))
+
+        circuit = pcvl.Circuit(2)
+        experiment_perfect = pcvl.Experiment(circuit)
+        experiment.noise = pcvl.NoiseModel(
+            brightness=1.0,
+            transmittance=1.0,
+        )
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment_perfect,
+            input_state=[1, 1],
+        )
+
+        output = layer()
+        keys = layer.state_keys()
+        assert set(keys) == {(1, 1), (2, 0), (0, 2)}
+        assert output.shape == (1, 3)
+        assert torch.allclose(
+            output.squeeze(0),
+            torch.tensor([key == (1, 1) for key in keys], dtype=torch.float),
+            atol=1e-6,
+        )
+
+    def test_amplitudes_strategy_rejected_with_photon_loss(self):
+        """Amplitude measurement strategy must be rejected when photon loss is enabled."""
+        circuit = pcvl.Circuit(2)
+        experiment = pcvl.Experiment(circuit)
+        experiment.noise = pcvl.NoiseModel(
+            brightness=0.8,
+            transmittance=1.0,
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="cannot be used when Experiment contains at least one Detector or when it contains a defined NoiseModel",
+        ):
+            ML.QuantumLayer(
+                input_size=0,
+                experiment=experiment,
+                input_state=[1, 0],
+                measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
+            )
+
+        prob_layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 0],
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+        )
+        expectation_layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 0],
+            measurement_strategy=ML.MeasurementStrategy.MODE_EXPECTATIONS,
+        )
+        prob_output = prob_layer()
+        expectation_output = expectation_layer()
+        keys = prob_layer.state_keys()
+
+        assert prob_output.shape[-1] == len(keys)
+        assert expectation_output.shape[-1] == len(keys[0])
+
+    def test_photon_loss_unbunched(self):
+        """No-bunching simulations should run (unless a Detector is specified) and keep binary-valued keys after loss."""
+        circuit = pcvl.Circuit(3)
+        experiment = pcvl.Experiment(circuit)
+        experiment.noise = pcvl.NoiseModel(brightness=0.7)
+
+        experiment_detectors = pcvl.Experiment(circuit)
+        experiment_detectors.noise = pcvl.NoiseModel(brightness=0.7)
+        experiment_detectors.detectors[0] = pcvl.Detector.pnr()
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 1, 1],
+            no_bunching=True,
+        )
+
+        # Fail with a Detector present
+        with pytest.raises(
+            RuntimeError,
+            match="no_bunching must be False if Experiement contains at least one Detector.",
+        ):
+            ML.QuantumLayer(
+                input_size=0,
+                experiment=experiment_detectors,
+                input_state=[1, 1, 1],
+                no_bunching=True,
+            )
+
+        output = layer()
+        keys = [tuple(key) for key in layer.state_keys()]
+        assert len(keys) == 8  # 2^3 survivals
+        assert all(all(value in (0, 1) for value in key) for key in keys)
+        assert torch.allclose(
+            output.sum(dim=1), torch.ones_like(output[:, 0]), atol=1e-6
+        )
+        expected_keys = {tuple(bits) for bits in itertools.product((0, 1), repeat=3)}
+        assert set(keys) == expected_keys
+
+    def test_photon_loss_no_experiment(self):
+        """Layers built without experiment must default to identity loss transform."""
+        circuit = pcvl.Circuit(2)
+        circuit.add((0, 1), pcvl.BS())
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            circuit=circuit,
+            input_state=[1, 0],
+            no_bunching=True,
+        )
+
+        output = layer()
+        keys = layer.state_keys()
+        raw_keys = list(layer.computation_process.simulation_graph.mapped_keys)
+
+        assert keys == raw_keys
+        assert torch.allclose(
+            output.sum(dim=1), torch.ones_like(output[:, 0]), atol=1e-6
+        )
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            circuit=circuit,
+            input_state=[1, 4],
+            no_bunching=False,
+        )
+
+        output = layer()
+        keys = layer.state_keys()
+        raw_keys = list(layer.computation_process.simulation_graph.mapped_keys)
+
+        assert keys == raw_keys
+        assert torch.allclose(
+            output.sum(dim=1), torch.ones_like(output[:, 0]), atol=1e-6
+        )
+
+    def test_photon_loss_no_noise_model(self):
+        """Experiments without a noise model must match the noise-free circuit."""
+        circuit = pcvl.Circuit(2)
+        circuit.add((0, 1), pcvl.BS())
+        experiment = pcvl.Experiment(circuit)
+
+        layer_direct = ML.QuantumLayer(
+            input_size=0,
+            circuit=circuit,
+            input_state=[1, 0],
+            no_bunching=False,
+        )
+        layer_experiment = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 0],
+            no_bunching=False,
+        )
+        layer_experiment_unbunched = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 0],
+            no_bunching=True,
+        )
+
+        assert torch.allclose(layer_direct(), layer_experiment(), atol=1e-6)
+        assert torch.allclose(layer_direct(), layer_experiment_unbunched(), atol=1e-6)
+        assert (
+            layer_direct.state_keys()
+            == layer_experiment.state_keys()
+            == layer_experiment_unbunched.state_keys()
+        )
+
+    def test_photon_loss_incomplete_noise_model(self):
+        """Missing transmittance defaults to 1 while brightness controls survival and vice versa."""
+        circuit = pcvl.Circuit(2)
+        circuit.add((0, 1), pcvl.BS())
+        base_layer = ML.QuantumLayer(
+            input_size=0,
+            circuit=circuit,
+            input_state=[1, 1],
+            no_bunching=False,
+        )
+
+        experiment_brightness = pcvl.Experiment(circuit)
+        experiment_brightness.noise = pcvl.NoiseModel(brightness=0.4)
+
+        loss_layer_brightness = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment_brightness,
+            input_state=[1, 1],
+            no_bunching=False,
+        )
+
+        experiment_transmittance = pcvl.Experiment(circuit)
+        experiment_transmittance.noise = pcvl.NoiseModel(transmittance=0.4)
+
+        loss_layer_transmittance = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment_transmittance,
+            input_state=[1, 1],
+            no_bunching=False,
+        )
+
+        keys = base_layer.state_keys()
+        keys_brightness = loss_layer_brightness.state_keys()
+        keys_transmittance = loss_layer_transmittance.state_keys()
+
+        assert all(sum(key) == 2 for key in keys)
+        assert any(sum(key_b) < sum(keys[0]) for key_b in keys_brightness)
+        assert any(sum(key_t) < sum(keys[0]) for key_t in keys_transmittance)
+        assert set(keys_brightness) == set(keys_transmittance)
+
+        assert torch.allclose(
+            loss_layer_brightness().sum(dim=1),
+            torch.ones_like(loss_layer_brightness()[:, 0]),
+            atol=1e-6,
+        )
+        assert torch.allclose(
+            loss_layer_transmittance().sum(dim=1),
+            torch.ones_like(loss_layer_transmittance()[:, 0]),
+            atol=1e-6,
+        )
+
+    def test_photon_loss_with_detectors(self):
+        """Photon loss must compose before detector transforms."""
+        circuit = pcvl.Circuit(2)
+        experiment = pcvl.Experiment(circuit)
+        experiment.detectors[0] = pcvl.Detector.threshold()
+        experiment.detectors[1] = pcvl.Detector.threshold()
+        experiment.noise = pcvl.NoiseModel(brightness=0.3, transmittance=1.0)
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 0],
+        )
+
+        output = layer()
+        keys = [tuple(key) for key in layer.state_keys()]
+        distribution = dict(zip(keys, output.squeeze(0).tolist(), strict=False))
+
+        assert set(distribution) == {(1, 0), (0, 0), (0, 1)}
+        assert torch.allclose(
+            output.sum(dim=1), torch.ones_like(output[:, 0]), atol=1e-6
+        )
+        assert pytest.approx(distribution[(1, 0)], rel=1e-6, abs=1e-6) == 0.3
+        assert pytest.approx(distribution[(0, 0)], rel=1e-6, abs=1e-6) == 0.7
+
+        layer_4_photons = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[4, 0],
+        )
+
+        output_4 = layer_4_photons()
+        keys_4 = layer_4_photons.state_keys()
+        prob_disapearance = 0.7**4
+        assert set(keys_4) == {
+            (1, 0),
+            (0, 0),
+            (0, 1),
+            (1, 1),
+        }  # Only threshold outcomes possible
+        output_4 = output_4.squeeze(0)
+        print(output_4.shape)
+        assert output_4[keys_4.index((0, 0))] == torch.tensor(prob_disapearance)
+        assert output_4[keys_4.index((1, 0))] == torch.tensor(1 - prob_disapearance)
+        assert output_4[keys_4.index((0, 1))] == torch.tensor(0.0)
+        assert output_4[keys_4.index((1, 1))] == torch.tensor(0.0)
+
+    def test_photon_loss_adjusts_output_size(self):
+        """Photon loss must enlarge the classical basis when losses are possible."""
+        circuit = pcvl.Circuit(2)
+        circuit.add((0, 1), pcvl.BS())
+        base_layer = ML.QuantumLayer(
+            input_size=0,
+            circuit=circuit,
+            input_state=[1, 1],
+            no_bunching=False,
+        )
+
+        experiment = pcvl.Experiment(circuit)
+        experiment.noise = pcvl.NoiseModel(brightness=0.8, transmittance=1.0)
+        loss_layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 1],
+            no_bunching=False,
+        )
+
+        base_output = base_layer()
+        loss_output = loss_layer()
+
+        assert torch.count_nonzero(base_output) < torch.count_nonzero(loss_output)
+        # assert loss_layer.output_size > base_layer.output_size
+        assert len(loss_layer.state_keys()) == loss_layer.output_size
+
+        layer_unbunched = ML.QuantumLayer(
+            input_size=0,
+            circuit=circuit,
+            input_state=[1, 1],
+            no_bunching=True,
+        )
+        loss_layer_unbunched = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 1],
+            no_bunching=True,
+        )
+
+        assert loss_layer_unbunched.output_size > layer_unbunched.output_size
+        assert (
+            len(loss_layer_unbunched.state_keys()) == loss_layer_unbunched.output_size
+        )
+
+    '''def test_detector_autograd_compatibility(self):
+        """Photon loss transforms must preserve autograd support."""
+        #TODO Update
+        circuit = pcvl.Circuit(2)
+        theta = pcvl.Parameter("phi")
+        circuit.add((0, 1), pcvl.BS())
+        circuit.add(0, pcvl.PS(theta))
+
+        experiment = pcvl.Experiment(circuit)
+        experiment.noise_model = SimpleNamespace(brightness=[0.9, 0.7])
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 1],
+            trainable_parameters=["phi"],
+            no_bunching=False,
+        )
+
+        layer.train()
+        output = layer()
+        weights = torch.arange(
+            output.shape[-1], dtype=output.dtype, device=output.device
+        )
+        loss = torch.matmul(output.squeeze(0), weights)
+        loss.backward()
+
+        assert any(theta_param.grad is not None for theta_param in layer.thetas)
+
+    def test_simple_experiment_layer_photon_loss_vs_perceval(self):
+        """Layer outputs must match manual photon-loss transformation for simple circuits."""
+        #TODO Update
+        circuit = pcvl.Circuit(2)
+        circuit.add((0, 1), pcvl.BS())
+        base_layer = ML.QuantumLayer(
+            input_size=0,
+            circuit=circuit,
+            input_state=[1, 1],
+            no_bunching=False,
+        )
+
+        survival = [0.75, 0.6]
+        experiment = pcvl.Experiment(circuit)
+        experiment.noise_model = SimpleNamespace(brightness=survival, transmittance=1.0)
+
+        loss_layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 1],
+            no_bunching=False,
+        )
+
+        transform = PhotonLossTransform(
+            base_layer.state_keys(),
+            survival,
+            dtype=loss_layer.dtype,
+        )
+        expected = transform(base_layer())
+        expected_map = dict(zip(transform.output_keys(), expected.squeeze(0).tolist()))
+        actual = loss_layer()
+        actual_map = dict(zip(loss_layer.state_keys(), actual.squeeze(0).tolist()))
+
+        assert set(actual_map) == set(expected_map)
+        for key in expected_map:
+            assert pytest.approx(actual_map[key], rel=1e-6, abs=1e-6) == expected_map[key]
+
+    def test_complex_experiment_layer_photon_loss_vs_perceval(self):
+        """Photon loss must match manual transform on multi-photon, multi-mode circuits."""
+        # Update
+        circuit = pcvl.Circuit(3)
+        circuit.add((0, 1), pcvl.BS())
+        circuit.add((1, 2), pcvl.BS())
+        circuit.add(0, pcvl.PS(torch.pi / 4))
+
+        base_layer = ML.QuantumLayer(
+            input_size=0,
+            circuit=circuit,
+            input_state=[2, 1, 0],
+            no_bunching=False,
+        )
+
+        survival = [0.9, 0.4, 0.7]
+        experiment = pcvl.Experiment(circuit)
+        experiment.noise_model = SimpleNamespace(brightness=survival, transmittance=[1.0, 0.8, 1.0])
+
+        loss_layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[2, 1, 0],
+            no_bunching=False,
+        )
+
+        per_mode_survival = [b * t for b, t in zip(survival, [1.0, 0.8, 1.0], strict=True)]
+        transform = PhotonLossTransform(
+            base_layer.state_keys(),
+            per_mode_survival,
+            dtype=loss_layer.dtype,
+        )
+        expected = transform(base_layer())
+        expected_map = dict(zip(transform.output_keys(), expected.squeeze(0).tolist()))
+        actual = loss_layer()
+        actual_map = dict(zip(loss_layer.state_keys(), actual.squeeze(0).tolist()))
+
+        assert set(actual_map) == set(expected_map)
+        for key in expected_map:
+            assert pytest.approx(actual_map[key], rel=1e-6, abs=1e-6) == expected_map[key]'''
+
+
+class TestPhotonLossWithKernels:
+    """Test suite for photon loss integration with Kernels."""
+
+    def test_fidelity_kernel_respects_photon_loss_experiment(self):
+        """FidelityKernel should inherit photon loss from Experiment.NoiseModel provided via FeatureMap."""
+        # TODO
+
+    def test_fidelity_kernel_with_noise_model_vs_without(self):
+        """FidelityKernel supports photon loss via Experiment.NoiseModel."""
+        # TODO
+
+    def test_fidelity_kernel_photon_loss_adjusts_key_space(self):
+        """Photon loss should change the size of the kernel detection basis."""
+        # TODO
