@@ -111,7 +111,7 @@ class QuantumLayer(nn.Module):
 
         self._validate_kwargs("__init__", kwargs)
 
-        self.device = torch.device(device) if device is not None else None
+        self.device = device
         self.dtype = dtype or torch.float32
         self.input_size = input_size
         self.no_bunching = no_bunching
@@ -626,42 +626,25 @@ class QuantumLayer(nn.Module):
 
     def to(self, *args, **kwargs):
         super().to(*args, **kwargs)
-
-        dtype_arg = kwargs.get("dtype")
-        device_arg = kwargs.get("device")
-
-        if dtype_arg is None and len(args) > 0 and isinstance(args[0], torch.dtype):
-            dtype_arg = args[0]
-        if device_arg is None and len(args) > 0:
-            first = args[0]
-            if isinstance(first, torch.device):
-                device_arg = first
-            elif isinstance(first, str):
-                device_arg = torch.device(first)
-
-        if dtype_arg is not None:
-            self.dtype = dtype_arg
-        if device_arg is not None:
-            self.device = (
-                device_arg
-                if isinstance(device_arg, torch.device)
-                else torch.device(device_arg)
-            )
+        # Manually move any additional tensors
+        device = kwargs.get("device", None)
+        if device is None and len(args) > 0:
+            device = args[0]
+        if device is not None:
+            self.device = device
             self.computation_process.simulation_graph = (
-                self.computation_process.simulation_graph.to(self.device)
+                self.computation_process.simulation_graph.to(device)
+            )
+            self.computation_process.converter = self.computation_process.converter.to(
+                self.dtype, device
             )
 
-        target_device = self.device if self.device is not None else torch.device("cpu")
-        self.computation_process.converter = self.computation_process.converter.to(
-            self.dtype, target_device
-        )
-
-        if self._detector_transform is not None:
-            self._detector_transform = self._detector_transform.to(*args, **kwargs)
+            if self._detector_transform is not None:
+                self._detector_transform = self._detector_transform.to(device)
 
         return self
 
-    def get_output_keys(self):
+    def state_keys(self):
         if getattr(self, "_detector_transform", None) is None:
             return self.computation_process.simulation_graph.mapped_keys
         if self.measurement_strategy == MeasurementStrategy.AMPLITUDES:
