@@ -691,13 +691,24 @@ class QuantumLayer(nn.Module):
 
         # Prepare circuit parameters and any remaining classical inputs
         params = self.prepare_parameters(inputs)
-
-        inferred_state = getattr(self.computation_process, "input_state", None)
+        #TODO: input_state should support StateVector
+        raw_inferred_state = getattr(self.computation_process, "input_state", None)
+        # normalize the retrieved input_state to an optional tensor an
+        inferred_state: torch.Tensor | None
+        if isinstance(raw_inferred_state, torch.Tensor):
+            inferred_state = raw_inferred_state
+        else:
+            inferred_state = None
         amplitudes: torch.Tensor
 
         # TODO: challenge the need for trying/finally here
         try:
             if self.amplitude_encoding:
+                # raise error if amplitude encoding finds a non tensor state
+                if inferred_state is None:
+                    raise TypeError(
+                        "Amplitude encoding requires the computation process input_state to be a tensor."
+                    )
                 # we always use the parallel ebs computation path for amplitude encoding to enable batching
                 if simultaneous_processes is not None:
                     batch_size = simultaneous_processes

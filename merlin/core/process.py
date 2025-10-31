@@ -26,6 +26,7 @@ Quantum computation processes and factories.
 
 import itertools  # Used to enumerate dual-rail occupancy patterns.
 import math
+from typing import Literal, overload
 
 import perceval as pcvl
 import torch
@@ -172,8 +173,20 @@ class ComputationProcess(AbstractComputationProcess):
         amplitudes = self._filter_tensor(amplitudes)
         return amplitudes
 
+    @overload
     def compute_superposition_state(
-        self, parameters: list[torch.Tensor], return_keys: bool = False
+        self, parameters: list[torch.Tensor], *, return_keys: Literal[True]
+    ) -> tuple[list[tuple[int, ...]], torch.Tensor]:
+        ...
+
+    @overload
+    def compute_superposition_state(
+        self, parameters: list[torch.Tensor], *, return_keys: Literal[False] = False
+    ) -> torch.Tensor:
+        ...
+
+    def compute_superposition_state(
+        self, parameters: list[torch.Tensor], *, return_keys: bool = False
     ) -> torch.Tensor | tuple[list[tuple[int, ...]], torch.Tensor]:
         prepared_state = self._prepare_superposition_tensor()
         unitary = self.converter.to_tensor(*parameters)
