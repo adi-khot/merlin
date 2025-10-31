@@ -580,7 +580,6 @@ class QuantumLayer(nn.Module):
         if spec:
             return self._apply_angle_encoding(x, spec)
 
-        # For custom circuits without explicit encoding metadata, apply π scaling
         return x
 
     def _complex_dtype(self) -> torch.dtype:
