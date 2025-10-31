@@ -82,10 +82,8 @@ class FeatureMap:
                     "The provided experiment must be unitary, and must not have post-selection or heralding."
                 )
             if experiment.min_photons_filter:
-                warnings.warn(
-                    "The 'min_photons_filter' from the experiment is currently ignored.",
-                    UserWarning,
-                    stacklevel=2,
+                raise ValueError(
+                    "The provided experiment must not have a minimum photons filter."
                 )
             self.experiment = experiment
             resolved_circuit = experiment.unitary_circuit()
@@ -697,9 +695,11 @@ class FidelityKernel(torch.nn.Module):
         self._detectors, self._empty_detectors = resolve_detectors(self.experiment, m)
 
         # Verify that no Detector was defined in experiement if using no_bunching=True:
+        # TODO: change no_bunching check with computation_space check
+        # if not self._empty_detectors and not ComputationSpace.FOCK:
         if not self._empty_detectors and no_bunching:
             raise RuntimeError(
-                "no_bunching must be False if Experiement contains at least one Detector."
+                "no_bunching must be False if Experiment contains at least one Detector."
             )
 
         self._slos_graph = build_slos_graph(

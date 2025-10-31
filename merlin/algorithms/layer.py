@@ -152,10 +152,8 @@ class QuantumLayer(nn.Module):
 
             # TODO: handle "min_detected_photons" from experiment, currently ignored => will come with post_selection_scheme introduction
             if experiment.min_photons_filter:
-                warnings.warn(
-                    "The 'min_photons_filter' from the experiment is currently ignored.",
-                    UserWarning,
-                    stacklevel=2,
+                raise ValueError(
+                    "The provided experiment must not have a min_photons_filter."
                 )
             self.experiment = experiment
 
@@ -194,9 +192,11 @@ class QuantumLayer(nn.Module):
         self.detectors = self._detectors  # Backward compatibility alias
 
         # Verify that detectors are allowed:
+        # TODO: change no_bunching check with computation_space check
+        # if self._has_custom_detectors and not ComputationSpace.FOCK:
         if self._has_custom_detectors and no_bunching:
             raise RuntimeError(
-                "no_bunching must be False if Experiement contains at least one Detector."
+                "no_bunching must be False if Experiment contains at least one Detector."
             )
         if (
             self._has_custom_detectors

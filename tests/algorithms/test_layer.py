@@ -68,14 +68,14 @@ class TestQuantumLayer:
                 input_state=[1],
             )
 
-    def test_experiment_min_photons_filter_warning(self):
-        """A min_photons_filter configured on the experiment should raise a warning (unsupported)."""
+    def test_experiment_min_photons_filter_error(self):
+        """A min_photons_filter configured on the experiment should raise an error (unsupported)."""
 
         circuit = pcvl.Circuit(1)
         experiment = pcvl.Experiment(circuit)
         experiment.min_detected_photons_filter(1)
 
-        with pytest.warns(UserWarning, match="min_photons_filter"):
+        with pytest.raises(ValueError):
             ML.QuantumLayer(
                 input_size=0,
                 experiment=experiment,

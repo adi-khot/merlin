@@ -78,7 +78,15 @@ Key properties:
 AMPLITUDES
 ---------------
 
-Returns the complex amplitudes directly. This strategy is only meaningful in simulation, because amplitudes cannot be measured or obtained on hardware. Amplitude read-out is available **only** when the underlying experiment uses ideal PNR detectors (i.e. no custom detector transform).
+Returns the complex amplitudes directly. This strategy is only meaningful in 
+simulation, because amplitudes cannot be measured or obtained on hardware. Indeed,
+returning amplitudes is physically non-realizable and should mainly be used for 
+connecting two quantum layers (e.g. when the second one uses amplitude encoding) 
+or for analytical purposes when studying quantum systems.
+
+Adding detectors corresponds to performing a measurement of the quantum state, 
+which collapses it and is therefore incompatible with amplitude retrieval. Thus,
+this measurement strategy **requires that no detectors are defined**.
 
 .. code-block:: python
 

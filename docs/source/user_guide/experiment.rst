@@ -101,8 +101,7 @@ Practical notes
 
 - Experiments used with QuantumLayer **must be unitary** and cannot carry
   Perceval heralding detectors.
-- If at least one detector is defined, set ``no_bunching=False`` when creating
-  the layer. Photon filtering and detector post-processing are incompatible.
+- If at least one detector is defined, the quantum layer needs to have ``computation_space="fock"`` (default value). Photon filtering and detector post-processing are incompatible.
 - Detector assignments use standard Python indexing or the Perceval
   ``.detectors`` mapping interface. Out-of-range indices raise the original
   Perceval error.
