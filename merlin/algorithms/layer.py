@@ -732,7 +732,7 @@ class QuantumLayer(nn.Module):
         must contain the amplitude-encoded input state (either ``[num_states]`` or
         ``[batch_size, num_states]``). Remaining positional arguments are treated
         as classical inputs and processed via the standard encoding pipeline.
-        
+
         Sampling is controlled by:
             - shots (int): number of samples; if 0 or None, return exact amplitudes/probabilities.
             - sampling_method (str): e.g. "multinomial".
