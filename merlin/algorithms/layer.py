@@ -691,7 +691,7 @@ class QuantumLayer(nn.Module):
 
         # Prepare circuit parameters and any remaining classical inputs
         params = self.prepare_parameters(inputs)
-        #TODO: input_state should support StateVector
+        # TODO: input_state should support StateVector
         raw_inferred_state = getattr(self.computation_process, "input_state", None)
         # normalize the retrieved input_state to an optional tensor an
         inferred_state: torch.Tensor | None

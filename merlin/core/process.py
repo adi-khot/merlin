@@ -176,14 +176,12 @@ class ComputationProcess(AbstractComputationProcess):
     @overload
     def compute_superposition_state(
         self, parameters: list[torch.Tensor], *, return_keys: Literal[True]
-    ) -> tuple[list[tuple[int, ...]], torch.Tensor]:
-        ...
+    ) -> tuple[list[tuple[int, ...]], torch.Tensor]: ...
 
     @overload
     def compute_superposition_state(
         self, parameters: list[torch.Tensor], *, return_keys: Literal[False] = False
-    ) -> torch.Tensor:
-        ...
+    ) -> torch.Tensor: ...
 
     def compute_superposition_state(
         self, parameters: list[torch.Tensor], *, return_keys: bool = False

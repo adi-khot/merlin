@@ -246,7 +246,7 @@ class TestOutputSuperposedState:
         sum_values = (input_state**2).sum(dim=-1, keepdim=True)
         input_state = input_state / sum_values
 
-        layer = QuantumLayer(
+        _layer = QuantumLayer(
             circuit=circuit,
             n_photons=n_photons,
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
@@ -291,7 +291,7 @@ class TestOutputSuperposedState:
         input_state = pcvl.StateVector(input_state_component)
         print(input_state)
 
-        layer = QuantumLayer(
+        _layer = QuantumLayer(
             circuit=circuit,
             n_photons=n_photons,
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
