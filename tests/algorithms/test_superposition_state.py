@@ -7,6 +7,7 @@ import math
 from types import MethodType
 
 import perceval as pcvl
+import pytest
 import torch
 
 from merlin.algorithms.layer import QuantumLayer
@@ -288,11 +289,20 @@ class TestOutputSuperposedState:
             layer.output_size,
         )
 
-    def test_superposition_state_input(self):
-        # circuit definition
-        n_modes = 5
-        n_photons = 3
-
+    @pytest.mark.parametrize(
+        "computation_space,n_modes,n_photons",
+        [
+            (ComputationSpace.FOCK, 3, 2),
+            (ComputationSpace.UNBUNCHED, 5, 3),
+            (ComputationSpace.DUAL_RAIL, 6, 3),
+        ],
+    )
+    def test_superposition_state_input(
+        self,
+        computation_space: ComputationSpace,
+        n_modes: int,
+        n_photons: int,
+    ):
         circuit = pcvl.Circuit(n_modes)
         for mode in range(n_modes):
             circuit.add(mode, pcvl.PS(pcvl.P(f"theta_{mode}")))
@@ -305,13 +315,22 @@ class TestOutputSuperposedState:
                 shape=pcvl.InterferometerShape.RECTANGLE,
             ),
         )
-        # StateVector construction
-        expected_states = math.comb(circuit.m, n_photons)
-        input_state = torch.rand(1, expected_states, dtype=torch.float64)
-        input_state = input_state / input_state.norm(
-            p=2, dim=1, keepdim=True
-        ).clamp_min(1e-12)
-        # QuantumLayer construction with superposed input state
+
+        if computation_space is ComputationSpace.DUAL_RAIL:
+            assert n_modes == 2 * n_photons
+            expected_states = 2**n_photons
+        elif computation_space is ComputationSpace.UNBUNCHED:
+            expected_states = math.comb(n_modes, n_photons)
+        else:
+            expected_states = math.comb(n_modes + n_photons - 1, n_photons)
+
+        magnitudes = torch.rand(1, expected_states, dtype=torch.float64)
+        magnitudes = magnitudes / magnitudes.norm(p=2, dim=1, keepdim=True).clamp_min(
+            1e-12
+        )
+        phases = torch.rand(1, expected_states, dtype=torch.float64) * (2 * math.pi)
+        input_state = torch.polar(magnitudes, phases)
+
         amplitude_layer = QuantumLayer(
             circuit=circuit,
             n_photons=n_photons,
@@ -320,14 +339,15 @@ class TestOutputSuperposedState:
             input_parameters=["theta"],
             trainable_parameters=["phi"],
             dtype=torch.float64,
-            computation_space=ComputationSpace.UNBUNCHED,
+            computation_space=computation_space,
         )
 
-        dummy_input = torch.rand(4, n_modes, dtype=torch.float64)
+        classical_dim = amplitude_layer.input_size or n_modes
+        dummy_input = torch.rand(4, classical_dim, dtype=torch.float64)
         dummy_input = dummy_input / dummy_input.norm(
             p=2, dim=-1, keepdim=True
         ).clamp_min(1e-12)
-        # Forward pass with classical input batch
+
         output = amplitude_layer(dummy_input)
         if output.dim() == 2:
             output = output.unsqueeze(1)
@@ -338,7 +358,7 @@ class TestOutputSuperposedState:
             amplitude_layer.output_size,
         )
 
-        coefficients = amplitude_layer.computation_process.input_state
+        coefficients = amplitude_layer.computation_process.input_state.to(output.dtype)
         if coefficients.dim() == 1:
             coefficients = coefficients.unsqueeze(0)
 
@@ -347,13 +367,14 @@ class TestOutputSuperposedState:
         reference_unitary = amplitude_layer.computation_process.converter.to_tensor(
             *amplitude_params
         )
-        reference_keys = (
+        reference_keys = tuple(
             amplitude_layer.computation_process.simulation_graph.mapped_keys
         )
+        amplitude_params_dict = dict(amplitude_layer.named_parameters())
 
         expected_amplitudes = torch.zeros_like(output, dtype=output.dtype)
         for idx, state in enumerate(amplitude_layer.state_keys):
-            layer = QuantumLayer(
+            basis_layer = QuantumLayer(
                 circuit=copy.deepcopy(circuit),
                 n_photons=n_photons,
                 measurement_strategy=MeasurementStrategy.AMPLITUDES,
@@ -361,52 +382,47 @@ class TestOutputSuperposedState:
                 input_parameters=["theta"],
                 trainable_parameters=["phi"],
                 dtype=torch.float64,
-                computation_space=ComputationSpace.UNBUNCHED,
+                computation_space=computation_space,
             )
 
-            load_result = layer.load_state_dict(shared_state, strict=False)
+            load_result = basis_layer.load_state_dict(shared_state, strict=False)
             assert not load_result.missing_keys
             assert not load_result.unexpected_keys
-            amplitude_params_dict = dict(amplitude_layer.named_parameters())
-            for param_name, param in layer.named_parameters():
-                assert torch.allclose(param, amplitude_params_dict[param_name]), (
-                    f"Parameter mismatch for {param_name}"
+            for name, param in basis_layer.named_parameters():
+                assert torch.allclose(param, amplitude_params_dict[name]), (
+                    f"Parameter mismatch for {name}"
                 )
 
-            layer_params = layer.prepare_parameters([dummy_input])
-            layer_unitary = layer.computation_process.converter.to_tensor(*layer_params)
+            layer_params = basis_layer.prepare_parameters([dummy_input])
+            layer_unitary = basis_layer.computation_process.converter.to_tensor(
+                *layer_params
+            )
             assert torch.allclose(
                 layer_unitary, reference_unitary, rtol=1e-6, atol=1e-8
             ), "Unitary mismatch between layers"
             assert (
-                layer.computation_process.simulation_graph.mapped_keys == reference_keys
+                tuple(basis_layer.computation_process.simulation_graph.mapped_keys)
+                == reference_keys
             ), "Simulation graph keys mismatch"
 
-            basis_output = layer(dummy_input)
+            basis_output = basis_layer(dummy_input)
             if basis_output.dim() == 2:
                 basis_output = basis_output.unsqueeze(1)
             elif basis_output.dim() == 1:
                 basis_output = basis_output.unsqueeze(0).unsqueeze(1)
             basis_output = basis_output.to(expected_amplitudes.dtype)
 
-            coefficient = (
-                coefficients[:, idx].to(expected_amplitudes.dtype).unsqueeze(-1)
-            )
-            if coefficient.abs().max() < 1e-10:
+            coefficient = coefficients[:, idx].to(expected_amplitudes.dtype)
+            weight = coefficient.unsqueeze(0).unsqueeze(-1)
+            if weight.abs().max() < 1e-10:
                 continue
 
-            expected_amplitudes += coefficient.unsqueeze(0) * basis_output
+            expected_amplitudes += weight * basis_output
 
-            print(
-                f"State: {state}, Coefficient: {coefficient.squeeze().item()}: basis output {basis_output}"
-            )
-        # normalize expected amplitudes
-        expected_amplitudes = expected_amplitudes / expected_amplitudes.norm(
+        expected_amplitudes /= expected_amplitudes.norm(
             p=2, dim=-1, keepdim=True
         ).clamp_min(1e-12)
-        print("Amplitude output:", output)
-        print("Expected amplitudes:", expected_amplitudes)
-        print(f"Norm of expected amplitudes: {expected_amplitudes.norm(p=2, dim=-1)}")
+
         assert torch.allclose(output, expected_amplitudes, rtol=3e-4, atol=1e-7), (
             "Superposed output deviates from the superposed QuantumLayer results."
         )
