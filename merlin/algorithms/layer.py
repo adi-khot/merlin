@@ -30,6 +30,7 @@ import warnings
 from contextlib import contextmanager
 from typing import Any, cast
 
+import exqalibur as xqlbr
 import perceval as pcvl
 import torch
 import torch.nn as nn
@@ -43,6 +44,7 @@ from ..core.process import ComputationProcessFactory
 from ..measurement import OutputMapper
 from ..measurement.autodiff import AutoDiffProcess
 from ..measurement.strategies import MeasurementStrategy
+from ..pcvl_pytorch.utils import pcvl_to_tensor
 from ..utils.grouping import ModGrouping
 
 
@@ -136,7 +138,7 @@ class QuantumLayer(nn.Module):
         # Custom experiment construction
         experiment: pcvl.Experiment | None = None,
         # For both custom circuits and builder
-        input_state: list[int] | None = None,
+        input_state: list[int] | pcvl.BasicState | pcvl.StateVector | None = None,
         n_photons: int | None = None,
         # only for custom circuits and experiments
         trainable_parameters: list[str] | None = None,
@@ -158,8 +160,6 @@ class QuantumLayer(nn.Module):
         self.device = device
         self.dtype = dtype or torch.float32
         self.input_size = input_size
-        self.no_bunching = no_bunching
-        self.input_state = input_state
         self.amplitude_encoding = amplitude_encoding
 
         # input_size management: input_size can be given only if amplitude_encoding is False
@@ -196,6 +196,16 @@ class QuantumLayer(nn.Module):
             )
 
         self.computation_space = computation_space_value
+
+        if isinstance(input_state, pcvl.BasicState):
+            if not isinstance(input_state, xqlbr.FockState):
+                raise ValueError("BasicState with annotations are not supported")
+            input_state = list(input_state)
+        elif isinstance(input_state, pcvl.StateVector):
+            input_state = pcvl_to_tensor(
+                input_state, self.computation_space, device=device, dtype=dtype
+            )
+        self.input_state = input_state
 
         # execution policy: when True, always simulate locally (do not offload)
         self._force_simulation: bool = False
@@ -846,9 +856,6 @@ class QuantumLayer(nn.Module):
         else:
             raise TypeError(f"Unexpected amplitudes type: {type(amplitudes)}")
 
-        # Optional no-bunching renormalization
-        if self.no_bunching:
-            sum_probs = distribution.sum(dim=1, keepdim=True)
         distribution = amplitudes.real**2 + amplitudes.imag**2
 
         # renormalize distribution and amplitudes for UNBUNCHED and DUAL_RAIL spaces
@@ -932,6 +939,7 @@ class QuantumLayer(nn.Module):
         """
         Export a standalone configuration for remote execution.
         """
+        # TODO: to be revisited - not all options seems to be exported
         self._update_current_params()
 
         if self.experiment is not None:
@@ -971,7 +979,6 @@ class QuantumLayer(nn.Module):
             else None,
             "trainable_parameters": list(self.trainable_parameters),
             "input_parameters": list(self.input_parameters),
-            "no_bunching": bool(self.no_bunching),
             "noise_model": self.noise_model,
         }
         return config

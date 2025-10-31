@@ -138,3 +138,82 @@ Example: Manual Perceval circuit (more control)
    :align: center
 
 See the User guide and Notebooks for more advanced usage and training routines !
+
+Input states and amplitude encoding
+-----------------------------------
+
+The *input state* of a photonic circuit specifies how the photons enter the device. Physically this can be a single
+Fock state (a precise configuration of ``n_photons`` over ``m`` modes) or a superposed/entangled state within the same
+computation space (for example Bell pairs or GHZ states). :class:`~merlin.algorithms.layer.QuantumLayer` accepts the
+following representations:
+
+* :class:`perceval.BasicState` – a single configuration such as ``pcvl.BasicState([1, 0, 1, 0])``;
+* :class:`perceval.StateVector` – an arbitrary superposition of basic states with complex amplitudes;
+* **Deprecated**: Python lists, e.g. ``[1, 0, 1, 0]``. Lists are still recognised for backward compatibility but are
+  immediately converted to their Perceval counterparts—new code should build explicit ``BasicState`` objects.
+
+When ``input_state`` is passed, the layer always injects that photonic state. In more elaborate pipelines you may want
+to cascade circuits and let the output amplitudes of the previous layer become the input state of the next. Merlin
+calls this *amplitude encoding*: the probability amplitudes themselves carry information and are passed to the next
+layer as a tensor. Enabling this behaviour is done with ``amplitude_encoding=True``; in that mode the forward input of
+``QuantumLayer`` is the complex photonic state.
+
+The snippet below prepares a dual-rail Bell state as the initial condition and evaluates a batch of classical parameters:
+
+.. code-block:: python
+
+    import torch
+    import perceval as pcvl
+    from merlin.algorithms.layer import QuantumLayer
+    from merlin.core import ComputationSpace
+    from merlin.measurement.strategies import MeasurementStrategy
+
+    circuit = pcvl.Unitary(pcvl.Matrix.random_unitary(4))  # some haar-random 4-mode circuit
+
+    bell = pcvl.StateVector()
+    bell += pcvl.BasicState([1, 0, 1, 0])
+    bell += pcvl.BasicState([0, 1, 0, 1])
+    print(bell) # bell is a state vector of 2 photons in 4 modes
+
+    layer = QuantumLayer(
+        circuit=circuit,
+        n_photons=2,
+        input_state=bell,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
+        computation_space=ComputationSpace.DUAL_RAIL,
+    )
+
+    x = torch.rand(10, circuit.m)  # batch of classical parameters
+    amplitudes = layer(x)
+    assert amplitudes.shape == (10, 2**2)
+
+For comparison, the ``amplitude_encoding`` variant supplies the photonic state during the forward pass:
+
+.. code-block:: python
+
+    import torch
+    import perceval as pcvl
+    from merlin.algorithms.layer import QuantumLayer
+    from merlin.core import ComputationSpace
+
+    circuit = pcvl.Circuit(3)
+
+    layer = QuantumLayer(
+        circuit=circuit,
+        n_photons=2,
+        amplitude_encoding=True,
+        computation_space=ComputationSpace.UNBUNCHED,
+        dtype=torch.cdouble,
+    )
+
+    prepared_states = torch.tensor(
+        [[1.0 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j],
+         [0.0 + 0.0j, 0.0 + 0.0j, 1.0 + 0.0j]],
+        dtype=torch.cdouble,
+    )
+
+    out = layer(prepared_states)
+
+In the first example the circuit always starts from ``bell``; in the second, each row of ``prepared_states`` represents a
+different logical photonic state that flows through the layer. This separation allows you to mix classical angle
+encoding with fully quantum, amplitude-based data pipelines.

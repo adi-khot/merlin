@@ -16,14 +16,14 @@ from merlin.measurement.strategies import MeasurementStrategy
 from merlin.utils.combinadics import Combinadics
 
 
-def classical_method(layer, input_state):
+def classical_method(layer, input_state, *x):
     output_classical = torch.zeros(1, layer.output_size)
     dtype = layer.computation_process.simulation_graph.prev_amplitudes.dtype
     output_classical = output_classical.to(dtype)
 
     for key, value in input_state.items():
         layer.computation_process.input_state = key
-        _ = layer()
+        _ = layer(*x)
 
         # retrieve amplitudes from the computation graph
         amplitudes = layer.computation_process.simulation_graph.prev_amplitudes
@@ -427,7 +427,7 @@ class TestOutputSuperposedState:
             "Superposed output deviates from the superposed QuantumLayer results."
         )
 
-    """def test_superposition_state_statevector(self):
+    def test_superposition_state_statevector(self):
         n_modes = 10
         n_photons = 5
 
@@ -447,25 +447,37 @@ class TestOutputSuperposedState:
         combinadics = Combinadics(ComputationSpace.DUAL_RAIL, n_photons, n_modes)
 
         # build a superposition of 5 basic states
-        input_state_component = []
+        sv = pcvl.StateVector()
         for idx in torch.randint(0, combinadics.compute_space_size(), (5,)):
-            input_state_component.append(
-                pcvl.BasicState(combinadics.index_to_fock(idx))
+            sv += ((idx % 2) and -1 or 1) * pcvl.BasicState(
+                combinadics.index_to_fock(idx)
             )
 
-        input_state = pcvl.StateVector(input_state_component)
-        print(input_state)
-
-        _layer = QuantumLayer(
+        layer = QuantumLayer(
             circuit=circuit,
             n_photons=n_photons,
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
-            input_state=input_state,
+            input_state=sv,
             trainable_parameters=["phi"],
             input_parameters=["theta"],
             dtype=torch.float64,
             computation_space=ComputationSpace.DUAL_RAIL,
         )
 
-        # compare to classical (method above)
-        assert False"""
+        # input is a batch of 10 tensor
+        x = torch.rand(10, n_modes)
+        out = layer(x)
+
+        assert out.shape == (10, combinadics.compute_space_size())
+
+        # now check that we could have obtained this probability by weighted adding of probability amplitude of each component
+        dict_sv = {tuple(k): v for k, v in sv.unnormalized_iterator()}
+
+        for k in range(x.shape[0]):
+            x_k = x[k]
+            out_k = out[k]
+            expected_out_k = classical_method(layer, dict_sv, x_k)
+
+            assert torch.allclose(out_k, expected_out_k, rtol=3e-4, atol=1e-7), (
+                "output between classical and superposition method differ"
+            )

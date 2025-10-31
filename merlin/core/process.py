@@ -380,6 +380,8 @@ class ComputationProcess(AbstractComputationProcess):
 
         if final_amplitudes.shape[0] == 1:
             final_amplitudes = final_amplitudes.squeeze(0)
+        if final_amplitudes.ndim == 3 and final_amplitudes.shape[1] == 1:
+            final_amplitudes = final_amplitudes.squeeze(1)
 
         # Matching the logical basis prevents downstream shape changes when
         # switching computation spaces

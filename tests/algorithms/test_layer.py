@@ -449,11 +449,10 @@ class TestQuantumLayer:
         circuit.add(1, pcvl.PS(pcvl.P("phi2")))  # Another phase shifter
 
         # Define input state (where photons are placed)
-        input_state = [1, 0, 0]  # 1 photon in first mode
+        input_state = pcvl.BasicState([1, 0, 0])  # 1 photon in first mode
 
         # Create QuantumLayer with custom circuit
         layer = ML.QuantumLayer(
-            input_size=0,  # No input parameters
             circuit=circuit,
             input_state=input_state,
             trainable_parameters=["phi"],  # Parameters to train (by prefix)
@@ -581,3 +580,21 @@ class TestQuantumLayer:
         o = layer.forward(torch.rand(batch_size, m))
 
         assert torch.allclose(torch.sum(o.abs() ** 2, dim=1), torch.ones(batch_size))
+
+    def test_basicstate_input(self):
+        bs1 = pcvl.BasicState("|1,0,1>")
+        _layer = ML.QuantumLayer(
+            circuit=pcvl.Circuit(bs1.m),
+            computation_space=ML.ComputationSpace.FOCK,
+            input_state=bs1,
+        )
+        # An annotated BasicState should raise as annotations are not supported
+        bs_annot = pcvl.BasicState("|{a:0},0,1>")
+        with pytest.raises(
+            ValueError, match="BasicState with annotations are not supported"
+        ):
+            _ = ML.QuantumLayer(
+                circuit=pcvl.Circuit(bs_annot.m),
+                computation_space=ML.ComputationSpace.FOCK,
+                input_state=bs_annot,
+            )
