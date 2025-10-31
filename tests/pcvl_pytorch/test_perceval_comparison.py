@@ -95,11 +95,15 @@ class TestPercevalComparison:
         # Get MerLin probability distribution (deterministic, no sampling)
         with torch.no_grad():
             merlin_params = merlin_layer.prepare_parameters([dummy_input])
-            unitary = merlin_layer.computation_process.converter.to_tensor(*merlin_params)
+            unitary = merlin_layer.computation_process.converter.to_tensor(
+                *merlin_params
+            )
 
             # exact amplitudes via simulation graph
             keys, merlin_distribution = (
-                merlin_layer.computation_process.simulation_graph.compute(unitary, input_state)
+                merlin_layer.computation_process.simulation_graph.compute(
+                    unitary, input_state
+                )
             )
             probabilities = merlin_distribution.real**2 + merlin_distribution.imag**2
             sum_probs = probabilities.sum(dim=1, keepdim=True)
@@ -109,7 +113,8 @@ class TestPercevalComparison:
             if valid_entries.any():
                 probabilities = torch.where(
                     valid_entries,
-                    probabilities / torch.where(valid_entries, sum_probs, torch.ones_like(sum_probs)),
+                    probabilities
+                    / torch.where(valid_entries, sum_probs, torch.ones_like(sum_probs)),
                     probabilities,
                 )
 
