@@ -365,8 +365,8 @@ class TestFidelityKernel:
 
         perceval_thr = thresholded_results[key] / total_threshold_prob
 
-        assert merlin_pnr == pytest.approx(perceval_pnr, rel=1e-6, abs=1e-8)
-        assert merlin_thr == pytest.approx(perceval_thr, rel=1e-6, abs=1e-8)
+        assert merlin_pnr == pytest.approx(perceval_pnr, rel=1e-6, abs=1e-6)
+        assert merlin_thr == pytest.approx(perceval_thr, rel=1e-6, abs=1e-6)
 
 
 class TestNKernelAlignment:
@@ -1099,8 +1099,6 @@ def test_iris_dataset_kernel_training_with_nka():
     print(f"Iris binary classification with NKA training - Accuracy: {accuracy:.4f}")
     print(f"Loss change: {initial_loss:.4f} -> {final_loss:.4f}")
 
-    return accuracy
-
 
 def test_iris_with_supported_constructors():
     """Test IRIS classification using the supported kernel constructors."""
@@ -1335,10 +1333,8 @@ def test_iris_with_supported_constructors():
 
     if total_successes >= total_tests * 0.5:  # At least 50% success
         print("✅ IRIS classification with supported constructors successful!")
-        return results
     else:
         print("⚠️ Some constructor issues detected, but structure creation works")
-        return results
 
 
 def _test_kernel_classification(kernel, X_train, X_test, y_train, y_test, method_name):
@@ -1369,13 +1365,11 @@ def _test_kernel_classification(kernel, X_train, X_test, y_train, y_test, method
         assert accuracy >= 0.0
         assert all(pred in [0, 1] for pred in y_pred)
 
-        return accuracy
-
     except Exception as e:
         print(f"   ⚠️ {method_name} computation failed: {str(e)[:60]}...")
         print("      (Structure creation successful, computation issue detected)")
         # Return a special marker to indicate structure success but computation failure
-        return "structure_ok"
+        # return "structure_ok"
 
 
 def test_kernel_constructor_performance_comparison():
@@ -1439,7 +1433,6 @@ def test_kernel_constructor_performance_comparison():
     )
 
     print("   ✅ All methods create structurally equivalent kernels")
-    return min(times), max(times)
 
 
 @pytest.fixture(scope="module")

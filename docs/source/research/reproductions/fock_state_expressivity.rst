@@ -64,20 +64,24 @@ The key role of MerLin in our implementations is to give us access to trainable 
 
 .. code-block:: python
 
+   import torch.nn as nn
    import merlin as ml
 
    vqc = ml.QuantumLayer(
                 input_size=1,
-                output_size=1,
                 circuit=create_vqc_general(3, 1),
                 trainable_parameters=["theta"],
                 input_parameters=["px"],
-                input_state= initial_state,
+                input_state=initial_state,
                 no_bunching=False,
-                output_mapping_strategy=OutputMappingStrategy.LINEAR,
+                measurement_strategy=ml.MeasurementStrategy.PROBABILITIES,
             )
    # Assemble with a previously defined scale_layer
-   model = nn.Sequential(scale_layer, vqc)
+   model = nn.Sequential(
+       scale_layer,
+       vqc,
+       nn.Linear(vqc.output_size, 1),
+   )
 
 Interactive Exploration
 =======================

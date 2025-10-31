@@ -15,7 +15,7 @@ Merlin bridges the gap between physical quantum circuits and high-level machine 
 2. **Photonic Backend**: Mathematical models of quantum circuits with configurable components
 3. **Ansatz** (:mod:`merlin.builder.ansatz`): Logical circuit templates that define shape of quantum circuits to be implemented on the backend
 4. **Encoding**: Strategies for mapping classical features to quantum parameters
-5. **Output Mapping**: Methods for converting quantum states to classical outputs
+5. **Measurement Strategy**: Strategies for converting quantum outputs to classical outputs
 6. **QuantumLayer**: High-level PyTorch interface that combines all these concepts
 
 Let's explore each level in detail.
@@ -137,23 +137,26 @@ Different patterns create different types of quantum interference and correlatio
 
 For detailed encoding strategies and optimization techniques, see :doc:`../user_guide/encoding`.
 
-5. Output Mapping: Quantum-to-Classical Conversion
+5. Measurement Strategy: Quantum-to-Classical Conversion
 ==================================================
 
-**Output Mapping** converts quantum measurement results (probability distributions) into classical neural network activations.
+**Measurement Strategy** converts quantum measurement results (probability distributions or amplitudes) into classical outputs.
 
-Quantum circuits produce probability distributions over possible photon configurations. Output mapping strategies determine how these probabilities become the classical outputs your PyTorch model sees.
+Quantum circuits produce probability distributions or amplitudes (in simulation) over possible photon configurations. Measurement strategy determines which formatting to use.
 
 .. code-block:: python
 
-    # Common output mapping strategies
-    ML.OutputMappingStrategy.LINEAR      # Learnable linear combination (most flexible)
-    ML.OutputMappingStrategy.LEXGROUPING # Groups probabilities by quantum structure
-    ML.OutputMappingStrategy.NONE        # Direct quantum probabilities
+    # Common measurement strategies
+    ML.MeasurementStrategy.PROBABILITIES  # Default: full Fock distribution
+    ML.MeasurementStrategy.MODE_EXPECTATIONS   # Per-mode photon statistics
+    ML.MeasurementStrategy.AMPLITUDES       # Complex amplitudes (simulation only)
 
-**Key Concept**: Output mapping bridges the gap between quantum measurements and classical neural network expectations. The choice affects both the interpretability and expressivity of your quantum layer.
+To reduce the dimensionality of the Fock distribution after measurement, compose your layer with a grouping
+:class:`~merlin.utils.grouping.LexGrouping` or :class:`~merlin.utils.grouping.ModGrouping`.
 
-For detailed comparisons and selection guidelines, see :doc:`../user_guide/output_mappings`.
+**Key Concept**: Measurement strategy bridges the gap between quantum measurements and classical outputs. The choice affects both the interpretability and expressivity of your quantum layer.
+
+For detailed comparisons and selection guidelines, see :doc:`../user_guide/measurement_strategy` and :doc:`../user_guide/grouping`.
 
 6. High-Level Interface: QuantumLayer
 =====================================
@@ -165,12 +168,17 @@ The **QuantumLayer** combines all these concepts into a PyTorch-compatible inter
     # High-level interface combining all concepts
     quantum_layer = ML.QuantumLayer(
         input_size=4,                                              # Classical input dimension
-        output_size=3,                                             # Desired output dimension
         circuit=circuit,                                           # Photonic backend + ansatz
         trainable_parameters=["theta"],                            # Which parameters to train
         input_parameters=["px"],                                   # Encoding parameters
         input_state=[1, 0, 1, 0, 1, 0],                            # Initial photon state
-        output_mapping_strategy=ML.OutputMappingStrategy.LINEAR    # Output mapping choice
+        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+    )
+
+    # Optional: down-sample the Fock distribution to 3 features
+    mapped_layer = nn.Sequential(
+        quantum_layer,
+        nn.Linear(quantum_layer.output_size, 3),
     )
 
 Using the Experiment Interface
@@ -193,8 +201,12 @@ For most users, Merlin provides a simplified interface that handles these comple
     # Creates quantum layer automatically
     quantum_layer = experiment.create_layer(
         input_size=4,
-        output_size=3,
-        output_mapping_strategy=ML.OutputMappingStrategy.LINEAR
+        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+    )
+
+    post_processing = nn.Sequential(
+        quantum_layer,
+        nn.Linear(quantum_layer.output_size, 3),
     )
 
 Putting It All Together
@@ -224,10 +236,13 @@ Here's how all these concepts work together in practice:
                 use_bandwidth_tuning=True                  # Learnable encoding scaling
             )
 
-            self.quantum_layer = experiment.create_layer(
+            quantum_core = experiment.create_layer(
                 input_size=4,
-                output_size=6,
-                output_mapping_strategy=ML.OutputMappingStrategy.LINEAR  # Flexible output mapping
+                measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+            )
+            self.quantum = nn.Sequential(
+                quantum_core,
+                ML.LexGrouping(quantum_core.output_size, 6),
             )
 
             # Classical output
@@ -236,21 +251,21 @@ Here's how all these concepts work together in practice:
         def forward(self, x):
             x = self.classical_input(x)
             x = torch.sigmoid(x)           # Normalize for quantum encoding
-            x = self.quantum_layer(x)      # Quantum transformation
+            x = self.quantum(x)            # Quantum transformation
             return self.classifier(x)
 
-    # The quantum layer automatically handles:
+    # The quantum stack automatically handles:
     # - Photonic backend simulation
     # - Classical-to-quantum encoding
     # - Quantum computation
-    # - Quantum-to-classical output mapping
+    # - Quantum-to-classical measurement (plus optional grouping)
 
 Design Guidelines
 =================
 
 When choosing configurations, consider these general principles:
 
-**Start Simple**: Begin with default settings (SERIES ansatz, LINEAR output mapping) and adjust based on performance.
+**Start Simple**: Begin with default settings (SERIES ansatz, ``PROBABILITIES`` measurement plus a linear head) and adjust based on performance.
 
 **Match Complexity to Problem**:
 
@@ -262,7 +277,7 @@ When choosing configurations, consider these general principles:
 - Limited resources → smaller circuits, PARALLEL ansatz
 - More resources available → larger circuits, more expressive ansatz
 
-**Experiment Systematically**: The quantum advantage often comes from the right combination of ansatz, encoding, and output mapping for your specific problem.
+**Experiment Systematically**: The quantum advantage often comes from the right combination of ansatz, encoding, measurement strategy, and optional grouping for your specific problem.
 
 For detailed optimization strategies and advanced configurations, see the :doc:`../user_guide/index` section.
 
@@ -272,7 +287,7 @@ Next Steps
 Now that you understand the conceptual hierarchy:
 
 1. **Start Simple**: Begin with the Experiment interface and default settings
-2. **Experiment**: Try different ansatz types and output mappings for your use case
+2. **Experiment**: Try different ansatz types, measurement strategies, and grouping modules for your use case
 3. **Optimize**: Tune circuit size and encoding strategies based on performance
 4. **Advanced Usage**: Explore custom circuit definitions when needed
 

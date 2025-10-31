@@ -24,21 +24,15 @@
 Robustness and integration tests for Merlin.
 """
 
-import pytest
 import torch
 import torch.nn as nn
 
 import merlin as ML
 
-ANSATZ_SKIP = pytest.mark.skip(
-    reason="Legacy ansatz-based QuantumLayer API removed; test pending migration."
-)
-
 
 class TestRobustness:
     """Test suite for robustness and edge cases."""
 
-    @ANSATZ_SKIP
     def test_large_batch_sizes(self):
         """Test handling of large batch sizes."""
 
@@ -49,22 +43,22 @@ class TestRobustness:
 
         layer = ML.QuantumLayer(
             input_size=2,
-            output_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
+
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
         # Test with large batch
         large_batch_size = 1000
         x = torch.rand(large_batch_size, 2)
 
-        output = layer(x)
+        output = model(x)
 
         assert output.shape == (large_batch_size, 3)
         assert torch.all(torch.isfinite(output))
 
-    @ANSATZ_SKIP
     def test_extreme_input_values(self):
         """Test handling of extreme input values."""
 
@@ -75,11 +69,12 @@ class TestRobustness:
 
         layer = ML.QuantumLayer(
             input_size=2,
-            output_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
+
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
         # Test boundary values
         boundary_inputs = torch.tensor([
@@ -89,12 +84,11 @@ class TestRobustness:
             [1.0, 0.0],  # Mixed reverse
         ])
 
-        output = layer(boundary_inputs)
+        output = model(boundary_inputs)
 
         assert output.shape == (4, 3)
         assert torch.all(torch.isfinite(output))
 
-    @ANSATZ_SKIP
     def test_numerical_stability(self):
         """Test numerical stability with repeated computations."""
 
@@ -105,11 +99,12 @@ class TestRobustness:
 
         layer = ML.QuantumLayer(
             input_size=2,
-            output_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
+
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
         x = torch.rand(5, 2)
 
@@ -117,14 +112,13 @@ class TestRobustness:
         outputs = []
         for _ in range(10):
             with torch.no_grad():
-                output = layer(x)
+                output = model(x)
                 outputs.append(output)
 
         # All outputs should be identical (deterministic)
         for i in range(1, len(outputs)):
             assert torch.allclose(outputs[0], outputs[i], atol=1e-6)
 
-    @ANSATZ_SKIP
     def test_gradient_accumulation(self):
         """Test gradient accumulation over multiple batches."""
 
@@ -135,17 +129,18 @@ class TestRobustness:
 
         layer = ML.QuantumLayer(
             input_size=2,
-            output_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
+
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
         # Accumulate gradients over multiple batches
         total_loss = 0
         for _ in range(3):
             x = torch.rand(4, 2, requires_grad=True)
-            output = layer(x)
+            output = model(x)
             loss = output.sum()
             loss.backward()
             total_loss += loss.item()
@@ -159,7 +154,6 @@ class TestRobustness:
 
         assert param_count > 0, "No parameters have gradients"
 
-    @ANSATZ_SKIP
     def test_device_compatibility(self):
         """Test CPU compatibility (GPU testing would require CUDA)."""
 
@@ -170,20 +164,22 @@ class TestRobustness:
 
         layer_cpu = ML.QuantumLayer(
             input_size=2,
-            output_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
             device=torch.device("cpu"),
+        )
+        model_cpu = torch.nn.Sequential(
+            layer_cpu,
+            torch.nn.Linear(layer_cpu.output_size, 3, device=torch.device("cpu")),
         )
 
         x_cpu = torch.rand(3, 2, device="cpu")
-        output_cpu = layer_cpu(x_cpu)
+        output_cpu = model_cpu(x_cpu)
 
         assert output_cpu.device.type == "cpu"
         assert output_cpu.shape == (3, 3)
 
-    @ANSATZ_SKIP
     def test_different_dtypes(self):
         """Test different data types."""
 
@@ -195,29 +191,31 @@ class TestRobustness:
 
         layer_f32 = ML.QuantumLayer(
             input_size=2,
-            output_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
             dtype=torch.float32,
         )
-
+        model_f32 = torch.nn.Sequential(
+            layer_f32, torch.nn.Linear(layer_f32.output_size, 3, dtype=torch.float32)
+        )
         x_f32 = torch.rand(2, 2, dtype=torch.float32)
-        output_f32 = layer_f32(x_f32)
+        output_f32 = model_f32(x_f32)
         assert output_f32.dtype == torch.float32
 
         # Test float64
         layer_f64 = ML.QuantumLayer(
             input_size=2,
-            output_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
             dtype=torch.float64,
         )
-
+        model_f64 = torch.nn.Sequential(
+            layer_f64, torch.nn.Linear(layer_f64.output_size, 3, dtype=torch.float64)
+        )
         x_f64 = torch.rand(2, 2, dtype=torch.float64)
-        output_f64 = layer_f64(x_f64)
+        output_f64 = model_f64(x_f64)
 
         # The output dtype might be influenced by the underlying quantum simulation
         # So we'll be more flexible and just check that it's a valid float type
@@ -230,7 +228,6 @@ class TestRobustness:
         assert torch.all(torch.isfinite(output_f64))
         assert output_f64.shape == (2, 3)
 
-    @ANSATZ_SKIP
     def test_parameter_initialization_consistency(self):
         """Test that parameter initialization is consistent."""
 
@@ -241,29 +238,32 @@ class TestRobustness:
 
         # Create multiple layers with same random seed
         torch.manual_seed(42)
-
         layer1 = ML.QuantumLayer(
             input_size=2,
-            output_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
+
+        model1 = torch.nn.Sequential(layer1, torch.nn.Linear(layer1.output_size, 3))
+
         torch.manual_seed(42)
         layer2 = ML.QuantumLayer(
             input_size=2,
-            output_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
+
+        model2 = torch.nn.Sequential(layer2, torch.nn.Linear(layer2.output_size, 3))
 
         # Parameters should be identical
-        assert len(list(layer1.parameters())) == len(list(layer2.parameters())), (
-            "Mismatch in number of parameters between layer1 and layer2"
+        assert len(list(model1.parameters())) == len(list(model2.parameters())), (
+            "Mismatch in number of parameters between model1 and model2"
         )
+        for p1, p2 in zip(model1.parameters(), model2.parameters(), strict=True):
+            assert torch.allclose(p1, p2, atol=1e-6)
 
-    @ANSATZ_SKIP
     def test_memory_efficiency(self):
         """Test memory usage doesn't grow unexpectedly."""
 
@@ -274,17 +274,17 @@ class TestRobustness:
 
         layer = ML.QuantumLayer(
             input_size=2,
-            output_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
         )
+
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
         # Run many forward passes
         for _ in range(100):
             x = torch.rand(10, 2)
             with torch.no_grad():
-                output = layer(x)
+                output = model(x)
                 del output, x  # Explicit cleanup
 
         # Should complete without memory issues
@@ -293,7 +293,6 @@ class TestRobustness:
 class TestIntegrationScenarios:
     """Integration tests for realistic usage scenarios."""
 
-    @ANSATZ_SKIP
     def test_training_loop_simulation(self):
         """Simulate a realistic training loop."""
         # Create a simple dataset
@@ -314,12 +313,10 @@ class TestIntegrationScenarios:
 
                 self.quantum = ML.QuantumLayer(
                     input_size=3,
-                    output_size=4,
                     input_state=[1, 0, 1, 0],
                     builder=builder,
-                    output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
                 )
-                self.classifier = nn.Linear(4, 2)
+                self.classifier = nn.Linear(self.quantum.output_size, 2)
 
             def forward(self, x):
                 x = torch.sigmoid(x)  # Normalize for quantum layer
@@ -357,7 +354,6 @@ class TestIntegrationScenarios:
         # Loss should decrease (learning is happening)
         assert final_loss < initial_loss, "Model should learn and reduce loss"
 
-    @ANSATZ_SKIP
     def test_hybrid_architecture(self):
         """Test complex hybrid classical-quantum architecture."""
 
@@ -380,14 +376,14 @@ class TestIntegrationScenarios:
 
                 self.quantum1 = ML.QuantumLayer(
                     input_size=3,
-                    output_size=4,
                     input_state=[1, 0, 1, 0],
                     builder=builder,
-                    output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
                 )
 
                 # Middle classical processing
-                self.mid_classical = nn.Sequential(nn.Linear(4, 5), nn.ReLU())
+                self.mid_classical = nn.Sequential(
+                    nn.Linear(self.quantum1.output_size, 5), nn.ReLU()
+                )
 
                 # Second quantum layer (reservoir)
                 builder = ML.CircuitBuilder(n_modes=5)
@@ -398,14 +394,12 @@ class TestIntegrationScenarios:
                 builder.add_entangling_layer(trainable=True, name="U2")
                 self.quantum2 = ML.QuantumLayer(
                     input_size=4,
-                    output_size=3,
                     input_state=[1, 0, 1, 0, 0],
                     builder=builder,
-                    output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
                 )
                 self.quantum2.requires_grad_(False)  # Freeze reservoir layer
                 # Final classical layer
-                self.final_classical = nn.Linear(3, 2)
+                self.final_classical = nn.Linear(self.quantum2.output_size, 2)
 
             def forward(self, x):
                 x = self.pre_classical(x)
@@ -438,7 +432,6 @@ class TestIntegrationScenarios:
 
         assert trainable_params > 0, "Should have trainable parameters with gradients"
 
-    @ANSATZ_SKIP
     def test_ensemble_quantum_models(self):
         """Test ensemble of quantum models."""
 
@@ -455,12 +448,14 @@ class TestIntegrationScenarios:
                     builder.add_entangling_layer(trainable=True, name="U2")
                     layer = ML.QuantumLayer(
                         input_size=2,
-                        output_size=3,
                         input_state=[1, 0, 1, 0],
                         builder=builder,
-                        output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
                     )
-                    self.models.append(layer)
+
+                    model = torch.nn.Sequential(
+                        layer, torch.nn.Linear(layer.output_size, 3)
+                    )
+                    self.models.append(model)
 
             def forward(self, x):
                 outputs = []
@@ -495,7 +490,6 @@ class TestIntegrationScenarios:
                     individual_outputs[i], individual_outputs[j], atol=1e-3
                 ), f"Models {i} and {j} produced identical outputs"
 
-    @ANSATZ_SKIP
     def test_saving_and_loading(self):
         """Test model saving and loading."""
 
@@ -505,28 +499,32 @@ class TestIntegrationScenarios:
         builder.add_entangling_layer(trainable=True, name="U2")
         original_layer = ML.QuantumLayer(
             input_size=2,
-            output_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
+        )
+
+        model = torch.nn.Sequential(
+            original_layer, torch.nn.Linear(original_layer.output_size, 3)
         )
 
         x = torch.rand(3, 2)
-        original_output = original_layer(x)
+        original_output = model(x)
 
         # Save model state
-        state_dict = original_layer.state_dict()
+        state_dict = model.state_dict()
 
         # Create new model and load state
         new_layer = ML.QuantumLayer(
             input_size=2,
-            output_size=3,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            output_mapping_strategy=ML.OutputMappingStrategy.GROUPING,
         )
-        new_layer.load_state_dict(state_dict)
+
+        new_model = torch.nn.Sequential(
+            new_layer, torch.nn.Linear(new_layer.output_size, 3)
+        )
+        new_model.load_state_dict(state_dict)
 
         # Test that outputs are identical
-        new_output = new_layer(x)
+        new_output = new_model(x)
         assert torch.allclose(original_output, new_output, atol=1e-6)
