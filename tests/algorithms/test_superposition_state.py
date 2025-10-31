@@ -318,11 +318,11 @@ class TestOutputSuperposedState:
 
         if computation_space is ComputationSpace.DUAL_RAIL:
             assert n_modes == 2 * n_photons
-            expected_states = 2**n_photons
         elif computation_space is ComputationSpace.UNBUNCHED:
-            expected_states = math.comb(n_modes, n_photons)
-        else:
-            expected_states = math.comb(n_modes + n_photons - 1, n_photons)
+            assert n_photons <= n_modes
+
+        combinadics = Combinadics(computation_space.value, n_photons, n_modes)
+        expected_states = combinadics.compute_space_size()
 
         magnitudes = torch.rand(1, expected_states, dtype=torch.float64)
         magnitudes = magnitudes / magnitudes.norm(p=2, dim=1, keepdim=True).clamp_min(
