@@ -614,8 +614,7 @@ class QuantumLayer(nn.Module):
         if spec:
             return self._apply_angle_encoding(x, spec)
 
-        # For custom circuits without explicit encoding metadata, apply π scaling
-        return x * torch.pi
+        return x
 
     def _complex_dtype(self) -> torch.dtype:
         """Return the complex dtype matching the layer precision."""
@@ -646,7 +645,7 @@ class QuantumLayer(nn.Module):
             )
 
         if not combos:
-            encoded = x_batch * torch.pi
+            encoded = x_batch
             return encoded.squeeze(0) if squeeze else encoded
 
         encoded_cols: list[torch.Tensor] = []
