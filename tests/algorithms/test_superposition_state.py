@@ -1,13 +1,5 @@
 """
-Core-level integration tests for superposition handling in QuantumLayer.
-
-These cases exercise the full layer pipeline, including:
-* Interaction with the measurement strategies when superposed input states are provided.
-* Runtime heuristics that choose between single-state and batched EBS pathways.
-* Benchmarks comparing classical recombination versus the internal quantum layer execution.
-
-They sit under `tests/core` because they touch the broader stack (process graphs,
-simulation caches, benchmarking), complementing the algorithm-specific suites.
+Tests for superposition handling in QuantumLayer.
 """
 
 import math
@@ -19,6 +11,7 @@ import torch
 from merlin.algorithms.layer import QuantumLayer
 from merlin.core import ComputationSpace
 from merlin.measurement.strategies import MeasurementStrategy
+from merlin.utils.combinadics import Combinadics
 
 
 def classical_method(layer, input_state):
@@ -230,3 +223,84 @@ class TestOutputSuperposedState:
 
         assert call_tracker["ebs"] == 0
         assert call_tracker["super"] == 1
+
+    def test_superposition_state_input(self):
+        n_modes = 10
+        n_photons = 3
+
+        circuit = pcvl.Circuit(n_modes)
+        for mode in range(n_modes):
+            circuit.add(mode, pcvl.PS(pcvl.P(f"theta_{mode}")))
+
+        circuit.add(
+            0,
+            pcvl.components.GenericInterferometer(
+                n_modes,
+                pcvl.components.catalog["mzi phase last"].generate,
+                shape=pcvl.InterferometerShape.RECTANGLE,
+            ),
+        )
+
+        expected_states = math.comb(circuit.m, n_photons)
+        input_state = torch.rand(1, expected_states, dtype=torch.float64)
+        sum_values = (input_state**2).sum(dim=-1, keepdim=True)
+        input_state = input_state / sum_values
+
+        layer = QuantumLayer(
+            circuit=circuit,
+            n_photons=n_photons,
+            measurement_strategy=MeasurementStrategy.PROBABILITIES,
+            input_state=input_state,
+            trainable_parameters=["phi"],
+            input_parameters=["theta"],
+            dtype=torch.float64,
+            computation_space=ComputationSpace.UNBUNCHED,
+        )
+
+        # here check if we can send a batch input to forward (corresponding to the thetas)
+        # and that they match non-batch call
+
+        assert False
+
+    def test_superposition_state_statevector(self):
+        n_modes = 10
+        n_photons = 5
+
+        circuit = pcvl.Circuit(n_modes)
+        for mode in range(n_modes):
+            circuit.add(mode, pcvl.PS(pcvl.P(f"theta_{mode}")))
+
+        circuit.add(
+            0,
+            pcvl.components.GenericInterferometer(
+                n_modes,
+                pcvl.components.catalog["mzi phase last"].generate,
+                shape=pcvl.InterferometerShape.RECTANGLE,
+            ),
+        )
+
+        combinadics = Combinadics(ComputationSpace.DUAL_RAIL, n_photons, n_modes)
+
+        # build a superposition of 5 basic states
+        input_state_component = []
+        for idx in torch.randint(0, combinadics.compute_space_size(), (5,)):
+            input_state_component.append(
+                pcvl.BasicState(combinadics.index_to_fock(idx))
+            )
+
+        input_state = pcvl.StateVector(input_state_component)
+        print(input_state)
+
+        layer = QuantumLayer(
+            circuit=circuit,
+            n_photons=n_photons,
+            measurement_strategy=MeasurementStrategy.PROBABILITIES,
+            input_state=input_state,
+            trainable_parameters=["phi"],
+            input_parameters=["theta"],
+            dtype=torch.float64,
+            computation_space=ComputationSpace.DUAL_RAIL,
+        )
+
+        # compare to classical (method above)
+        assert False
