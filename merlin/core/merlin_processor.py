@@ -168,9 +168,9 @@ class MerlinProcessor:
         # --- Per-call RP pool context (per layer) ---
         # Built lazily on first use of a given layer during this forward call.
         pool_ctx = {
-            "pools": {},    # layer_id -> list[RemoteProcessor]
+            "pools": {},  # layer_id -> list[RemoteProcessor]
             "cursors": {},  # layer_id -> int
-            "locks": {},    # layer_id -> threading.Lock (for cursor bump)
+            "locks": {},  # layer_id -> threading.Lock (for cursor bump)
             "pool_size": max(1, self.chunk_concurrency),
         }
 
@@ -183,8 +183,10 @@ class MerlinProcessor:
                 try:
                     from concurrent.futures import CancelledError
                 except Exception:  # pragma: no cover
+
                     class CancelledError(RuntimeError):
                         pass
+
                 fut.set_exception(CancelledError("Remote call was cancelled"))
 
         def _status():
@@ -303,7 +305,14 @@ class MerlinProcessor:
                 rp, pool_slot = _next_rp_for_layer()
                 base_label = f"mer:{layer_name}:{state['call_id']}:{idx + 1}/{total_chunks}:{pool_slot}"
                 t = self._run_chunk(
-                    layer, config, rp, input_tensor[s:e], nsample, state, deadline, job_base_label=base_label
+                    layer,
+                    config,
+                    rp,
+                    input_tensor[s:e],
+                    nsample,
+                    state,
+                    deadline,
+                    job_base_label=base_label,
                 )
                 outputs[idx] = t
             except BaseException as ex:
@@ -370,7 +379,14 @@ class MerlinProcessor:
         layer_name = getattr(layer, "name", layer.__class__.__name__)
         base_label = f"mer:{layer_name}:{state['call_id']}:1/1:{pool_slot}"
         t = self._run_chunk(
-            layer, config, rp, input_chunk, nsample, state, deadline, job_base_label=base_label
+            layer,
+            config,
+            rp,
+            input_chunk,
+            nsample,
+            state,
+            deadline,
+            job_base_label=base_label,
         )
         state["chunks_total"] += 1
         state["chunks_done"] += 1
@@ -536,7 +552,9 @@ class MerlinProcessor:
         pool_ctx["cursors"][lid] = 0
         pool_ctx["locks"][lid] = threading.Lock()
 
-    def _pool_next_rp(self, layer_id: int, pool_ctx: dict) -> tuple[RemoteProcessor, int]:
+    def _pool_next_rp(
+        self, layer_id: int, pool_ctx: dict
+    ) -> tuple[RemoteProcessor, int]:
         """Round-robin select an RP from the per-call pool for a given layer, returning (rp, slot_index)."""
         lock: threading.Lock = pool_ctx["locks"][layer_id]
         with lock:

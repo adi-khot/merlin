@@ -29,8 +29,10 @@ class TestShotEstimation:
         est_batch = proc.estimate_required_shots_per_input(
             q, X, desired_samples_per_input=2_000
         )
-        assert isinstance(est_batch, list) and len(est_batch) == 5 and all(
-            isinstance(v, int) and v >= 0 for v in est_batch
+        assert (
+            isinstance(est_batch, list)
+            and len(est_batch) == 5
+            and all(isinstance(v, int) and v >= 0 for v in est_batch)
         )
 
     def test_monotonic_with_desired_samples(self, remote_processor):
@@ -77,9 +79,7 @@ class TestOutputAndExport:
 
     def test_cloud_distribution_size_matches(self, remote_processor):
         q = make_layer(6, 2, 2, no_bunching=True)
-        y = MerlinProcessor(remote_processor).forward(
-            q, torch.rand(4, 2), nsample=2000
-        )
+        y = MerlinProcessor(remote_processor).forward(q, torch.rand(4, 2), nsample=2000)
         assert y.shape == (4, comb(6, 2))
 
     def test_export_config_includes_trained_thetas(self):
@@ -94,8 +94,7 @@ class TestOutputAndExport:
             opt.step()
         q.eval()
         changed = any(
-            not torch.allclose(p, before[n], atol=1e-6)
-            for n, p in q.named_parameters()
+            not torch.allclose(p, before[n], atol=1e-6) for n, p in q.named_parameters()
         )
         assert changed
 

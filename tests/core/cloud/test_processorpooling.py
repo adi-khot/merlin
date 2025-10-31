@@ -66,7 +66,9 @@ class TestPerCallRemoteProcessorPooling:
         assert y.shape == (B, 15)
 
         # The key assertion: active chunks never exceeded the per-call limit
-        assert max_active <= chunk_concurrency, f"Observed {max_active} active chunks > {chunk_concurrency}"
+        assert max_active <= chunk_concurrency, (
+            f"Observed {max_active} active chunks > {chunk_concurrency}"
+        )
 
         # Also: ensure we actually chunked (chunks_total >= 2)
         st_final = fut.status()
@@ -85,8 +87,8 @@ class TestPerCallRemoteProcessorPooling:
 
         proc = MerlinProcessor(
             remote_processor,
-            microbatch_size=2,      # encourage multiple chunks per call
-            chunk_concurrency=2,    # pool size per call
+            microbatch_size=2,  # encourage multiple chunks per call
+            chunk_concurrency=2,  # pool size per call
             max_shots_per_call=60_000,
         )
 
@@ -94,7 +96,9 @@ class TestPerCallRemoteProcessorPooling:
 
         # Wait until each future has at least one job id (or it's done surprisingly fast)
         for f in futs:
-            assert spin_until(lambda f=f: len(f.job_ids) > 0 or f.done(), timeout_s=30.0)
+            assert spin_until(
+                lambda f=f: len(f.job_ids) > 0 or f.done(), timeout_s=30.0
+            )
 
         # Collect job id sets for each future
         job_sets = []
@@ -111,4 +115,6 @@ class TestPerCallRemoteProcessorPooling:
         # Assert pairwise disjoint job id sets (cloud assigns distinct job IDs per submission)
         # This is a practical, observable proxy for "no cross-talk" between calls.
         for (a_idx, a), (b_idx, b) in combinations(enumerate(job_sets), 2):
-            assert a.isdisjoint(b), f"job_ids of future {a_idx} and {b_idx} overlap; expected isolation"
+            assert a.isdisjoint(b), (
+                f"job_ids of future {a_idx} and {b_idx} overlap; expected isolation"
+            )

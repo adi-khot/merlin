@@ -57,7 +57,9 @@ class TestFuturesAndChunking:
     def test_multiple_concurrent_futures(self, remote_processor):
         layer = make_layer(6, 2, 2, no_bunching=True)
         proc = MerlinProcessor(remote_processor)
-        futs = [proc.forward_async(layer, torch.rand(2, 2), nsample=1500) for _ in range(4)]
+        futs = [
+            proc.forward_async(layer, torch.rand(2, 2), nsample=1500) for _ in range(4)
+        ]
         for f in futs:
             spin_until(lambda f=f: len(f.job_ids) > 0 or f.done(), timeout_s=10.0)
         outs = [f.wait() for f in futs]
@@ -68,7 +70,9 @@ class TestFuturesAndChunking:
         layer = make_layer(6, 2, 2, no_bunching=True)
         fut = None
         with MerlinProcessor(remote_processor) as proc:
-            fut = proc.forward_async(layer, torch.rand(8, 2), nsample=40_000, timeout=None)
+            fut = proc.forward_async(
+                layer, torch.rand(8, 2), nsample=40_000, timeout=None
+            )
             spin_until(lambda: len(fut.job_ids) > 0 or fut.done(), timeout_s=10.0)
         assert fut is not None
         with pytest.raises(_cf.CancelledError):

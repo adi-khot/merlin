@@ -128,7 +128,7 @@ class TestUserGuideExamples:
 
         proc = MerlinProcessor(
             remote_processor,
-            microbatch_size=8,   # as in docs
+            microbatch_size=8,  # as in docs
             chunk_concurrency=2,
         )
 
@@ -156,7 +156,9 @@ class TestUserGuideExamples:
 
         # If CUDA is available, verify round-trip back to CUDA device
         if torch.cuda.is_available():
-            q_cuda = _make_layer(6, 2, input_size=2, no_bunching=True, trainable=True).to("cuda")
+            q_cuda = _make_layer(
+                6, 2, input_size=2, no_bunching=True, trainable=True
+            ).to("cuda")
             x_cuda = torch.rand(2, 2, device="cuda", dtype=torch.float32)
             y_cuda = proc.forward(q_cuda, x_cuda, nsample=1500)
             assert y_cuda.device.type == "cuda"
