@@ -20,10 +20,34 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from .locirc_to_tensor import CircuitConverter
-from .slos_torchscript import build_slos_distribution_computegraph
+"""Computation space definitions controlling logical basis selection."""
 
-__all__ = [
-    "build_slos_distribution_computegraph",
-    "CircuitConverter",
-]
+from enum import Enum
+
+
+class ComputationSpace(str, Enum):
+    """Enumeration of supported computational subspaces."""
+
+    FOCK = "fock"
+    UNBUNCHED = "unbunched"
+    DUAL_RAIL = "dual_rail"
+
+    @classmethod
+    def default(cls, *, no_bunching: bool) -> "ComputationSpace":
+        """Derive the default computation space from the legacy `no_bunching` flag."""
+        return cls.UNBUNCHED if no_bunching else cls.FOCK
+
+    @classmethod
+    def coerce(cls, value: "ComputationSpace | str") -> "ComputationSpace":
+        """Normalize user-provided values (enum instances or case-insensitive strings)."""
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            normalized = value.lower()
+            for space in cls:
+                if normalized == space.value:
+                    return space
+        supported = sorted(space.value for space in cls)
+        raise ValueError(
+            f"Invalid computation_space '{value}'. Supported values are {supported}."
+        )

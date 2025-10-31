@@ -95,6 +95,49 @@ class TestQuantumLayerMeasurementStrategy:
         output.sum().backward()
         assert x.grad is not None
 
+    def test_circuit_infers_input_size_from_input_parameters(self):
+        circuit = pcvl.Circuit(3)
+        circuit.add(0, pcvl.BS(pcvl.P("px_0")))
+        circuit.add(1, pcvl.BS(pcvl.P("px_1")))
+        input_state = [1, 1, 0]
+
+        layer = ML.QuantumLayer(
+            circuit=circuit,
+            input_state=input_state,
+            trainable_parameters=[],
+            input_parameters=["px"],
+            measurement_strategy=MeasurementStrategy.PROBABILITIES,
+            no_bunching=True,
+        )
+
+        assert layer.input_size == 2
+
+        x = torch.rand(4, 2)
+        output = layer(x)
+        assert output.shape == (4, layer.output_size)
+
+    def test_experiment_infers_input_size_from_input_parameters(self):
+        circuit = pcvl.Circuit(3)
+        circuit.add(0, pcvl.BS(pcvl.P("px_0")))
+        circuit.add(1, pcvl.BS(pcvl.P("px_1")))
+        experiment = pcvl.Experiment(circuit)
+        input_state = [1, 1, 0]
+
+        layer = ML.QuantumLayer(
+            experiment=experiment,
+            input_state=input_state,
+            trainable_parameters=[],
+            input_parameters=["px"],
+            measurement_strategy=MeasurementStrategy.PROBABILITIES,
+            no_bunching=True,
+        )
+
+        assert layer.input_size == 2
+
+        x = torch.rand(3, 2)
+        output = layer(x)
+        assert output.shape == (3, layer.output_size)
+
         # Error: cannot specify output_size
         builder = ML.CircuitBuilder(n_modes=3)
         builder.add_entangling_layer(trainable=True, name="U1")
