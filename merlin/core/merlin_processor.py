@@ -409,7 +409,7 @@ class MerlinProcessor:
         batch_size = input_chunk.shape[0]
         if batch_size > self.microbatch_size:
             raise ValueError(
-                f"Chunk size {batch_size} exceeds cloud limit {self.microbatch_size}. "
+                f"Chunk size {batch_size} exceeds microbatch {self.microbatch_size}. "
                 "Please report this bug."
             )
 
