@@ -11,7 +11,9 @@ User Guide
    :caption: Table of Contents
 
    circuit_types
+   experiment
+   layer
    hybrid_models
    output_mappings
    feed_forward
-   algorithms
+   kernels
