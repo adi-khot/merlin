@@ -2,6 +2,7 @@
 Tests for superposition handling in QuantumLayer.
 """
 
+import copy
 import math
 from types import MethodType
 
@@ -288,7 +289,8 @@ class TestOutputSuperposedState:
         )
 
     def test_superposition_state_input(self):
-        n_modes = 10
+        # circuit definition
+        n_modes = 5
         n_photons = 3
 
         circuit = pcvl.Circuit(n_modes)
@@ -303,83 +305,111 @@ class TestOutputSuperposedState:
                 shape=pcvl.InterferometerShape.RECTANGLE,
             ),
         )
-
+        # StateVector construction
         expected_states = math.comb(circuit.m, n_photons)
         input_state = torch.rand(1, expected_states, dtype=torch.float64)
-        sum_values = (input_state**2).sum(dim=-1, keepdim=True)
-        input_state = input_state / sum_values
-
-        layer = QuantumLayer(
+        input_state = input_state / input_state.norm(
+            p=2, dim=1, keepdim=True
+        ).clamp_min(1e-12)
+        # QuantumLayer construction with superposed input state
+        amplitude_layer = QuantumLayer(
             circuit=circuit,
             n_photons=n_photons,
-            measurement_strategy=MeasurementStrategy.PROBABILITIES,
+            measurement_strategy=MeasurementStrategy.AMPLITUDES,
             input_state=input_state,
-            trainable_parameters=["phi"],
             input_parameters=["theta"],
+            trainable_parameters=["phi"],
             dtype=torch.float64,
             computation_space=ComputationSpace.UNBUNCHED,
         )
 
-        process = layer.computation_process
-        call_tracker = {"ebs": 0, "super": 0}
-        original_ebs = process.compute_ebs_simultaneously
-        original_super = process.compute_superposition_state
-
-        def tracked_ebs(self, parameters, simultaneous_processes=1):
-            call_tracker["ebs"] += 1
-            call_tracker["simultaneous_processes"] = simultaneous_processes
-            # Keep visibility on the broadcasted tensor layout returned by the batched kernel.
-            result = original_ebs(
-                parameters, simultaneous_processes=simultaneous_processes
-            )
-            call_tracker["result_shape"] = result.shape
-            return result
-
-        def tracked_super(self, parameters, return_keys=False):
-            call_tracker["super"] += 1
-            return original_super(parameters, return_keys=return_keys)
-
-        process.compute_ebs_simultaneously = MethodType(tracked_ebs, process)
-        process.compute_superposition_state = MethodType(tracked_super, process)
-
         dummy_input = torch.rand(4, n_modes, dtype=torch.float64)
-        sum_values = (dummy_input**2).sum(dim=-1, keepdim=True)
-        dummy_input = dummy_input / sum_values
-        output = layer(dummy_input)
-
-        assert call_tracker["ebs"] == 1
-        assert call_tracker["super"] == 0
-        assert call_tracker["simultaneous_processes"] == expected_states
-        assert call_tracker["result_shape"] == (
-            dummy_input.shape[0],
-            input_state.shape[0],
-            layer.output_size,
-        )
+        dummy_input = dummy_input / dummy_input.norm(
+            p=2, dim=-1, keepdim=True
+        ).clamp_min(1e-12)
+        # Forward pass with classical input batch
+        output = amplitude_layer(dummy_input)
+        if output.dim() == 2:
+            output = output.unsqueeze(1)
 
         assert output.shape == (
             dummy_input.shape[0],
             input_state.shape[0],
-            layer.output_size,
+            amplitude_layer.output_size,
         )
 
-        probs = output
-        if probs.is_complex():
-            probs = probs.abs() ** 2
-        # Ensure probability mass for each (classical batch, superposition batch) pair still sums to 1.
-        sums = probs.sum(dim=-1)
-        assert torch.allclose(sums, torch.ones_like(sums), atol=1e-6)
+        coefficients = amplitude_layer.computation_process.input_state
+        if coefficients.dim() == 1:
+            coefficients = coefficients.unsqueeze(0)
 
-        # Restore original methods for single-sample comparison
-        process.compute_ebs_simultaneously = original_ebs
-        process.compute_superposition_state = original_super
+        shared_state = amplitude_layer.state_dict()
+        amplitude_params = amplitude_layer.prepare_parameters([dummy_input])
+        reference_unitary = amplitude_layer.computation_process.converter.to_tensor(
+            *amplitude_params
+        )
+        reference_keys = (
+            amplitude_layer.computation_process.simulation_graph.mapped_keys
+        )
 
-        single_outputs = []
-        for row in dummy_input:
-            single_outputs.append(layer(row))
+        expected_amplitudes = torch.zeros_like(output, dtype=output.dtype)
+        for idx, state in enumerate(amplitude_layer.state_keys):
+            layer = QuantumLayer(
+                circuit=copy.deepcopy(circuit),
+                n_photons=n_photons,
+                measurement_strategy=MeasurementStrategy.AMPLITUDES,
+                input_state=list(state),
+                input_parameters=["theta"],
+                trainable_parameters=["phi"],
+                dtype=torch.float64,
+                computation_space=ComputationSpace.UNBUNCHED,
+            )
 
-        stacked = torch.stack(single_outputs, dim=0)
-        # Batched execution must match the per-sample forward calls to avoid hidden broadcasting artefacts.
-        assert torch.allclose(output, stacked, atol=1e-6)
+            load_result = layer.load_state_dict(shared_state, strict=False)
+            assert not load_result.missing_keys
+            assert not load_result.unexpected_keys
+            amplitude_params_dict = dict(amplitude_layer.named_parameters())
+            for param_name, param in layer.named_parameters():
+                assert torch.allclose(param, amplitude_params_dict[param_name]), (
+                    f"Parameter mismatch for {param_name}"
+                )
+
+            layer_params = layer.prepare_parameters([dummy_input])
+            layer_unitary = layer.computation_process.converter.to_tensor(*layer_params)
+            assert torch.allclose(
+                layer_unitary, reference_unitary, rtol=1e-6, atol=1e-8
+            ), "Unitary mismatch between layers"
+            assert (
+                layer.computation_process.simulation_graph.mapped_keys == reference_keys
+            ), "Simulation graph keys mismatch"
+
+            basis_output = layer(dummy_input)
+            if basis_output.dim() == 2:
+                basis_output = basis_output.unsqueeze(1)
+            elif basis_output.dim() == 1:
+                basis_output = basis_output.unsqueeze(0).unsqueeze(1)
+            basis_output = basis_output.to(expected_amplitudes.dtype)
+
+            coefficient = (
+                coefficients[:, idx].to(expected_amplitudes.dtype).unsqueeze(-1)
+            )
+            if coefficient.abs().max() < 1e-10:
+                continue
+
+            expected_amplitudes += coefficient.unsqueeze(0) * basis_output
+
+            print(
+                f"State: {state}, Coefficient: {coefficient.squeeze().item()}: basis output {basis_output}"
+            )
+        # normalize expected amplitudes
+        expected_amplitudes = expected_amplitudes / expected_amplitudes.norm(
+            p=2, dim=-1, keepdim=True
+        ).clamp_min(1e-12)
+        print("Amplitude output:", output)
+        print("Expected amplitudes:", expected_amplitudes)
+        print(f"Norm of expected amplitudes: {expected_amplitudes.norm(p=2, dim=-1)}")
+        assert torch.allclose(output, expected_amplitudes, rtol=3e-4, atol=1e-7), (
+            "Superposed output deviates from the superposed QuantumLayer results."
+        )
 
     def test_superposition_state_statevector(self):
         n_modes = 10
