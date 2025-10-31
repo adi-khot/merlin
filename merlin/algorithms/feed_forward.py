@@ -178,7 +178,7 @@ class FeedForwardBlock(torch.nn.Module):
 
         self.layers = {}
         self.input_segments = {}
-        self.output_keys = None
+        self._output_keys = None
 
         if layers is None:
             self.define_layers(circuit_type)
@@ -490,7 +490,7 @@ class FeedForwardBlock(torch.nn.Module):
         self.iterate_feedforward(
             (), amplitudes, keys, 1.0, intermediary, outputs, 0, x=x
         )
-        self.output_keys = outputs.keys()
+        self._output_keys = outputs.keys()
         return torch.stack(list(outputs.values()), dim=1)
 
     def get_output_size(self):
@@ -527,12 +527,12 @@ class FeedForwardBlock(torch.nn.Module):
         ]
 
     @property
-    def state_keys(self):
+    def output_keys(self):
         """Return cached output keys, or compute them via a dummy forward pass."""
-        if self.output_keys is None:
+        if self._output_keys is None:
             x = torch.rand(1, self.input_size)
             _ = self.forward(x)
-        return list(self.output_keys)
+        return list(self._output_keys)
 
     def _recompute_segments(self):
         """
@@ -760,7 +760,7 @@ if __name__ == "__main__":
     print(feed_forward.get_output_size())
     print(feed_forward.input_size_ff_layer(1))
     print(feed_forward.size_ff_layer(1))
-    print(feed_forward.state_keys)
+    print(feed_forward.output_keys)
     feed_forward.define_ff_layer(1, layers[1:5])
     x = torch.rand(1, 20)
     for _ in range(10):

@@ -137,7 +137,7 @@ is the one that gives the user the most options when utilizing a QuantumLayer.
    )
 
    probs = layer()
-   detector_keys = layer.state_keys
+   detector_keys = layer.output_keys
 
 -----------
 Detector integration
@@ -150,7 +150,7 @@ Detector integration
 - ``MeasurementStrategy.AMPLITUDES`` requires access to raw complex amplitudes
   and is therefore incompatible with custom detectors. Attempting this combination
   raises a ``RuntimeError``.
-- Call :meth:`~merlin.algorithms.layer.QuantumLayer.state_keys` to inspect
+- Call :meth:`~merlin.algorithms.layer.QuantumLayer.output_keys` to inspect
   the classical outcomes produced by the detector transform.
 
 -----------

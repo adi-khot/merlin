@@ -76,7 +76,7 @@ Usage example
    
    x = torch.rand(4, 1)  # Generate data 
    probs = layer(x)  # Detector-aware probability tensor
-   keys = layer.state_keys  # Classical outcomes produced by the detectors
+   keys = layer.output_keys  # Classical outcomes produced by the detectors
 
    # 3.2 Feed the experiment into a quantum kernel FeatureMap to build a FidelityKernel
    feature_map = ML.FeatureMap(
