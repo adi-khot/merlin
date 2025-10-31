@@ -21,11 +21,8 @@
 # SOFTWARE.
 
 import numpy as np
-import pandas as pd
 
-from merlin.datasets import DatasetMetadata
-
-from .utils import fetch
+from .mnist_digits import get_data_generic
 
 FASHION_MNIST_METADATA = {
     "name": "Fashion-MNIST",
@@ -50,7 +47,7 @@ FASHION_MNIST_METADATA = {
     "task_type": ["classification"],
     "num_classes": 10,
     "characteristics": ["image"],
-    "homepage": "https://huggingface.co/datasets/vincent-espitalier/Fashion-MNIST-CSV",
+    "homepage": "https://github.com/zalandoresearch/fashion-mnist",
     "license": "MIT",
     "citation": """@online{fashionmnist2017,
         author       = {Zalando Research},
@@ -64,51 +61,31 @@ FASHION_MNIST_METADATA = {
 }
 
 
-def get_data_train_huggingface():
-    train = fetch(
-        "https://huggingface.co/datasets/vincent-espitalier/Fashion-MNIST-CSV/resolve/main/fashion-mnist_train.csv"
+def get_data_train():
+    return get_data_generic(
+        subset="train",
+        url_images="https://github.com/zalandoresearch/fashion-mnist/raw/refs/heads/master/data/fashion/train-images-idx3-ubyte.gz",
+        url_labels="https://github.com/zalandoresearch/fashion-mnist/raw/refs/heads/master/data/fashion/train-labels-idx1-ubyte.gz",
     )
-    df_train = pd.read_csv(train)
 
-    X = (
-        df_train[[col for col in df_train.columns if col.startswith("pixel")]]
-        .values.astype(np.float32)
-        .reshape(-1, 28, 28)
+
+def get_data_test():
+    return get_data_generic(
+        subset="test",
+        url_images="https://github.com/zalandoresearch/fashion-mnist/raw/refs/heads/master/data/fashion/t10k-images-idx3-ubyte.gz",
+        url_labels="https://github.com/zalandoresearch/fashion-mnist/raw/refs/heads/master/data/fashion/t10k-labels-idx1-ubyte.gz",
     )
-    y = df_train["label"].to_numpy()
-
-    FASHION_MNIST_METADATA["num_instances"] = len(X)
-    FASHION_MNIST_METADATA["subset"] = "train"
-    return X, y, DatasetMetadata.from_dict(FASHION_MNIST_METADATA)
-
-
-def get_data_test_huggingface():
-    val = fetch(
-        "https://huggingface.co/datasets/vincent-espitalier/Fashion-MNIST-CSV/resolve/main/fashion-mnist_test.csv"
-    )
-    df_val = pd.read_csv(val)
-
-    X = (
-        df_val[[col for col in df_val.columns if col.startswith("pixel")]]
-        .values.astype(np.float32)
-        .reshape(-1, 28, 28)
-    )
-    y = df_val["label"].to_numpy()
-
-    FASHION_MNIST_METADATA["num_instances"] = len(X)
-    FASHION_MNIST_METADATA["subset"] = "val"
-    return X, y, DatasetMetadata.from_dict(FASHION_MNIST_METADATA)
 
 
 __all__ = [
-    "get_data_train_huggingface",
-    "get_data_test_huggingface",
+    "get_data_train",
+    "get_data_test",
 ]
 
 # Example usage
 if __name__ == "__main__":
-    X, y, metadata = get_data_train_huggingface()
-    Xtest, ytest, _ = get_data_test_huggingface()
+    X, y, metadata = get_data_train()
+    Xtest, ytest, _ = get_data_test()
     print(len(X), len(Xtest))
     # Mean of per-pixel standard deviations – Helps characterize/identify the dataset by capturing pixel-level variability.
     X_mean_std_per_pixel = np.std(X.reshape(X.shape[0], -1), axis=0).mean()
