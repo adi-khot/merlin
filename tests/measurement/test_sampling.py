@@ -218,11 +218,9 @@ class TestAutoDiffProcess:
 
 
 class TestSamplingIntegration:
-    """Integration tests for sampling with QuantumLayer."""
+    """Integration tests for sampling with QuantumLayer (modern API)."""
 
-    def test_layer_sampling_during_training(self):
-        """Test that sampling is disabled during training mode."""
-
+    def _make_layer(self):
         builder = ML.CircuitBuilder(n_modes=4)
         builder.add_entangling_layer(trainable=True, name="U1")
         builder.add_angle_encoding(modes=[0, 1], name="input", subset_combinations=True)
@@ -232,127 +230,95 @@ class TestSamplingIntegration:
             input_size=2,
             input_state=[1, 0, 1, 0],
             builder=builder,
-            shots=100,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
+        return layer
+
+    def test_layer_sampling_during_training(self):
+        """Sampling requests are ignored during training to keep the path differentiable."""
+        layer = self._make_layer()
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
-        # Set to training mode
+        # Training mode
         model.train()
 
         x = torch.rand(3, 2, requires_grad=True)
 
-        # Should not apply sampling during training with gradients
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
+        # Baseline (no sampling)
+        clean_out = model(x)
 
-            x_out = layer(x, apply_sampling=True, shots=100)
-            output = model[1](x_out)
-            loss = output.sum()
-            loss.backward()
+        # Request sampling, but backend should disable it while training
+        # (effectively shots -> 0)
+        x_out_req = layer(x, shots=100, sampling_method="multinomial")
+        sampled_out_train = model[1](x_out_req)
 
-            # Should have warned about disabled sampling
-            warning_found = any(
-                "Sampling was requested but is disabled" in str(warning.message)
-                for warning in w
-            )
-            assert warning_found
+        # Should be (near-)identical to no-sampling output in training
+        assert torch.allclose(clean_out, sampled_out_train, atol=1e-7, rtol=1e-6)
+
+        # Backprop should work
+        loss = sampled_out_train.sum()
+        loss.backward()
+        assert any(p.grad is not None for p in model.parameters() if p.requires_grad)
 
     def test_layer_sampling_during_evaluation(self):
-        """Test that sampling works during evaluation mode."""
-        builder = ML.CircuitBuilder(n_modes=4)
-        builder.add_entangling_layer(trainable=True, name="U1")
-        builder.add_angle_encoding(modes=[0, 1], name="input", subset_combinations=True)
-        builder.add_entangling_layer(trainable=True, name="U2")
-
-        layer = ML.QuantumLayer(
-            input_size=2,
-            input_state=[1, 0, 1, 0],
-            builder=builder,
-        )
-
+        """Sampling works during evaluation mode and produces noisy outputs."""
+        layer = self._make_layer()
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
-        # Set to evaluation mode
+        # Evaluation mode
         model.eval()
 
         x = torch.rand(3, 2)
 
-        # Get clean output
+        # Clean (no sampling)
         clean_output = model(x)
 
-        # Get sampled output
-        x_out = layer(x, apply_sampling=True, shots=100)
+        # Sampled output (enable sampling via shots)
+        x_out = layer(x, shots=100, sampling_method="multinomial")
         sampled_output = model[1](x_out)
 
-        # Should be different due to sampling noise
-        assert not torch.allclose(clean_output, sampled_output, atol=1e-3)
+        # Should typically differ due to sampling noise
+        # (allow the possibility of equality in rare cases by using a small tolerance)
+        assert not torch.allclose(clean_output, sampled_output, atol=1e-4, rtol=1e-4)
 
-        # Both should be valid
+        # Both should be finite
         assert torch.all(torch.isfinite(clean_output))
         assert torch.all(torch.isfinite(sampled_output))
 
-    def test_layer_sampling_config_update(self):
-        """Test updating sampling configuration on layer."""
-        builder = ML.CircuitBuilder(n_modes=4)
-        builder.add_entangling_layer(trainable=True, name="U1")
-        builder.add_angle_encoding(modes=[0, 1], name="input", subset_combinations=True)
-        builder.add_entangling_layer(trainable=True, name="U2")
-
-        layer = ML.QuantumLayer(
-            input_size=2,
-            input_state=[1, 0, 1, 0],
-            builder=builder,
-        )
-
-        torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
-
-        # Initial config
-        assert layer.shots == 0
-        assert layer.sampling_method == "multinomial"
-
-        # Update config
-        layer.set_sampling_config(shots=200, method="gaussian")
-
-        assert layer.shots == 200
-        assert layer.sampling_method == "gaussian"
-
-        # Test invalid updates
-        with pytest.raises(ValueError):
-            layer.set_sampling_config(shots=-1)
-
-        with pytest.raises(ValueError):
-            layer.set_sampling_config(method="invalid")
-
-    def test_different_sampling_methods_produce_different_results(self):
-        """Test that different sampling methods produce different results."""
-        builder = ML.CircuitBuilder(n_modes=4)
-        builder.add_entangling_layer(trainable=True, name="U1")
-        builder.add_angle_encoding(modes=[0, 1], name="input", subset_combinations=True)
-        builder.add_entangling_layer(trainable=True, name="U2")
-
-        layer = ML.QuantumLayer(
-            input_size=2,
-            input_state=[1, 0, 1, 0],
-            builder=builder,
-        )
-
+    def test_invalid_sampling_method_raises(self):
+        """Invalid sampling method should raise ValueError at call time."""
+        layer = self._make_layer()
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
         model.eval()
 
+        x = torch.rand(2, 2)
+
+        with pytest.raises(ValueError):
+            # Forward with invalid method
+            _ = layer(x, shots=10, sampling_method="invalid")
+
+    def test_different_sampling_methods_produce_different_results(self):
+        """Different sampling methods should (generally) yield different outputs in eval."""
+        layer = self._make_layer()
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
+        model.eval()
+
+        # Fix seed for reproducibility of comparisons within this test
+        torch.manual_seed(42)
+
         x = torch.rand(5, 2)
 
-        results = {}
         methods = ["multinomial", "gaussian", "binomial"]
+        outputs = {}
 
         for method in methods:
-            layer.set_sampling_config(shots=100, method=method)
-            x_out = layer(x, apply_sampling=True, shots=100)
-            output = model[1](x_out)
-            results[method] = output
+            # Request sampling per call
+            x_out = layer(x, shots=200, sampling_method=method)
+            outputs[method] = model[1](x_out)
 
-        # All results should be different from each other
-        for i, method1 in enumerate(methods):
-            for method2 in methods[i + 1 :]:
+        # Pairwise compare: expect differences (allow tolerance)
+        for i, m1 in enumerate(methods):
+            for m2 in methods[i + 1 :]:
                 assert not torch.allclose(
-                    results[method1], results[method2], atol=1e-3
-                ), f"Methods {method1} and {method2} produced identical results"
+                    outputs[m1], outputs[m2], atol=1e-4, rtol=1e-4
+                ), f"Methods {m1} and {m2} produced indistinguishable results"

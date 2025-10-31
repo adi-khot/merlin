@@ -56,7 +56,7 @@ class QuantumLayer(nn.Module):
       - `force_simulation` (bool) defaults to False. When True, the layer MUST run locally.
       - `supports_offload()` reports whether remote offload is possible (via `export_config()`).
       - `should_offload(processor, shots)` encapsulates the current offload policy:
-            return supports_offload() and not force_simulation
+            return supports_offload() and not force_local
     """
 
     # ---- Explicit execution-leaf marker (prevents recursion into children like nn.Identity) ----
@@ -109,8 +109,6 @@ class QuantumLayer(nn.Module):
         measurement_strategy: MeasurementStrategy = MeasurementStrategy.PROBABILITIES,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
-        shots: int = 0,
-        sampling_method: str = "multinomial",
         no_bunching: bool = True,
         **kwargs,
     ):
@@ -123,10 +121,6 @@ class QuantumLayer(nn.Module):
         self.input_size = input_size
         self.no_bunching = no_bunching
         self.input_state = input_state
-
-        # sampling params (also exported)
-        self.shots = shots
-        self.sampling_method = sampling_method
 
         # execution policy: when True, always simulate locally (do not offload)
         self._force_simulation: bool = False
@@ -210,9 +204,6 @@ class QuantumLayer(nn.Module):
             input_parameters,
             measurement_strategy,
         )
-
-        # autodiff/sampling backend
-        self.autodiff_process = AutoDiffProcess(sampling_method)
 
         # export snapshot cache
         self._current_params: dict[str, Any] = {}
@@ -515,6 +506,7 @@ class QuantumLayer(nn.Module):
                     f"Input feature dimension {feature_dim} insufficient for angle encoding combination {combo}"
                 )
 
+            # Select per-combo features and scale
             selected = x_batch[:, indices]
             scales = [scale_map.get(idx, 1.0) for idx in indices]
             scale_tensor = x_batch.new_tensor(scales)
@@ -569,36 +561,54 @@ class QuantumLayer(nn.Module):
     def forward(
         self,
         *input_parameters: torch.Tensor,
-        apply_sampling: bool | None = None,
         shots: int | None = None,
+        sampling_method: str | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
-        """Forward pass through the quantum layer."""
+        """Forward pass through the quantum layer.
+
+        Sampling is controlled by:
+            - shots (int): number of samples; if 0 or None, return exact amplitudes/probabilities.
+            - sampling_method (str): e.g. "multinomial".
+        """
         # Prepare parameters
         params = self.prepare_parameters(list(input_parameters))
-        # Get quantum output
-        if type(self.computation_process.input_state) is torch.Tensor:
+
+        # Quantum compute
+        if isinstance(self.computation_process.input_state, torch.Tensor):
             amplitudes = self.computation_process.compute_superposition_state(params)
         else:
             amplitudes = self.computation_process.compute(params)
 
-        # Handle sampling
+        # Determine gradient needs
         needs_gradient = (
             self.training
             and torch.is_grad_enabled()
             and any(p.requires_grad for p in self.parameters())
         )
-        # TODO/CAUTION: if needs_gradient is True and shots>0, the code raises a warning and casts apply_sampling = False and shots = 0
-        apply_sampling, shots = self.autodiff_process.autodiff_backend(
-            needs_gradient, apply_sampling or False, shots or self.shots
+
+        # Per-call autodiff/sampling backend
+        local_sampling_method = sampling_method or "multinomial"
+        adp = AutoDiffProcess(local_sampling_method)
+
+        # Derive apply_sampling from shots > 0
+        requested_shots = int(shots or 0)
+        apply_sampling = requested_shots > 0
+
+        # Backend may override shots/sampling if gradients are required
+        apply_sampling, effective_shots = adp.autodiff_backend(
+            needs_gradient, apply_sampling, requested_shots
         )
-        if type(amplitudes) is torch.Tensor:
+
+        # Convert amplitudes to probabilities if needed
+        if isinstance(amplitudes, torch.Tensor):
             distribution = amplitudes.real**2 + amplitudes.imag**2
-        elif type(amplitudes) is tuple:
+        elif isinstance(amplitudes, tuple):
             amplitudes = amplitudes[1]
             distribution = amplitudes.real**2 + amplitudes.imag**2
         else:
             raise TypeError(f"Unexpected amplitudes type: {type(amplitudes)}")
 
+        # Optional no-bunching renormalization
         if self.no_bunching:
             sum_probs = distribution.sum(dim=1, keepdim=True)
 
@@ -620,10 +630,9 @@ class QuantumLayer(nn.Module):
                     amplitudes,
                 )
 
-        if apply_sampling and shots > 0:
-            results = self.autodiff_process.sampling_noise.pcvl_sampler(
-                distribution, shots
-            )
+        # Apply sampling if requested
+        if apply_sampling and effective_shots > 0:
+            results = adp.sampling_noise.pcvl_sampler(distribution, effective_shots)
         else:
             results = amplitudes
 
@@ -631,18 +640,13 @@ class QuantumLayer(nn.Module):
         return self.measurement_mapping(results)
 
     def set_sampling_config(self, shots: int | None = None, method: str | None = None):
-        """Update sampling configuration."""
-        if shots is not None:
-            if not isinstance(shots, int) or shots < 0:
-                raise ValueError(f"shots must be a non-negative integer, got {shots}")
-            self.shots = shots
-        if method is not None:
-            valid = ["multinomial", "binomial", "gaussian"]
-            if method not in valid:
-                raise ValueError(
-                    f"Invalid sampling method: {method}. Valid options are: {valid}"
-                )
-            self.sampling_method = method
+        """Deprecated: sampling configuration must be provided at call time in `forward`."""
+        warnings.warn(
+            "QuantumLayer.set_sampling_config() is deprecated. "
+            "Provide `shots` and `sampling_method` directly to `forward()`.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     def to(self, *args, **kwargs):
         super().to(*args, **kwargs)
@@ -720,7 +724,6 @@ class QuantumLayer(nn.Module):
             "trainable_parameters": list(self.trainable_parameters),
             "input_parameters": list(self.input_parameters),
             "no_bunching": bool(self.no_bunching),
-            "shots": int(self.shots),
             "noise_model": self.noise_model,
         }
         return config
@@ -735,7 +738,6 @@ class QuantumLayer(nn.Module):
         cls,
         input_size: int,
         n_params: int = 100,
-        shots: int = 0,
         output_size: int | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
@@ -757,7 +759,6 @@ class QuantumLayer(nn.Module):
             n_params: Number of trainable parameters to allocate across the additional MZI blocks. Values
                 below the default entangling budget trigger a warning; values above it must differ by an even
                 amount because each added MZI exposes two parameters.
-            shots: Number of sampling shots for stochastic evaluation.
             output_size: Optional classical output width.
             device: Optional target device for tensors.
             dtype: Optional tensor dtype.
@@ -843,7 +844,6 @@ class QuantumLayer(nn.Module):
             builder=builder,
             n_photons=n_photons,
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
-            shots=shots,
             no_bunching=no_bunching,
             device=device,
             dtype=dtype,
@@ -868,8 +868,19 @@ class QuantumLayer(nn.Module):
             def output_size(self):
                 return self._output_size
 
-            def forward(self, x: torch.Tensor) -> torch.Tensor:
-                return self.post_processing(self.quantum_layer(x))
+            def forward(
+                self,
+                x: torch.Tensor,
+                *,
+                shots: int | None = None,
+                sampling_method: str | None = "multinomial",
+            ) -> torch.Tensor:
+                q_out = self.quantum_layer(
+                    x,
+                    shots=shots,
+                    sampling_method=sampling_method,
+                )
+                return self.post_processing(q_out)
 
         if output_size is not None:
             if not isinstance(output_size, int):

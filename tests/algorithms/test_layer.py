@@ -157,7 +157,8 @@ class TestQuantumLayer:
         assert has_trainable_params, "Model should have trainable parameters"
 
     def test_sampling_configuration(self):
-        """Test sampling configuration methods."""
+        """Sampling is configured per-call via forward(); training disables it automatically."""
+        # Build a tiny circuit
         builder = ML.CircuitBuilder(n_modes=4)
         builder.add_entangling_layer(trainable=True, name="U1")
         builder.add_angle_encoding(modes=[0, 1], name="input")
@@ -168,22 +169,54 @@ class TestQuantumLayer:
             input_state=[1, 0, 1, 0],
             builder=builder,
             measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
-            shots=100,
         )
 
-        torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
+        # Compose with a linear head (as in the old test)
+        _ = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
-        assert layer.shots == 100
-        assert layer.sampling_method == "multinomial"
+        # There is no layer-level sampling state anymore
+        assert not hasattr(layer, "shots")
+        assert not hasattr(layer, "sampling_method")
 
-        # Test updating configuration
-        layer.set_sampling_config(shots=200, method="gaussian")
-        assert layer.shots == 200
-        assert layer.sampling_method == "gaussian"
+        # Prepare a batch of inputs (B, features)
+        x = torch.rand(4, 2)
 
-        # Test invalid method
+        # ---------- EVAL: no sampling (default) ----------
+        layer.eval()
+        y_no_sampling = layer(x)  # shots defaults to None/0 -> no sampling path
+        assert isinstance(y_no_sampling, torch.Tensor)
+        assert y_no_sampling.shape[0] == x.shape[0]
+
+        # ---------- EVAL: enable sampling by passing shots ----------
+        y_sampled = layer(x, shots=100, sampling_method="multinomial")
+        assert isinstance(y_sampled, torch.Tensor)
+        assert y_sampled.shape[0] == x.shape[0]
+
+        # ---------- TRAIN: sampling request is overridden (no sampling during training) ----------
+        layer.train()
+        # Request sampling, but autodiff backend should turn it off for differentiability
+        y_train = layer(x, shots=100, sampling_method="multinomial")
+        loss = y_train.sum()
+        loss.backward()  # should succeed with gradients flowing (no sampling taken)
+        # At least one trainable parameter should have a gradient
+        assert any(p.grad is not None for p in layer.parameters() if p.requires_grad)
+
+        # ---------- Invalid sampling method should error ----------
         with pytest.raises(ValueError):
-            layer.set_sampling_config(method="invalid")
+            _ = layer(x, shots=10, sampling_method="invalid")
+
+    def test_simple_wrapper_forwards_sampling_args(self):
+        """The .simple() wrapper should accept shots/sampling_method and forward them to the quantum layer."""
+        model = ML.QuantumLayer.simple(input_size=2, n_params=10)
+        x = torch.rand(3, 2)
+
+        # Works without sampling
+        y = model(x)
+        assert y.shape[0] == x.shape[0]
+
+        # Works with sampling (multinomial default in the wrapper)
+        y2 = model(x, shots=50)
+        assert y2.shape[0] == x.shape[0]
 
     def test_reservoir_mode(self):
         """Test reservoir computing mode."""
