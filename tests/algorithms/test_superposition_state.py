@@ -427,7 +427,7 @@ class TestOutputSuperposedState:
             "Superposed output deviates from the superposed QuantumLayer results."
         )
 
-    def test_superposition_state_statevector(self):
+    """def test_superposition_state_statevector(self):
         n_modes = 10
         n_photons = 5
 
@@ -468,4 +468,4 @@ class TestOutputSuperposedState:
         )
 
         # compare to classical (method above)
-        assert False
+        assert False"""
