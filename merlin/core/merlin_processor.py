@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 import warnings
+import zlib
 from collections.abc import Iterable
 from contextlib import suppress
 from math import comb
-from typing import Any  # <- Optional removed
+from typing import Any
 
 import numpy as np
 import perceval as pcvl
@@ -30,10 +32,13 @@ class MerlinProcessor:
       - Batch chunking per quantum leaf with limited concurrency
       - Cancellation (per-future and global)
       - Global timeouts that cancel in-flight jobs
+      - Per-call RemoteProcessor pooling (no shared RPC handlers across threads)
+      - Descriptive cloud job names (<= 50 chars) for traceability
     """
 
     DEFAULT_MAX_SHOTS: int = 100_000
     DEFAULT_SHOTS_PER_CALL: int = 10_000
+    _JOB_NAME_MAX: int = 50
 
     def __init__(
         self,
@@ -74,7 +79,8 @@ class MerlinProcessor:
         self.chunk_concurrency = max(1, int(chunk_concurrency))
 
         # Caches & global tracking
-        self._layer_cache: dict[int, dict] = {}  # id(layer) -> {"config":..., "rp":...}
+        # id(layer) -> {"config": ...}  (we do NOT cache an RP anymore)
+        self._layer_cache: dict[int, dict] = {}
         self._job_history: list[RemoteJob] = []
 
         # Lifecycle/cancellation
@@ -156,6 +162,16 @@ class MerlinProcessor:
             "chunks_total": 0,
             "chunks_done": 0,
             "active_chunks": 0,
+            "call_id": uuid.uuid4().hex[:8],  # tag all jobs of this forward() call
+        }
+
+        # --- Per-call RP pool context (per layer) ---
+        # Built lazily on first use of a given layer during this forward call.
+        pool_ctx = {
+            "pools": {},    # layer_id -> list[RemoteProcessor]
+            "cursors": {},  # layer_id -> int
+            "locks": {},    # layer_id -> threading.Lock (for cursor bump)
+            "pool_size": max(1, self.chunk_concurrency),
         }
 
         # ---- helpers attached to the Future ----
@@ -167,10 +183,8 @@ class MerlinProcessor:
                 try:
                     from concurrent.futures import CancelledError
                 except Exception:  # pragma: no cover
-
                     class CancelledError(RuntimeError):
                         pass
-
                 fut.set_exception(CancelledError("Remote call was cancelled"))
 
         def _status():
@@ -215,7 +229,7 @@ class MerlinProcessor:
 
                     if should_offload:
                         x = self._offload_quantum_layer_with_chunking(
-                            layer, x, nsample, state, deadline
+                            layer, x, nsample, state, deadline, pool_ctx
                         )
                     else:
                         with torch.no_grad():
@@ -239,6 +253,7 @@ class MerlinProcessor:
         nsample: int | None,
         state: dict,
         deadline: float | None,
+        pool_ctx: dict,
     ) -> torch.Tensor:
         """
         Split the batch into chunks of size <= max_batch_size,
@@ -251,25 +266,19 @@ class MerlinProcessor:
         if B <= self.microbatch_size and self.chunk_concurrency == 1:
             # Fast path: single chunk, single job.
             return self._run_chunk_wrapper(
-                layer, input_tensor, nsample, state, deadline
+                layer, input_tensor, nsample, state, deadline, pool_ctx
             )
 
-        # Ensure we have (and cache) layer config and a child remote processor
+        # Ensure we have (and cache) layer config
         cache = self._layer_cache.get(id(layer))
         if cache is None:
             config = layer.export_config()
-            child_rp = self._clone_remote_processor(self.remote_processor)
-            child_rp.set_circuit(config["circuit"])
-            if config.get("input_state"):
-                input_state = pcvl.BasicState(config["input_state"])
-                child_rp.with_input(input_state)
-                n_photons = sum(config["input_state"])
-                child_rp.min_detected_photons_filter(n_photons)
-            cache = {"config": config, "rp": child_rp}
-            self._layer_cache[id(layer)] = cache
+            self._layer_cache[id(layer)] = {"config": config}
         else:
             config = cache["config"]
-            child_rp = cache["rp"]
+
+        # Ensure a per-call pool exists for this layer
+        self._ensure_pool_for_layer(config, layer, pool_ctx)
 
         # Build chunks
         chunks: list[tuple[int, int]] = []
@@ -281,13 +290,20 @@ class MerlinProcessor:
 
         state["chunks_total"] += len(chunks)
         outputs: list[torch.Tensor | None] = [None] * len(chunks)
-
         errors: list[BaseException] = []
+
+        def _next_rp_for_layer() -> tuple[RemoteProcessor, int]:
+            return self._pool_next_rp(id(layer), pool_ctx)
+
+        total_chunks = len(chunks)
+        layer_name = getattr(layer, "name", layer.__class__.__name__)
 
         def _call(s: int, e: int, idx: int):
             try:
+                rp, pool_slot = _next_rp_for_layer()
+                base_label = f"mer:{layer_name}:{state['call_id']}:{idx + 1}/{total_chunks}:{pool_slot}"
                 t = self._run_chunk(
-                    layer, config, child_rp, input_tensor[s:e], nsample, state, deadline
+                    layer, config, rp, input_tensor[s:e], nsample, state, deadline, job_base_label=base_label
                 )
                 outputs[idx] = t
             except BaseException as ex:
@@ -337,26 +353,24 @@ class MerlinProcessor:
         nsample: int | None,
         state: dict,
         deadline: float | None,
+        pool_ctx: dict,
     ) -> torch.Tensor:
-        """Non-chunking simple path via a temporary child processor cache."""
+        """Non-chunking simple path using the per-call RP pool."""
         cache = self._layer_cache.get(id(layer))
         if cache is None:
             config = layer.export_config()
-            child_rp = self._clone_remote_processor(self.remote_processor)
-            child_rp.set_circuit(config["circuit"])
-            if config.get("input_state"):
-                input_state = pcvl.BasicState(config["input_state"])
-                child_rp.with_input(input_state)
-                n_photons = sum(config["input_state"])
-                child_rp.min_detected_photons_filter(n_photons)
-            cache = {"config": config, "rp": child_rp}
-            self._layer_cache[id(layer)] = cache
+            self._layer_cache[id(layer)] = {"config": config}
         else:
             config = cache["config"]
-            child_rp = cache["rp"]
 
+        # Ensure a per-call pool exists for this layer
+        self._ensure_pool_for_layer(config, layer, pool_ctx)
+
+        rp, pool_slot = self._pool_next_rp(id(layer), pool_ctx)
+        layer_name = getattr(layer, "name", layer.__class__.__name__)
+        base_label = f"mer:{layer_name}:{state['call_id']}:1/1:{pool_slot}"
         t = self._run_chunk(
-            layer, config, child_rp, input_chunk, nsample, state, deadline
+            layer, config, rp, input_chunk, nsample, state, deadline, job_base_label=base_label
         )
         state["chunks_total"] += 1
         state["chunks_done"] += 1
@@ -371,6 +385,7 @@ class MerlinProcessor:
         nsample: int | None,
         state: dict,
         deadline: float | None,
+        job_base_label: str | None = None,
     ) -> torch.Tensor:
         """Submit a single chunk job for the given layer and return mapped tensor."""
         from concurrent.futures import CancelledError  # used for cancellation mapping
@@ -398,24 +413,54 @@ class MerlinProcessor:
             circuit_params = {}
             for j, param_name in enumerate(input_param_names):
                 if j < input_chunk.shape[1]:
-                    # <<< keep inputs in [0,1] and convert to radians by × π >>>
+                    # keep inputs in [0,1] and convert to radians by × π
                     circuit_params[param_name] = float(input_np[i, j] * np.pi)
                 else:
                     circuit_params[param_name] = 0.0
             sampler.add_iteration(circuit_params=circuit_params)
 
-        # Choose execution primitive
+        # Choose execution primitive, set a descriptive (capped) name, then submit
+        def _capped_name(base: str, cmd: str) -> str:
+            # Compose and sanitize
+            name = f"{base}:{cmd}"
+            name = "".join(ch if ch.isalnum() or ch in "-_:/=." else "_" for ch in name)
+            if len(name) <= self._JOB_NAME_MAX:
+                return name
+            # Truncate with a stable short hash suffix to preserve uniqueness
+            h = f"{zlib.adler32(name.encode()):08x}"  # 8 hex chars
+            keep = self._JOB_NAME_MAX - 1 - len(h)
+            if keep < 1:
+                # Extremely constrained; fall back to hash head
+                return h[: self._JOB_NAME_MAX]
+            return name[:keep] + "~" + h
+
         if "probs" in self.available_commands:
-            job = sampler.probs.execute_async()
+            job = sampler.probs  # not submitted yet
+            cmd = "probs"
+            if job_base_label:
+                job.name = _capped_name(job_base_label, cmd)
+            job = job.execute_async()
         elif "sample_count" in self.available_commands:
             use_shots = self.DEFAULT_SHOTS_PER_CALL if nsample is None else int(nsample)
-            job = sampler.sample_count.execute_async(max_samples=use_shots)
+            job = sampler.sample_count
+            cmd = "sample_count"
+            if job_base_label:
+                job.name = _capped_name(job_base_label, cmd)
+            job = job.execute_async(max_samples=use_shots)
         elif "samples" in self.available_commands:
             use_shots = self.DEFAULT_SHOTS_PER_CALL if nsample is None else int(nsample)
-            job = sampler.samples.execute_async(max_samples=use_shots)
+            job = sampler.samples
+            cmd = "samples"
+            if job_base_label:
+                job.name = _capped_name(job_base_label, cmd)
+            job = job.execute_async(max_samples=use_shots)
         else:
             use_shots = self.DEFAULT_SHOTS_PER_CALL if nsample is None else int(nsample)
-            job = sampler.sample_count.execute_async(max_samples=use_shots)
+            job = sampler.sample_count
+            cmd = "sample_count"
+            if job_base_label:
+                job.name = _capped_name(job_base_label, cmd)
+            job = job.execute_async(max_samples=use_shots)
 
         # Track globally for cancellation & history
         with self._lock:
@@ -430,8 +475,7 @@ class MerlinProcessor:
                 if callable(cancel):
                     with suppress(Exception):
                         cancel()
-                # Let the job fail on cloud; we’ll map it below if needed.
-                # Raise here to stop this worker quickly.
+                # Stop worker quickly; cloud job will transition to cancel
                 raise CancelledError("Remote call was cancelled")
 
             if deadline is not None and time.time() >= deadline:
@@ -459,10 +503,7 @@ class MerlinProcessor:
                     with self._lock:
                         self._active_jobs.discard(job)
                     raise CancelledError("Remote call was cancelled")
-                with self._lock:
-                    self._active_jobs.discard(job)
-                raise RuntimeError(f"Remote call failed: {msg}")
-
+            # Success?
             if getattr(job, "is_complete", False):
                 raw = job.get_results()
                 with self._lock:
@@ -472,19 +513,51 @@ class MerlinProcessor:
             time.sleep(sleep_ms / 1000.0)
             sleep_ms = min(sleep_ms * 2, 400)
 
+    # ---------------- Per-call RP pool helpers ----------------
+
+    def _ensure_pool_for_layer(self, config: dict, layer: Any, pool_ctx: dict) -> None:
+        """Create an RP pool for this layer within the current forward call, if absent."""
+        lid = id(layer)
+        if lid in pool_ctx["pools"]:
+            return
+        pool_size = int(pool_ctx["pool_size"])
+        # Build independent RPs (each with its own handler)
+        rps: list[RemoteProcessor] = []
+        for _ in range(pool_size):
+            rp = self._clone_remote_processor(self.remote_processor)
+            rp.set_circuit(config["circuit"])
+            if config.get("input_state"):
+                input_state = pcvl.BasicState(config["input_state"])
+                rp.with_input(input_state)
+                n_photons = sum(config["input_state"])
+                rp.min_detected_photons_filter(n_photons)
+            rps.append(rp)
+        pool_ctx["pools"][lid] = rps
+        pool_ctx["cursors"][lid] = 0
+        pool_ctx["locks"][lid] = threading.Lock()
+
+    def _pool_next_rp(self, layer_id: int, pool_ctx: dict) -> tuple[RemoteProcessor, int]:
+        """Round-robin select an RP from the per-call pool for a given layer, returning (rp, slot_index)."""
+        lock: threading.Lock = pool_ctx["locks"][layer_id]
+        with lock:
+            i = pool_ctx["cursors"][layer_id]
+            rps = pool_ctx["pools"][layer_id]
+            rp = rps[i]
+            pool_ctx["cursors"][layer_id] = (i + 1) % len(rps)
+            return rp, i
+
     # ---------------- Utilities & mapping ----------------
 
     def _clone_remote_processor(self, rp: RemoteProcessor) -> RemoteProcessor:
-        """Create a sibling RemoteProcessor sharing auth/endpoint, for parallel jobs."""
-        # Reuse the underlying RPC handler auth / proxies via constructor args
+        """Create a sibling RemoteProcessor sharing auth/endpoint, with its OWN handler (avoid cross-thread sharing)."""
+        # IMPORTANT: do NOT pass rpc_handler=... (avoid sharing handler across threads)
         return RemoteProcessor(
             name=rp.name,
-            token=None,  # RemoteConfig will pick it up from cache; handler also exists
+            token=None,  # RemoteConfig pulls token from cache
             url=rp.get_rpc_handler().url
             if hasattr(rp.get_rpc_handler(), "url")
             else None,
             proxies=rp.proxies,
-            rpc_handler=rp.get_rpc_handler(),  # share handler to avoid re-auth cost
         )
 
     def _iter_layers_in_order(self, module: nn.Module) -> Iterable[nn.Module]:
