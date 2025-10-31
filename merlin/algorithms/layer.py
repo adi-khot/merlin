@@ -672,7 +672,7 @@ class QuantumLayer(nn.Module):
         return self
 
     @property
-    def state_keys(self):
+    def output_keys(self):
         """Return the Fock basis associated with the layer outputs."""
         if (
             getattr(self, "_photon_loss_transform", None) is None
