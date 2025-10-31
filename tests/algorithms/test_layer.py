@@ -583,7 +583,7 @@ class TestQuantumLayer:
 
     def test_basicstate_input(self):
         bs1 = pcvl.BasicState("|1,0,1>")
-        _layer = ML.QuantumLayer(
+        ML.QuantumLayer(
             circuit=pcvl.Circuit(bs1.m),
             computation_space=ML.ComputationSpace.FOCK,
             input_state=bs1,
@@ -591,7 +591,7 @@ class TestQuantumLayer:
         # An annotated BasicState should raise as annotations are not supported
         bs_annot = pcvl.BasicState("|{a:0},0,1>")
         with pytest.raises(
-            ValueError, match="BasicState with annotations are not supported"
+            ValueError, match="BasicState with annotations is not supported"
         ):
             _ = ML.QuantumLayer(
                 circuit=pcvl.Circuit(bs_annot.m),

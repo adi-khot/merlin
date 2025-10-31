@@ -45,6 +45,7 @@ from ..measurement import OutputMapper
 from ..measurement.autodiff import AutoDiffProcess
 from ..measurement.strategies import MeasurementStrategy
 from ..pcvl_pytorch.utils import pcvl_to_tensor
+from ..utils.dtypes import complex_dtype_for
 from ..utils.grouping import ModGrouping
 
 
@@ -210,8 +211,8 @@ class QuantumLayer(nn.Module):
         device : torch.device | None, optional
             Target device for internal tensors (e.g., ``torch.device("cuda")``).
         dtype : torch.dtype | None, optional
-            Precision for internal tensors (e.g., ``torch.float32``). For complex
-            amplitudes, the matching complex dtype is chosen automatically.
+            Precision for internal tensors (e.g., ``torch.float32``). The matching
+            complex dtype is chosen automatically.
         **kwargs
             Additional (legacy) keyword arguments.
 
@@ -247,6 +248,7 @@ class QuantumLayer(nn.Module):
 
         self.device = device
         self.dtype = dtype or torch.float32
+        self.complex_dtype = complex_dtype_for(self.dtype)
         self.input_size = input_size
         self.amplitude_encoding = amplitude_encoding
 
@@ -287,11 +289,22 @@ class QuantumLayer(nn.Module):
 
         if isinstance(input_state, pcvl.BasicState):
             if not isinstance(input_state, xqlbr.FockState):
-                raise ValueError("BasicState with annotations are not supported")
+                raise ValueError("BasicState with annotations is not supported")
             input_state = list(input_state)
         elif isinstance(input_state, pcvl.StateVector):
+            if len(input_state) == 0:
+                raise ValueError("input_state StateVector cannot be empty")
+            sv_n_photons = input_state.n.pop()
+            if n_photons is not None and sv_n_photons != n_photons:
+                raise ValueError(
+                    "Inconsistent number of photons between input_state and n_photons."
+                )
+            self.n_photons = sv_n_photons
             input_state = pcvl_to_tensor(
-                input_state, self.computation_space, device=device, dtype=dtype
+                input_state,
+                self.computation_space,
+                device=device,
+                dtype=self.complex_dtype,
             )
         self.input_state = input_state
 
@@ -681,16 +694,6 @@ class QuantumLayer(nn.Module):
         # For custom circuits without explicit encoding metadata, apply π scaling
         return x * torch.pi
 
-    def _complex_dtype(self) -> torch.dtype:
-        """Return the complex dtype matching the layer precision."""
-        if self.dtype == torch.float16 and hasattr(torch, "complex32"):
-            return torch.complex32
-        if self.dtype == torch.float32:
-            return torch.complex64
-        if self.dtype == torch.float64:
-            return torch.complex128
-        raise ValueError(f"Unsupported dtype for amplitude encoding: {self.dtype}")
-
     def _apply_angle_encoding(
         self, x: torch.Tensor, spec: dict[str, Any]
     ) -> torch.Tensor:
@@ -773,7 +776,7 @@ class QuantumLayer(nn.Module):
             amplitude = amplitude.to(self.device)
 
         if amplitude.is_complex():
-            amplitude = amplitude.to(self._complex_dtype())
+            amplitude = amplitude.to(self.complex_dtype)
         else:
             amplitude = amplitude.to(self.dtype)
 
