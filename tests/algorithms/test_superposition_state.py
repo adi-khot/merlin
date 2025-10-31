@@ -224,6 +224,69 @@ class TestOutputSuperposedState:
         assert call_tracker["ebs"] == 0
         assert call_tracker["super"] == 1
 
+    def test_superposition_state_classical_batch(self):
+        circuit = pcvl.Circuit(3)
+        circuit.add(0, pcvl.PS(pcvl.P("px_0")))
+        circuit.add(1, pcvl.PS(pcvl.P("px_1")))
+        circuit.add(2, pcvl.PS(pcvl.P("px_2")))
+
+        n_photons = 1
+        expected_states = math.comb(circuit.m, n_photons)
+        input_state = torch.rand(2, expected_states, dtype=torch.float64)
+        input_state = input_state / input_state.norm(p=2, dim=1, keepdim=True)
+
+        layer = QuantumLayer(
+            circuit=circuit,
+            n_photons=n_photons,
+            measurement_strategy=MeasurementStrategy.PROBABILITIES,
+            input_state=input_state,
+            trainable_parameters=[],
+            input_parameters=["px"],
+            dtype=torch.float64,
+            computation_space=ComputationSpace.UNBUNCHED,
+        )
+
+        process = layer.computation_process
+        call_tracker = {"ebs": 0, "super": 0}
+        original_ebs = process.compute_ebs_simultaneously
+        original_super = process.compute_superposition_state
+
+        def tracked_ebs(self, parameters, simultaneous_processes=1):
+            call_tracker["ebs"] += 1
+            call_tracker["simultaneous_processes"] = simultaneous_processes
+            # Surface the tensor shape returned by the batching kernel for regression checks.
+            result = original_ebs(
+                parameters, simultaneous_processes=simultaneous_processes
+            )
+            call_tracker["result_shape"] = result.shape
+            return result
+
+        def tracked_super(self, parameters, return_keys=False):
+            call_tracker["super"] += 1
+            return original_super(parameters, return_keys=return_keys)
+
+        process.compute_ebs_simultaneously = MethodType(tracked_ebs, process)
+        process.compute_superposition_state = MethodType(tracked_super, process)
+
+        batch_size = expected_states
+        classical_input = torch.rand(batch_size, layer.input_size, dtype=torch.float64)
+
+        output = layer(classical_input)
+
+        assert call_tracker["ebs"] == 1
+        assert call_tracker["super"] == 0
+        assert call_tracker["simultaneous_processes"] == expected_states
+        assert call_tracker["result_shape"] == (
+            batch_size,
+            input_state.shape[0],
+            layer.output_size,
+        )
+        assert output.shape == (
+            batch_size,
+            input_state.shape[0],
+            layer.output_size,
+        )
+
     def test_superposition_state_input(self):
         n_modes = 10
         n_photons = 3
@@ -246,7 +309,7 @@ class TestOutputSuperposedState:
         sum_values = (input_state**2).sum(dim=-1, keepdim=True)
         input_state = input_state / sum_values
 
-        _layer = QuantumLayer(
+        layer = QuantumLayer(
             circuit=circuit,
             n_photons=n_photons,
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
@@ -257,10 +320,66 @@ class TestOutputSuperposedState:
             computation_space=ComputationSpace.UNBUNCHED,
         )
 
-        # here check if we can send a batch input to forward (corresponding to the thetas)
-        # and that they match non-batch call
+        process = layer.computation_process
+        call_tracker = {"ebs": 0, "super": 0}
+        original_ebs = process.compute_ebs_simultaneously
+        original_super = process.compute_superposition_state
 
-        assert False
+        def tracked_ebs(self, parameters, simultaneous_processes=1):
+            call_tracker["ebs"] += 1
+            call_tracker["simultaneous_processes"] = simultaneous_processes
+            # Keep visibility on the broadcasted tensor layout returned by the batched kernel.
+            result = original_ebs(
+                parameters, simultaneous_processes=simultaneous_processes
+            )
+            call_tracker["result_shape"] = result.shape
+            return result
+
+        def tracked_super(self, parameters, return_keys=False):
+            call_tracker["super"] += 1
+            return original_super(parameters, return_keys=return_keys)
+
+        process.compute_ebs_simultaneously = MethodType(tracked_ebs, process)
+        process.compute_superposition_state = MethodType(tracked_super, process)
+
+        dummy_input = torch.rand(4, n_modes, dtype=torch.float64)
+        sum_values = (dummy_input**2).sum(dim=-1, keepdim=True)
+        dummy_input = dummy_input / sum_values
+        output = layer(dummy_input)
+
+        assert call_tracker["ebs"] == 1
+        assert call_tracker["super"] == 0
+        assert call_tracker["simultaneous_processes"] == expected_states
+        assert call_tracker["result_shape"] == (
+            dummy_input.shape[0],
+            input_state.shape[0],
+            layer.output_size,
+        )
+
+        assert output.shape == (
+            dummy_input.shape[0],
+            input_state.shape[0],
+            layer.output_size,
+        )
+
+        probs = output
+        if probs.is_complex():
+            probs = probs.abs() ** 2
+        # Ensure probability mass for each (classical batch, superposition batch) pair still sums to 1.
+        sums = probs.sum(dim=-1)
+        assert torch.allclose(sums, torch.ones_like(sums), atol=1e-6)
+
+        # Restore original methods for single-sample comparison
+        process.compute_ebs_simultaneously = original_ebs
+        process.compute_superposition_state = original_super
+
+        single_outputs = []
+        for row in dummy_input:
+            single_outputs.append(layer(row))
+
+        stacked = torch.stack(single_outputs, dim=0)
+        # Batched execution must match the per-sample forward calls to avoid hidden broadcasting artefacts.
+        assert torch.allclose(output, stacked, atol=1e-6)
 
     def test_superposition_state_statevector(self):
         n_modes = 10

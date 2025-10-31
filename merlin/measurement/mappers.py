@@ -95,20 +95,21 @@ class Probabilities(nn.Module):
         Returns:
             Fock states probability tensor of shape (batch_size, num_states) or (num_states,)
         """
-        single_input = x.ndim == 1
-        if single_input:
-            x = x.unsqueeze(0)
+        trailing_dim = x.shape[-1]
+        # Collapse any leading batch dimensions so amplitude detection works uniformly for scalars, matrices or tensors.
+        leading_shape = x.shape[:-1]
+        reshaped = x.reshape(-1, trailing_dim)
 
         # Determine if x represents amplitudes (normalized squared norm)
-        norm = torch.sum(x.abs() ** 2, dim=1, keepdim=True)
+        norm = torch.sum(reshaped.abs() ** 2, dim=1, keepdim=True)
         is_amplitude = torch.allclose(norm, torch.ones_like(norm), atol=1e-6)
 
         if is_amplitude:
-            prob = x.abs() ** 2
+            prob = reshaped.abs() ** 2
         else:
-            prob = x
+            prob = reshaped
 
-        return prob.squeeze(0) if single_input else prob
+        return prob.reshape(*leading_shape, trailing_dim)
 
 
 class ModeExpectations(nn.Module):

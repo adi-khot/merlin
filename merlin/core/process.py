@@ -322,6 +322,11 @@ class ComputationProcess(AbstractComputationProcess):
         prepared_state = self._prepare_superposition_tensor()
 
         unitary = self.converter.to_tensor(*parameters)
+        # Allow classical parameters to be batched: in that case the converter already returns a stack of unitaries.
+        batched_parameters = unitary.dim() == 3
+        if not batched_parameters:
+            unitary = unitary.unsqueeze(0)
+        parameter_batch = unitary.shape[0]
 
         # Find non-zero input states - for efficient processing of only not zero amplitude states
         mask = (prepared_state.real**2 + prepared_state.imag**2 < 1e-13).all(dim=0)
@@ -334,7 +339,11 @@ class ComputationProcess(AbstractComputationProcess):
 
         # Initialize amplitudes tensor
         amplitudes = torch.zeros(
-            (prepared_state.shape[-1], len(self.simulation_graph.mapped_keys)),
+            (
+                parameter_batch,
+                prepared_state.shape[-1],
+                len(self.simulation_graph.mapped_keys),
+            ),
             dtype=unitary.dtype,
             device=prepared_state.device,
         )
@@ -356,7 +365,7 @@ class ComputationProcess(AbstractComputationProcess):
             )
             # Stack amplitudes for each input state in the batch
             for k, idx in enumerate(batch_indices):
-                amplitudes[idx, :] = batch_amplitudes[:, :, k]
+                amplitudes[:, idx, :] = batch_amplitudes[:, :, k]
 
         # Apply input state coefficients
         input_state = prepared_state.to(amplitudes.dtype)
@@ -365,7 +374,11 @@ class ComputationProcess(AbstractComputationProcess):
             1e-12
         )
         # The actual sum of amplitudes weighted by input coefficients (for each batch element) is done here
-        final_amplitudes = input_state @ amplitudes
+        # Combine each prepared input coefficient with the output amplitudes of every propagated Fock component.
+        final_amplitudes = torch.einsum("se, beo -> bso", input_state, amplitudes)
+
+        if final_amplitudes.shape[0] == 1:
+            final_amplitudes = final_amplitudes.squeeze(0)
 
         # Matching the logical basis prevents downstream shape changes when
         # switching computation spaces
