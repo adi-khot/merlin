@@ -32,6 +32,7 @@ import perceval as pcvl
 import torch
 
 from ..pcvl_pytorch import CircuitConverter, build_slos_distribution_computegraph
+from ..utils.combinadics import Combinadics
 from .base import AbstractComputationProcess
 from .computation_space import ComputationSpace
 
@@ -478,12 +479,67 @@ class ComputationProcess(AbstractComputationProcess):
             and state_dim == 2**self.n_photons
         )
 
+    def _coerce_superposition_tensor_shape(
+        self, tensor: torch.Tensor
+    ) -> torch.Tensor | None:
+        """Attempt to reconcile tensors encoded in a smaller logical basis."""
+        if self.computation_space is not ComputationSpace.FOCK:
+            return None
+
+        if self.n_photons is None or self.m is None:
+            return None
+
+        if tensor.dim() == 1:
+            feature_dim = tensor.shape[0]
+        elif tensor.dim() == 2:
+            feature_dim = tensor.shape[1]
+        else:
+            return None
+
+        # Detect tensors encoded in the UNBUNCHED basis and lift them to the Fock basis.
+        unbunched_size = math.comb(self.m, self.n_photons)
+        if feature_dim != unbunched_size:
+            return None
+
+        mapped_keys = [
+            tuple(key)
+            for key in self.simulation_graph.mapped_keys  # type: ignore[attr-defined]
+        ]
+        key_to_index = {state: idx for idx, state in enumerate(mapped_keys)}
+
+        try:
+            combinator = Combinadics("unbunched", self.n_photons, self.m)
+        except ValueError:
+            return None
+
+        indices: list[int] = []
+        for state in combinator.iter_states():
+            index = key_to_index.get(state)
+            if index is None:
+                return None
+            indices.append(index)
+
+        target_dim = len(mapped_keys)
+        if tensor.dim() == 1:
+            expanded = tensor.new_zeros(target_dim)
+            expanded[indices] = tensor
+        else:
+            expanded = tensor.new_zeros(tensor.shape[0], target_dim)
+            expanded[:, indices] = tensor
+
+        return expanded
+
     def _prepare_superposition_tensor(self) -> torch.Tensor:
         """Validate, normalise, and convert the stored superposition state to the correct dtype."""
         if not isinstance(self.input_state, torch.Tensor):
             raise TypeError("Input state should be a tensor")
 
         tensor = self.input_state
+
+        coerced = self._coerce_superposition_tensor_shape(tensor)
+        if coerced is not None:
+            tensor = coerced
+
         self._validate_superposition_state_shape(tensor)
 
         if tensor.dim() == 1:
