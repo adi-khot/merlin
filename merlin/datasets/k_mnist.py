@@ -21,11 +21,8 @@
 # SOFTWARE.
 
 import numpy as np
-import pandas as pd
 
-from merlin.datasets import DatasetMetadata
-
-from .utils import fetch
+from .mnist_digits import get_data_generic
 
 K_MNIST_METADATA = {
     "name": "Kuzushiji-MNIST",
@@ -50,7 +47,7 @@ K_MNIST_METADATA = {
     "task_type": ["classification"],
     "num_classes": 10,
     "characteristics": ["image", "handwritten"],
-    "homepage": "https://huggingface.co/datasets/vincent-espitalier/K-MNIST-CSV",
+    "homepage": "https://github.com/rois-codh/kmnist",
     "license": "Creative Commons Attribution-Share Alike 4.0",
     "citation": """@online{clanuwat2018deep,
         author       = {Tarin Clanuwat and Mikel Bober-Irizar and Asanobu Kitamoto and Alex Lamb and Kazuaki Yamamoto and David Ha},
@@ -73,51 +70,31 @@ K_MNIST_METADATA = {
 }
 
 
-def get_data_train_huggingface():
-    train = fetch(
-        "https://huggingface.co/datasets/vincent-espitalier/K-MNIST-CSV/resolve/main/kmnist_train.csv"
+def get_data_train():
+    return get_data_generic(
+        subset="train",
+        url_images="https://codh.rois.ac.jp/kmnist/dataset/kmnist/train-images-idx3-ubyte.gz",
+        url_labels="https://codh.rois.ac.jp/kmnist/dataset/kmnist/train-labels-idx1-ubyte.gz",
     )
-    df_train = pd.read_csv(train)
 
-    X = (
-        df_train[[col for col in df_train.columns if col.startswith("pixel")]]
-        .values.astype(np.float32)
-        .reshape(-1, 28, 28)
+
+def get_data_test():
+    return get_data_generic(
+        subset="test",
+        url_images="https://codh.rois.ac.jp/kmnist/dataset/kmnist/t10k-images-idx3-ubyte.gz",
+        url_labels="https://codh.rois.ac.jp/kmnist/dataset/kmnist/t10k-labels-idx1-ubyte.gz",
     )
-    y = df_train["label"].to_numpy()
-
-    K_MNIST_METADATA["num_instances"] = len(X)
-    K_MNIST_METADATA["subset"] = "train"
-    return X, y, DatasetMetadata.from_dict(K_MNIST_METADATA)
-
-
-def get_data_test_huggingface():
-    val = fetch(
-        "https://huggingface.co/datasets/vincent-espitalier/K-MNIST-CSV/resolve/main/kmnist_test.csv"
-    )
-    df_val = pd.read_csv(val)
-
-    X = (
-        df_val[[col for col in df_val.columns if col.startswith("pixel")]]
-        .values.astype(np.float32)
-        .reshape(-1, 28, 28)
-    )
-    y = df_val["label"].to_numpy()
-
-    K_MNIST_METADATA["num_instances"] = len(X)
-    K_MNIST_METADATA["subset"] = "val"
-    return X, y, DatasetMetadata.from_dict(K_MNIST_METADATA)
 
 
 __all__ = [
-    "get_data_train_huggingface",
-    "get_data_test_huggingface",
+    "get_data_train",
+    "get_data_test",
 ]
 
 # Example usage
 if __name__ == "__main__":
-    X, y, metadata = get_data_train_huggingface()
-    Xtest, ytest, _ = get_data_test_huggingface()
+    X, y, metadata = get_data_train()
+    Xtest, ytest, _ = get_data_test()
     print(len(X), len(Xtest))
     # Mean of per-pixel standard deviations – Helps characterize/identify the dataset by capturing pixel-level variability.
     X_mean_std_per_pixel = np.std(X.reshape(X.shape[0], -1), axis=0).mean()
