@@ -9,6 +9,19 @@ Merlin now exposes quantum-to-classical conversion through two orthogonal concep
 - :class:`~merlin.measurement.strategies.MeasurementStrategy` selects how results are extracted from the quantum simulation or hardware backend.
 - :class:`~merlin.utils.grouping.LexGrouping` and :class:`~merlin.utils.grouping.ModGrouping` provide optional post-processing of outputs (see :doc:`./grouping`).
 
+Detector-aware execution
+========================
+
+When a :class:`perceval.Experiment` is provided, the :class:`~merlin.algorithms.layer.QuantumLayer`
+derives a detector transform that remaps raw Fock-state probabilities to the classical
+outcomes defined by the experiment. This detector mapping is applied **before** the
+measurement strategy converts the distribution into classical features. As a consequence:
+
+* ``MeasurementStrategy.PROBABILITIES`` and ``MeasurementStrategy.MODE_EXPECTATIONS`` transparently work with any detector setup.
+* ``MeasurementStrategy.AMPLITUDES`` requires direct access to the complex amplitudes and therefore **cannot** be used when custom detectors are defined (the layer will raise a ``RuntimeError``).
+
+The sections below describe each strategy assuming detector support is valid for that choice.
+
 PROBABILITIES
 -----------------------
 
@@ -65,7 +78,15 @@ Key properties:
 AMPLITUDES
 ---------------
 
-Returns the complex amplitudes directly. This strategy is only meaningful in simulation, because amplitudes cannot be measured or obtained on hardware.
+Returns the complex amplitudes directly. This strategy is only meaningful in 
+simulation, because amplitudes cannot be measured or obtained on hardware. Indeed,
+returning amplitudes is physically non-realizable and should mainly be used for 
+connecting two quantum layers (e.g. when the second one uses amplitude encoding) 
+or for analytical purposes when studying quantum systems.
+
+Adding detectors corresponds to performing a measurement of the quantum state, 
+which collapses it and is therefore incompatible with amplitude retrieval. Thus,
+this measurement strategy **requires that no detectors are defined**.
 
 .. code-block:: python
 
@@ -79,17 +100,19 @@ Returns the complex amplitudes directly. This strategy is only meaningful in sim
         measurement_strategy=MeasurementStrategy.AMPLITUDES,
     )
 
-Use this strategy for debugging, algorithmic research, or when a classical routine manipulates complex amplitudes directly. The output is a complex tensor normalised to unit norm (within numerical precision).
+Use this strategy for debugging, algorithmic research, or when a classical routine manipulates complex amplitudes directly. The output is a complex tensor normalised to unit norm (within numerical precision). Attempting to combine ``MeasurementStrategy.AMPLITUDES`` with custom detectors raises a ``RuntimeError``.
 
 The helper module is :class:`~merlin.measurement.mappers.Amplitudes`.
 
-Migrating from OutputMappingStrategy
-====================================
+Migrating from OutputMappingStrategy (legacy)
+============================================
 
-Legacy name → new pipeline:
+Earlier releases exposed :class:`~merlin.algorithms.layer.QuantumLayer` through
+``OutputMappingStrategy``. Newc code should rely on :class:`~merlin.measurement.strategies.MeasurementStrategy`
+instead. The mapping is:
 
 - ``OutputMappingStrategy.NONE`` → ``MeasurementStrategy.PROBABILITIES``
-- ``OutputMappingStrategy.LINEAR`` → ``MeasurementStrategy.PROBABILITIES`` followed by a torch.nn.Linear layer
+- ``OutputMappingStrategy.LINEAR`` → ``MeasurementStrategy.PROBABILITIES`` followed by a ``torch.nn.Linear`` layer
 - ``OutputMappingStrategy.LEXGROUPING`` or ``GROUPING`` → ``MeasurementStrategy.PROBABILITIES`` + :class:`~merlin.utils.grouping.LexGrouping`
 - ``OutputMappingStrategy.MODGROUPING`` → ``MeasurementStrategy.PROBABILITIES`` + :class:`~merlin.utils.grouping.ModGrouping`
 

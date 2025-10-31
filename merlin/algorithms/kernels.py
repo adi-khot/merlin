@@ -1,4 +1,5 @@
 import itertools
+import warnings
 from collections.abc import Callable
 from typing import cast
 
@@ -9,6 +10,7 @@ from torch import Tensor
 
 from ..builder.circuit_builder import ANGLE_ENCODING_MODE_ERROR, CircuitBuilder
 from ..measurement.autodiff import AutoDiffProcess
+from ..measurement.detectors import DetectorTransform, resolve_detectors
 from ..pcvl_pytorch.locirc_to_tensor import CircuitConverter
 from ..pcvl_pytorch.slos_torchscript import (
     build_slos_distribution_computegraph as build_slos_graph,
@@ -27,6 +29,8 @@ class FeatureMap:
         circuit: Pre-compiled :class:`pcvl.Circuit` to encode features.
         input_size: Dimension of incoming classical data (required).
         builder: Optional :class:`CircuitBuilder` to compile into a circuit.
+        experiment: Optional :class:`pcvl.Experiment` providing both the circuit and detector configuration.
+                   Exactly one of ``circuit``, ``builder``, or ``experiment`` must be supplied.
         input_parameters: Parameter prefix(es) that host the classical data.
         dtype: Torch dtype used when constructing the unitary.
         device: Torch device on which unitaries are evaluated.
@@ -38,6 +42,7 @@ class FeatureMap:
         input_size: int | None = None,
         *,
         builder: CircuitBuilder | None = None,
+        experiment: pcvl.Experiment | None = None,
         input_parameters: str | list[str] | None,
         trainable_parameters: list[str] | None = None,
         dtype: str | torch.dtype = torch.float32,
@@ -48,28 +53,53 @@ class FeatureMap:
         builder_input: list[str] = []
 
         self._angle_encoding_specs: dict[str, dict[str, object]] = {}
+        self.experiment: pcvl.Experiment | None = None
 
-        if circuit is not None and builder is not None:
-            raise ValueError("Provide either 'circuit' or 'builder', not both")
+        # The feature map can be defined from exactly one artefact among circuit, builder, or experiment.
+        if sum(x is not None for x in (circuit, builder, experiment)) != 1:
+            raise ValueError(
+                "Provide exactly one of 'circuit', 'builder', or 'experiment'."
+            )
+
+        resolved_circuit: pcvl.Circuit | None = None
 
         if builder is not None:
             builder_trainable = builder.trainable_parameter_prefixes
             builder_input = builder.input_parameter_prefixes
             self._angle_encoding_specs = builder.angle_encoding_specs
-            circuit = builder.to_pcvl_circuit(pcvl)
+            resolved_circuit = builder.to_pcvl_circuit(pcvl)
+            self.experiment = pcvl.Experiment(resolved_circuit)
+        elif circuit is not None:
+            resolved_circuit = circuit
+            self.experiment = pcvl.Experiment(resolved_circuit)
+        elif experiment is not None:
+            if (
+                not experiment.is_unitary
+                or experiment.post_select_fn is not None
+                or experiment.heralds
+            ):
+                raise ValueError(
+                    "The provided experiment must be unitary, and must not have post-selection or heralding."
+                )
+            if experiment.min_photons_filter:
+                raise ValueError(
+                    "The provided experiment must not have a minimum photons filter."
+                )
+            self.experiment = experiment
+            resolved_circuit = experiment.unitary_circuit()
+        else:  # pragma: no cover - defensive guard
+            raise RuntimeError("Resolved circuit could not be determined.")
 
-        if circuit is None:
-            raise ValueError("Either 'circuit' or 'builder' must be provided")
-        self.circuit = circuit
+        self.circuit = resolved_circuit
         if input_size is None:
             raise TypeError("FeatureMap requires 'input_size' to be specified.")
         self.input_size = input_size
         if trainable_parameters is None:
             trainable_parameters = builder_trainable
-        self.trainable_parameters = trainable_parameters or []
+        self.trainable_parameters = list(trainable_parameters or [])
         self.dtype = to_torch_dtype(dtype)
         self.device = device or torch.device("cpu")
-        self.is_trainable = bool(trainable_parameters)
+        self.is_trainable = bool(self.trainable_parameters)
         self._encoder = encoder  # NEW
 
         if input_parameters is None:
@@ -92,7 +122,7 @@ class FeatureMap:
             self.circuit,
             [self.input_parameters] + self.trainable_parameters,
             dtype=self.dtype,
-            device=device,
+            device=self.device,
         )
         # Set training parameters as torch parameters
         self._training_dict: dict[str, torch.nn.Parameter] = {}
@@ -616,7 +646,12 @@ class FidelityKernel(torch.nn.Module):
         self.sampling_method = sampling_method
         self.no_bunching = no_bunching
         self.force_psd = force_psd
-        self.device = device or feature_map.device
+        base_device = device if device is not None else feature_map.device
+        self.device = (
+            torch.device(base_device)
+            if base_device is not None
+            else torch.device("cpu")
+        )
         # Normalize to a torch.dtype
         if dtype is None:
             self.dtype = feature_map.dtype
@@ -632,6 +667,19 @@ class FidelityKernel(torch.nn.Module):
             for param_name, param in feature_map._training_dict.items():
                 self.register_parameter(param_name, param)
 
+        experiment = getattr(self.feature_map, "experiment", None)
+        if experiment is None:
+            experiment = pcvl.Experiment(self.feature_map.circuit)
+            self.feature_map.experiment = experiment
+
+        self._validate_experiment(experiment)
+        self.experiment = experiment
+        experiment_circuit = self.experiment.unitary_circuit()
+        if experiment_circuit.m != self.feature_map.circuit.m:
+            raise ValueError(
+                "Experiment circuit must have the same number of modes as the feature map circuit."
+            )
+
         if max(input_state) > 1 and no_bunching:
             raise ValueError(
                 f"Bunching must be enabled for an input state with"
@@ -644,6 +692,15 @@ class FidelityKernel(torch.nn.Module):
             )
 
         m, n = len(input_state), sum(input_state)
+        self._detectors, self._empty_detectors = resolve_detectors(self.experiment, m)
+
+        # Verify that no Detector was defined in experiement if using no_bunching=True:
+        # TODO: change no_bunching check with computation_space check
+        # if not self._empty_detectors and not ComputationSpace.FOCK:
+        if not self._empty_detectors and no_bunching:
+            raise RuntimeError(
+                "no_bunching must be False if Experiment contains at least one Detector."
+            )
 
         self._slos_graph = build_slos_graph(
             m=m,
@@ -656,6 +713,34 @@ class FidelityKernel(torch.nn.Module):
         # Find index of input state in output distribution
         keys = self._slos_graph.final_keys
         self._input_state_index = keys.index(tuple(input_state))
+        self._detector_transform = DetectorTransform(
+            keys,
+            self._detectors,
+            dtype=self.dtype,
+            device=self.device,
+        )
+        self._detector_is_identity = self._detector_transform.is_identity
+        detection_dim = self._detector_transform.output_size
+        weight_device = self.device or torch.device("cpu")
+        if self._detector_is_identity:
+            weights = torch.zeros(detection_dim, dtype=self.dtype, device=weight_device)
+            weights[self._input_state_index] = 1.0
+            self._input_detection_index = self._input_state_index
+        else:
+            matrix: Tensor = cast(Tensor, self._detector_transform._matrix)
+            row = matrix[self._input_state_index].to(dtype=self.dtype)
+            if self.device is not None:
+                row = row.to(self.device)
+            weights = row
+            nonzero = torch.nonzero(row > 1e-8, as_tuple=True)[0]
+            self._input_detection_index = None
+            if nonzero.numel() == 1 and torch.isclose(
+                row[nonzero[0]],
+                torch.tensor(1.0, dtype=row.dtype, device=row.device),
+                atol=1e-6,
+            ):
+                self._input_detection_index = int(nonzero[0].item())
+        self.register_buffer("_input_detection_weights", weights)
         # For sampling
         self._autodiff_process = AutoDiffProcess()
 
@@ -689,18 +774,11 @@ class FidelityKernel(torch.nn.Module):
         if x2 is not None and not isinstance(x2, torch.Tensor):
             x2 = torch.as_tensor(x2, dtype=self.dtype, device=self.device)
 
-        x1 = x1.reshape(-1, self.input_size)
-        x2 = (
-            x2.reshape(-1, self.input_size)
-            if isinstance(x2, torch.Tensor)
-            else (
-                torch.as_tensor(x2, dtype=self.dtype, device=self.device).reshape(
-                    -1, self.input_size
-                )
-                if x2 is not None
-                else None
-            )
-        )
+        if isinstance(x2, torch.Tensor) or x2 is None:
+            x1 = x1.reshape(-1, self.input_size)
+            x2 = x2.reshape(-1, self.input_size) if x2 is not None else None
+        else:
+            raise (TypeError("x2 is not None nor torch.Tensor"))
 
         # Check if we are constructing training matrix
         equal_inputs = self._check_equal_inputs(x1, x2)
@@ -719,6 +797,16 @@ class FidelityKernel(torch.nn.Module):
                 self.feature_map.compute_unitary(x).transpose(0, 1).conj().to(x1.device)
                 for x in x2_tensor
             ])
+            if isinstance(x2, torch.Tensor):
+                U_adjoint = torch.stack([
+                    self.feature_map.compute_unitary(x)
+                    .transpose(0, 1)
+                    .conj()
+                    .to(x1.device)
+                    for x in x2
+                ])
+            else:
+                raise (TypeError("x2 is not None nor torch.Tensor"))
 
             # Calculate circuit unitary for every pair of datapoints
             all_circuits = U_forward.unsqueeze(1) @ U_adjoint.unsqueeze(0)
@@ -743,13 +831,24 @@ class FidelityKernel(torch.nn.Module):
         if probabilities.ndim == 1:
             probabilities = probabilities.unsqueeze(0)
         probabilities = probabilities.to(dtype=self.dtype)
+        detection_probs = self._detector_transform(probabilities)
 
         if self.shots > 0:
             probabilities = self._autodiff_process.sampling_noise.pcvl_sampler(
                 probabilities, self.shots, self.sampling_method
             )
+            detection_probs = self._autodiff_process.sampling_noise.pcvl_sampler(
+                detection_probs, self.shots, self.sampling_method
+            )
 
         transition_probs = probabilities[:, self._input_state_index]
+        if self._input_detection_index is not None:
+            transition_probs = detection_probs[:, self._input_detection_index]
+        else:
+            weights = self._input_detection_weights.to(
+                dtype=detection_probs.dtype, device=detection_probs.device
+            )
+            transition_probs = detection_probs @ weights
 
         if x2 is None:
             # Copy transition probs to upper & lower diagonal
@@ -774,6 +873,13 @@ class FidelityKernel(torch.nn.Module):
             )
             transition_probs = transition_probs.to(dtype=self.dtype, device=x1.device)
             kernel_matrix = transition_probs.reshape(len_x1, len(x2_tensor))
+            if isinstance(x2, torch.Tensor):
+                transition_probs = transition_probs.to(
+                    dtype=self.dtype, device=x1.device
+                )
+                kernel_matrix = transition_probs.reshape(len_x1, len(x2))
+            else:
+                raise (TypeError("x2 is not None nor torch.Tensor"))
 
             if self.force_psd and equal_inputs:
                 # Symmetrize the matrix
@@ -821,11 +927,25 @@ class FidelityKernel(torch.nn.Module):
             probabilities = probabilities.unsqueeze(0)
         probabilities = probabilities.to(dtype=self.dtype, device=self.device)
 
+        detection_probs = self._detector_transform(probabilities)
+
         if self.shots > 0:
             probabilities = self._autodiff_process.sampling_noise.pcvl_sampler(
                 probabilities, self.shots, self.sampling_method
             )
-        return probabilities[0, self._input_state_index].item()
+            detection_probs = self._autodiff_process.sampling_noise.pcvl_sampler(
+                detection_probs, self.shots, self.sampling_method
+            )
+
+        if self._input_detection_index is not None:
+            value = detection_probs[0, self._input_detection_index]
+        else:
+            weights = self._input_detection_weights.to(
+                dtype=detection_probs.dtype, device=detection_probs.device
+            )
+            value = (detection_probs @ weights)[0]
+
+        return value.item()
 
     @classmethod
     def simple(
@@ -896,3 +1016,22 @@ class FidelityKernel(torch.nn.Module):
         elif isinstance(x1, np.ndarray):
             return np.allclose(x1, x2)
         return False
+
+    @staticmethod
+    def _validate_experiment(experiment: pcvl.Experiment) -> None:
+        """Validate that the provided experiment is compatible with fidelity kernels."""
+        if (
+            not experiment.is_unitary
+            or experiment.post_select_fn is not None
+            or experiment.heralds
+            or experiment.in_heralds
+        ):
+            raise ValueError(
+                "The provided experiment must be unitary, and must not have post-selection or heralding."
+            )
+        if experiment.min_photons_filter:
+            warnings.warn(
+                "The 'min_photons_filter' from the experiment is currently ignored.",
+                UserWarning,
+                stacklevel=2,
+            )

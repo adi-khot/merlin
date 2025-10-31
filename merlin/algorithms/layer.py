@@ -27,6 +27,7 @@ Main QuantumLayer implementation
 from __future__ import annotations
 
 import warnings
+from collections.abc import Iterable, Sequence
 from contextlib import contextmanager
 from typing import Any, cast
 
@@ -43,6 +44,7 @@ from ..core.computation_space import ComputationSpace
 from ..core.process import ComputationProcessFactory
 from ..measurement import OutputMapper
 from ..measurement.autodiff import AutoDiffProcess
+from ..measurement.detectors import DetectorTransform, resolve_detectors
 from ..measurement.strategies import MeasurementStrategy
 from ..pcvl_pytorch.utils import pcvl_to_tensor
 from ..utils.grouping import ModGrouping
@@ -248,6 +250,14 @@ class QuantumLayer(nn.Module):
         self.device = device
         self.dtype = dtype or torch.float32
         self.input_size = input_size
+        self.measurement_strategy = measurement_strategy
+        self.experiment: pcvl.Experiment | None = None
+
+        self._detector_transform: DetectorTransform | None = None
+        self._detector_keys: list[tuple[int, ...]] = []
+        self._raw_output_keys: list[tuple[int, ...]] = []
+        self._detector_is_identity: bool = True
+        self._output_size: int = 0
         self.amplitude_encoding = amplitude_encoding
 
         # input_size management: input_size can be given only if amplitude_encoding is False
@@ -329,18 +339,10 @@ class QuantumLayer(nn.Module):
 
             # TODO: handle "min_detected_photons" from experiment, currently ignored => will come with post_selection_scheme introduction
             if experiment.min_photons_filter:
-                warnings.warn(
-                    "The 'min_photons_filter' from the experiment is currently ignored.",
-                    UserWarning,
-                    stacklevel=2,
+                raise ValueError(
+                    "The provided experiment must not have a min_photons_filter."
                 )
-            # TODO: handle "detectors" from experiment, currently ignored
-            if experiment.detectors:
-                warnings.warn(
-                    "The 'detectors' from the experiment are currently ignored.",
-                    UserWarning,
-                    stacklevel=2,
-                )
+            self.experiment = experiment
 
         self.angle_encoding_specs: dict[str, dict[str, Any]] = {}
 
@@ -357,14 +359,41 @@ class QuantumLayer(nn.Module):
             input_parameters = list(builder.input_parameter_prefixes)
             self.angle_encoding_specs = builder.angle_encoding_specs
             resolved_circuit = builder.to_pcvl_circuit(pcvl)
+            self.experiment = pcvl.Experiment(resolved_circuit)
         elif circuit is not None:
             resolved_circuit = circuit
+            self.experiment = pcvl.Experiment(resolved_circuit)
         elif experiment is not None:
             self.experiment = experiment
             self.noise_model = getattr(experiment, "noise", None)
             resolved_circuit = experiment.unitary_circuit()
+        else:
+            raise RuntimeError("Resolved circuit could not be determined.")
+
+        if self.experiment is None:
+            raise RuntimeError("Experiment must be initialised.")
 
         self.circuit = resolved_circuit
+        self._detectors, empty_detectors = resolve_detectors(
+            self.experiment, resolved_circuit.m
+        )
+        self._has_custom_detectors = not empty_detectors
+        self.detectors = self._detectors  # Backward compatibility alias
+
+        # Verify that detectors are allowed:
+        # TODO: change no_bunching check with computation_space check
+        # if self._has_custom_detectors and not ComputationSpace.FOCK:
+        if self._has_custom_detectors and no_bunching:
+            raise RuntimeError(
+                "no_bunching must be False if Experiment contains at least one Detector."
+            )
+        if (
+            self._has_custom_detectors
+            and measurement_strategy == MeasurementStrategy.AMPLITUDES
+        ):
+            raise RuntimeError(
+                "measurement_strategy=MeasurementStrategy.AMPLITUDES cannot be used when Experiment contains at least one Detector."
+            )
 
         # persist prefixes for export/introspection
         self.trainable_parameters: list[str] = list(trainable_parameters)
@@ -438,16 +467,26 @@ class QuantumLayer(nn.Module):
         else:
             raise ValueError("Either input_state or n_photons must be provided")
 
+        resolved_n_photons = (
+            n_photons if n_photons is not None else sum(self.input_state)
+        )
+
         self.computation_process = ComputationProcessFactory.create(
             circuit=circuit,
             input_state=self.input_state,
             trainable_parameters=trainable_parameters,
             input_parameters=input_parameters,
-            n_photons=n_photons,
+            n_photons=resolved_n_photons,
             device=self.device,
             dtype=self.dtype,
             computation_space=self.computation_space,
         )
+
+        # Setup DetectorTransform
+        self.n_photons = self.computation_process.n_photons
+        raw_keys = self.computation_process.simulation_graph.mapped_keys
+        self._raw_output_keys = [self._normalize_output_key(key) for key in raw_keys]
+        self._initialize_detector_transform()
 
         # Pick the effective state space after the factory creates the process so
         # dual-rail can shrink the logical basis without extra factory plumbing.
@@ -509,7 +548,7 @@ class QuantumLayer(nn.Module):
 
         # set input_size for amplitude encoding
         if self.amplitude_encoding:
-            self.input_size = len(self.state_keys)
+            self.input_size = len(self.output_keys)
 
     def _setup_parameters_from_custom(self, trainable_parameters: list[str] | None):
         """Setup parameters from custom circuit configuration."""
@@ -537,17 +576,10 @@ class QuantumLayer(nn.Module):
         self, measurement_strategy: MeasurementStrategy
     ):
         """Setup output mapping for custom circuit construction."""
-        # Get distribution size
-        dummy_params = self._create_dummy_parameters()
-        if self.input_state is not None and type(self.input_state) is torch.Tensor:
-            keys, distribution = self.computation_process.compute_superposition_state(
-                dummy_params, return_keys=True
-            )
-        else:
-            keys, distribution = self.computation_process.compute_with_keys(
-                dummy_params
-            )
-        dist_size = distribution.shape[-1]
+        if self._detector_transform is None:
+            raise RuntimeError("Detector transform must be initialised before sizing.")
+
+        dist_size = self._detector_transform.output_size
 
         # Determine output size (upstream model)
         if measurement_strategy == MeasurementStrategy.PROBABILITIES:
@@ -564,6 +596,8 @@ class QuantumLayer(nn.Module):
             self._output_size = dist_size
         else:
             raise TypeError(f"Unknown measurement_strategy: {measurement_strategy}")
+
+        keys = self._detector_keys
 
         # Create measurement mapping
         self.measurement_mapping = OutputMapper.create_mapping(
@@ -678,8 +712,7 @@ class QuantumLayer(nn.Module):
         if spec:
             return self._apply_angle_encoding(x, spec)
 
-        # For custom circuits without explicit encoding metadata, apply π scaling
-        return x * torch.pi
+        return x
 
     def _complex_dtype(self) -> torch.dtype:
         """Return the complex dtype matching the layer precision."""
@@ -710,7 +743,7 @@ class QuantumLayer(nn.Module):
             )
 
         if not combos:
-            encoded = x_batch * torch.pi
+            encoded = x_batch
             return encoded.squeeze(0) if squeeze else encoded
 
         encoded_cols: list[torch.Tensor] = []
@@ -751,7 +784,7 @@ class QuantumLayer(nn.Module):
                 "Amplitude-encoded inputs must be 1D (single state) or 2D (batch of states) tensors"
             )
 
-        expected_dim = len(self.state_keys)
+        expected_dim = len(self.output_keys)
         feature_dim = amplitude.shape[-1]
         if feature_dim != expected_dim:
             raise ValueError(
@@ -970,11 +1003,24 @@ class QuantumLayer(nn.Module):
                     ),
                     amplitudes,
                 )
+        if self.measurement_strategy in (
+            MeasurementStrategy.PROBABILITIES,
+            MeasurementStrategy.MODE_EXPECTATIONS,
+        ):
+            distribution = self._apply_detector_transform(distribution)
 
-        # Apply sampling if requested
-        if apply_sampling and effective_shots > 0:
-            results = adp.sampling_noise.pcvl_sampler(distribution, effective_shots)
+            # Apply sampling if requested
+            if apply_sampling and effective_shots > 0:
+                results = adp.sampling_noise.pcvl_sampler(distribution, effective_shots)
+            else:
+                results = distribution
+
+        # For MeasurementStrategy.AMPLITUDES, bypass detectors and sampling
         else:
+            if apply_sampling:
+                raise RuntimeError(
+                    "Sampling cannot be applied when measurement_strategy=MeasurementStrategy.AMPLITUDES."
+                )
             results = amplitudes
 
         # Apply measurement mapping (returns tensor of shape [B, output_size])
@@ -1003,17 +1049,56 @@ class QuantumLayer(nn.Module):
             self.computation_process.converter = self.computation_process.converter.to(
                 self.dtype, device
             )
+
+            if self._detector_transform is not None:
+                self._detector_transform = self._detector_transform.to(device)
+
         return self
 
     @property
-    def state_keys(self):
-        return getattr(self.computation_process, "logical_keys", None) or list(
-            self.computation_process.simulation_graph.mapped_keys
+    def output_keys(self):
+        if getattr(self, "_detector_transform", None) is None:
+            return self.computation_process.simulation_graph.mapped_keys
+        if self.measurement_strategy == MeasurementStrategy.AMPLITUDES:
+            return self._raw_output_keys
+        return (
+            self._raw_output_keys if self._detector_is_identity else self._detector_keys
         )
 
     @property
-    def output_size(self):
+    def output_size(self) -> int:
         return self._output_size
+
+    @property
+    def has_custom_detectors(self) -> bool:
+        return self._has_custom_detectors
+
+    def _initialize_detector_transform(self) -> None:
+        self._detector_transform = DetectorTransform(
+            self._raw_output_keys,
+            self._detectors,
+            dtype=self.dtype,
+            device=self.device,
+        )
+        self._detector_keys = self._detector_transform.output_keys
+        self._detector_is_identity = self._detector_transform.is_identity
+
+    @staticmethod
+    def _normalize_output_key(
+        key: Iterable[int] | torch.Tensor | Sequence[int],
+    ) -> tuple[int, ...]:
+        if isinstance(key, torch.Tensor):
+            return tuple(int(v) for v in key.tolist())
+        return tuple(int(v) for v in key)
+
+    def _apply_detector_transform(self, distribution: torch.Tensor) -> torch.Tensor:
+        if self._detector_transform is None:
+            raise RuntimeError(
+                "Detector transform must be initialised before applying detectors."
+            )
+        if self._detector_is_identity:
+            return distribution
+        return self._detector_transform(distribution)
 
     # =====================  EXPORT API FOR REMOTE PROCESSORS  =====================
 
@@ -1215,7 +1300,7 @@ class QuantumLayer(nn.Module):
                 self.add_module("post_processing", post_processing)
                 self.circuit = quantum_layer.circuit
                 if hasattr(post_processing, "output_size"):
-                    self._output_size = post_processing.output_size  # type: ignore[attr-defined]
+                    self._output_size = cast(int, post_processing.output_size)
                 else:
                     self._output_size = quantum_layer.output_size
 

@@ -4,7 +4,7 @@ Algorithms-level tests for amplitude-encoded QuantumLayer workflows.
 These cases validate:
 * Construction and execution of QuantumLayer when amplitude encoding is enabled.
 * Measurement strategies applied to amplitude vectors (e.g. returning probabilities).
-* The combinatorial integrity of `state_keys` for both `no_bunching` and full Fock spaces.
+* The combinatorial integrity of `output_keys` for both `no_bunching` and full Fock spaces.
 
 Keeping these checks here ensures the public algorithms facade keeps exposing
 the right behaviour for amplitude-centric users without dipping into lower-level tests.
@@ -119,7 +119,7 @@ def test_amplitude_encoding_output_matches_computation_space(
     amplitude_input = _normalised_state(expected_size, dtype=torch.float32).squeeze(0)
     outputs = layer(amplitude_input)
 
-    assert len(layer.state_keys) == expected_size
+    assert len(layer.output_keys) == expected_size
     assert outputs.shape[-1] == expected_size
 
 
@@ -367,7 +367,7 @@ def test_mapped_keys_no_bunching_space():
         computation_space=ComputationSpace.UNBUNCHED,
     )
 
-    mapped_keys = layer.state_keys
+    mapped_keys = layer.output_keys
     assert len(mapped_keys) == expected_states
     assert len(set(mapped_keys)) == expected_states
     assert set(mapped_keys) == _no_bunching_keys(circuit.m, n_photons)
@@ -395,7 +395,7 @@ def test_mapped_keys_fock_space():
         computation_space=ComputationSpace.FOCK,
     )
 
-    mapped_keys = layer.state_keys
+    mapped_keys = layer.output_keys
     assert len(mapped_keys) == expected_states
     assert len(set(mapped_keys)) == expected_states
     assert set(mapped_keys) == _fock_keys(circuit.m, n_photons)
@@ -423,7 +423,7 @@ def test_mapped_keys_dual_rail_space():
         computation_space=ComputationSpace.DUAL_RAIL,
     )
 
-    mapped_keys = layer.state_keys
+    mapped_keys = layer.output_keys
     assert len(mapped_keys) == expected_states
     assert len(set(mapped_keys)) == expected_states
     assert set(mapped_keys) == _dual_rail_keys(circuit.m, n_photons)
@@ -474,7 +474,7 @@ def test_ebs_batches_group_fock_states(computation_space: ComputationSpace):
     finally:
         process.simulation_graph.compute_batch = original_compute_batch  # type: ignore[assignment]
     expected_batches = [
-        [tuple(state) for state in layer.state_keys[i : i + 8]]
+        [tuple(state) for state in layer.output_keys[i : i + 8]]
         for i in range(0, expected_states, 8)
     ]
     assert recorded_batches == expected_batches
@@ -503,7 +503,7 @@ def test_amplitude_encoding_input_size(
     )
 
     assert layer.input_size == expected_size
-    assert len(layer.state_keys) == expected_size
+    assert len(layer.output_keys) == expected_size
 
 
 def test_amplitude_encoding_requires_valid_configuration():
@@ -633,7 +633,7 @@ def test_ebs_wrt_quantumlayer(
         computation_space=computation_space,
     )
 
-    num_states = len(ebs_layer.state_keys)
+    num_states = len(ebs_layer.output_keys)
 
     # generate random amplitude input
     magnitudes = torch.rand(batch_size, num_states, dtype=torch.float32)
@@ -656,7 +656,7 @@ def test_ebs_wrt_quantumlayer(
     ebs_params = ebs_layer.prepare_parameters([])
     ebs_unitary = ebs_layer.computation_process.converter.to_tensor(*ebs_params)
 
-    for idx, state in enumerate(ebs_layer.state_keys):
+    for idx, state in enumerate(ebs_layer.output_keys):
         coefficients = amplitude_input[:, idx].to(ebs_output.dtype).unsqueeze(-1)
         if coefficients.abs().max() > 1e-8:
             single_layer = QuantumLayer(

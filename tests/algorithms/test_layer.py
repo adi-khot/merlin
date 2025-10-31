@@ -36,6 +36,52 @@ import merlin as ML
 class TestQuantumLayer:
     """Test suite for QuantumLayer."""
 
+    def test_experiment_unitary_initialization(self):
+        """QuantumLayer should accept a unitary experiment."""
+
+        circuit = pcvl.Circuit(1)
+        experiment = pcvl.Experiment(circuit)
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1],
+        )
+
+        output = layer()
+        assert torch.allclose(
+            output.sum(), torch.tensor(1.0, dtype=output.dtype), atol=1e-6
+        )
+
+    def test_experiment_non_unitary_rejected(self):
+        """A non-unitary experiment should be rejected."""
+
+        circuit = pcvl.Circuit(1)
+        experiment = pcvl.Experiment(circuit)
+        experiment.add(0, pcvl.TD(1))
+        assert experiment.is_unitary is False
+
+        with pytest.raises(ValueError, match="must be unitary"):
+            ML.QuantumLayer(
+                input_size=0,
+                experiment=experiment,
+                input_state=[1],
+            )
+
+    def test_experiment_min_photons_filter_error(self):
+        """A min_photons_filter configured on the experiment should raise an error (unsupported)."""
+
+        circuit = pcvl.Circuit(1)
+        experiment = pcvl.Experiment(circuit)
+        experiment.min_detected_photons_filter(1)
+
+        with pytest.raises(ValueError):
+            ML.QuantumLayer(
+                input_size=0,
+                experiment=experiment,
+                input_state=[1],
+            )
+
     def test_builder_based_layer_creation(self):
         """Test creating a layer from an builder."""
         builder = ML.CircuitBuilder(n_modes=4)

@@ -23,6 +23,7 @@
 """Sampling and autodiff utilities."""
 
 from .autodiff import AutoDiffProcess
+from .detectors import DetectorTransform, resolve_detectors
 from .mappers import Amplitudes, ModeExpectations, OutputMapper, Probabilities
 from .process import SamplingProcess
 from .strategies import MeasurementStrategy
@@ -35,4 +36,6 @@ __all__ = [
     "Amplitudes",
     "SamplingProcess",
     "AutoDiffProcess",
+    "DetectorTransform",
+    "resolve_detectors",
 ]

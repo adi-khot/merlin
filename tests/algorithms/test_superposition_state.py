@@ -373,7 +373,7 @@ class TestOutputSuperposedState:
         amplitude_params_dict = dict(amplitude_layer.named_parameters())
 
         expected_amplitudes = torch.zeros_like(output, dtype=output.dtype)
-        for idx, state in enumerate(amplitude_layer.state_keys):
+        for idx, state in enumerate(amplitude_layer.output_keys):
             basis_layer = QuantumLayer(
                 circuit=copy.deepcopy(circuit),
                 n_photons=n_photons,
