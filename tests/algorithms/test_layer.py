@@ -24,6 +24,8 @@
 Tests for the main QuantumLayer class.
 """
 
+import math
+
 import perceval as pcvl
 import pytest
 import torch
@@ -34,82 +36,157 @@ import merlin as ML
 class TestQuantumLayer:
     """Test suite for QuantumLayer."""
 
-    def test_ansatz_based_layer_creation(self):
-        """Test creating a layer from an ansatz."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
+    def test_experiment_unitary_initialization(self):
+        """QuantumLayer should accept a unitary experiment."""
+
+        circuit = pcvl.Circuit(1)
+        experiment = pcvl.Experiment(circuit)
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1],
         )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=3, output_size=5
+        output = layer()
+        assert torch.allclose(
+            output.sum(), torch.tensor(1.0, dtype=output.dtype), atol=1e-6
         )
 
-        layer = ML.QuantumLayer(input_size=3, ansatz=ansatz)
+    def test_experiment_non_unitary_rejected(self):
+        """A non-unitary experiment should be rejected."""
 
+        circuit = pcvl.Circuit(1)
+        experiment = pcvl.Experiment(circuit)
+        experiment.add(0, pcvl.TD(1))
+        assert experiment.is_unitary is False
+
+        with pytest.raises(ValueError, match="must be unitary"):
+            ML.QuantumLayer(
+                input_size=0,
+                experiment=experiment,
+                input_state=[1],
+            )
+
+    def test_experiment_min_photons_filter_error(self):
+        """A min_photons_filter configured on the experiment should raise an error (unsupported)."""
+
+        circuit = pcvl.Circuit(1)
+        experiment = pcvl.Experiment(circuit)
+        experiment.min_detected_photons_filter(1)
+
+        with pytest.raises(ValueError):
+            ML.QuantumLayer(
+                input_size=0,
+                experiment=experiment,
+                input_state=[1],
+            )
+
+    def test_builder_based_layer_creation(self):
+        """Test creating a layer from an builder."""
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1, 3], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=3,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+        )
         assert layer.input_size == 3
-        assert layer.output_size == 5
-        assert layer.auto_generation_mode is True
+        assert layer.thetas[0].shape[0] == 2 * 4 * (
+            4 - 1
+        )  # 24 trainable parameters from U1 and U2
+
+    @pytest.mark.parametrize("names", [("input", "input"), ("input_a", "input_b")])
+    def test_multiple_angle_encodings_validate_input_size(self, names):
+        builder = ML.CircuitBuilder(n_modes=5)
+        builder.add_angle_encoding(modes=[0, 1], name=names[0])
+        builder.add_angle_encoding(modes=[2, 3, 4], name=names[1])
+
+        layer = ML.QuantumLayer(
+            input_size=5,
+            input_state=[1, 0, 0, 0, 0],
+            builder=builder,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+        )
+        pcvl.pdisplay(layer.circuit, output_format=pcvl.Format.TEXT)
+
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
+
+        dummy_input = torch.rand(1, 5)
+        output = model(dummy_input)
+        assert output.shape == (1, 3), "Output shape mismatch"
+        assert layer.input_size == 5, "Input size should match number of encoded modes"
+        assert not torch.isnan(output).any(), "Output should not contain NaNs"
 
     def test_forward_pass_batched(self):
         """Test forward pass with batched input."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS,  # Changed to match parameter count
-            n_modes=4,
-            n_photons=2,
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=2,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
         # Test with batch
         x = torch.rand(10, 2)
-        output = layer(x)
+        output = model(x)
 
         assert output.shape == (10, 3)
         assert torch.all(output >= -1e6)  # More reasonable bounds for quantum outputs
 
     def test_forward_pass_single(self):
         """Test forward pass with single input."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL, n_modes=4, n_photons=1
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment,
+        layer = ML.QuantumLayer(
             input_size=2,
-            output_size=3,  # Don't use NONE strategy to avoid size mismatch
-            output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
+            input_state=[1, 0, 0, 0],
+            builder=builder,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
 
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
         # Test with single sample
         x = torch.rand(1, 2)
-        output = layer(x)
+        output = model(x)
 
         assert output.shape[0] == 1
         assert output.shape[1] == 3
 
     def test_gradient_computation(self):
         """Test that gradients flow through the layer."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS,
-            n_modes=4,
-            n_photons=2,
-            use_bandwidth_tuning=True,
+
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=2,
+            input_state=[1, 1, 0, 0],
+            builder=builder,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
-
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
         x = torch.rand(5, 2, requires_grad=True)
-        output = layer(x)
+        output = model(x)
         loss = output.sum()
         loss.backward()
 
@@ -118,208 +195,292 @@ class TestQuantumLayer:
 
         # Check that layer parameters have gradients
         has_trainable_params = False
-        for param in layer.parameters():
+        for param in model.parameters():
             if param.requires_grad:
                 has_trainable_params = True
                 assert param.grad is not None
 
-        assert has_trainable_params, "Layer should have trainable parameters"
+        assert has_trainable_params, "Model should have trainable parameters"
 
     def test_sampling_configuration(self):
-        """Test sampling configuration methods."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
+        """Sampling is configured per-call via forward(); training disables it automatically."""
+        # Build a tiny circuit
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=2,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=2, output_size=3
-        )
+        # Compose with a linear head (as in the old test)
+        _ = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
-        layer = ML.QuantumLayer(input_size=2, ansatz=ansatz, shots=100)
+        # There is no layer-level sampling state anymore
+        assert not hasattr(layer, "shots")
+        assert not hasattr(layer, "sampling_method")
 
-        assert layer.shots == 100
-        assert layer.sampling_method == "multinomial"
+        # Prepare a batch of inputs (B, features)
+        x = torch.rand(4, 2)
 
-        # Test updating configuration
-        layer.set_sampling_config(shots=200, method="gaussian")
-        assert layer.shots == 200
-        assert layer.sampling_method == "gaussian"
+        # ---------- EVAL: no sampling (default) ----------
+        layer.eval()
+        y_no_sampling = layer(x)  # shots defaults to None/0 -> no sampling path
+        assert isinstance(y_no_sampling, torch.Tensor)
+        assert y_no_sampling.shape[0] == x.shape[0]
 
-        # Test invalid method
+        # ---------- EVAL: enable sampling by passing shots ----------
+        y_sampled = layer(x, shots=100, sampling_method="multinomial")
+        assert isinstance(y_sampled, torch.Tensor)
+        assert y_sampled.shape[0] == x.shape[0]
+
+        # ---------- TRAIN: sampling request is overridden (no sampling during training) ----------
+        layer.train()
+        # Request sampling, but autodiff backend should turn it off for differentiability
+        y_train = layer(x, shots=100, sampling_method="multinomial")
+        loss = y_train.sum()
+        loss.backward()  # should succeed with gradients flowing (no sampling taken)
+        # At least one trainable parameter should have a gradient
+        assert any(p.grad is not None for p in layer.parameters() if p.requires_grad)
+
+        # ---------- Invalid sampling method should error ----------
         with pytest.raises(ValueError):
-            layer.set_sampling_config(method="invalid")
+            _ = layer(x, shots=10, sampling_method="invalid")
+
+    def test_simple_wrapper_forwards_sampling_args(self):
+        """The .simple() wrapper should accept shots/sampling_method and forward them to the quantum layer."""
+        model = ML.QuantumLayer.simple(input_size=2, n_params=10)
+        x = torch.rand(3, 2)
+
+        # Works without sampling
+        y = model(x)
+        assert y.shape[0] == x.shape[0]
+
+        # Works with sampling (multinomial default in the wrapper)
+        y2 = model(x, shots=50)
+        assert y2.shape[0] == x.shape[0]
 
     def test_reservoir_mode(self):
         """Test reservoir computing mode."""
         # Test normal mode first
-        experiment_normal = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL,
-            n_modes=4,
-            n_photons=2,
-            reservoir_mode=False,
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer_normal = ML.QuantumLayer(
+            input_size=2,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+        )
+        model_normal = torch.nn.Sequential(
+            layer_normal, torch.nn.Linear(layer_normal.output_size, 3)
         )
 
-        ansatz_normal = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment_normal, input_size=2, output_size=3
+        layer_reservoir = ML.QuantumLayer(
+            input_size=2,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+        )
+        model_reservoir = torch.nn.Sequential(
+            layer_reservoir, torch.nn.Linear(layer_reservoir.output_size, 3)
         )
 
-        layer_normal = ML.QuantumLayer(input_size=2, ansatz=ansatz_normal)
+        model_reservoir.requires_grad_(False)
+        assert any(p.requires_grad for p in model_normal.parameters())
+        assert all(not p.requires_grad for p in model_reservoir.parameters())
+
         normal_trainable = sum(
-            p.numel() for p in layer_normal.parameters() if p.requires_grad
+            p.numel() for p in model_normal.parameters() if p.requires_grad
         )
 
-        # Test reservoir mode
-        experiment_reservoir = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL,
-            n_modes=4,
-            n_photons=2,
-            reservoir_mode=True,
-        )
-
-        ansatz_reservoir = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment_reservoir, input_size=2, output_size=3
-        )
-
-        layer_reservoir = ML.QuantumLayer(input_size=2, ansatz=ansatz_reservoir)
         reservoir_trainable = sum(
-            p.numel() for p in layer_reservoir.parameters() if p.requires_grad
+            p.numel() for p in model_reservoir.parameters() if p.requires_grad
         )
 
-        # In reservoir mode, should have fewer or equal trainable parameters
-        # (since some parameters are fixed)
-        assert reservoir_trainable <= normal_trainable
+        # Reservoir mode should freeze all parameters while keeping the normal layer trainable.
+        assert normal_trainable > 0
+        assert reservoir_trainable == 0
 
         # Test that reservoir layer still works
         x = torch.rand(3, 2)
-        output = layer_reservoir(x)
+        output = model_reservoir(x)
         assert output.shape == (3, 3)
 
-    def test_bandwidth_tuning(self):
-        """Test bandwidth tuning functionality."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS,
-            n_modes=4,
-            n_photons=2,
-            use_bandwidth_tuning=True,
-        )
+    def test_measurement_strategies(self):
+        """Test different measurement strategies and grouping policies."""
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=3, output_size=5
-        )
-
-        layer = ML.QuantumLayer(input_size=3, ansatz=ansatz)
-
-        # Check that bandwidth coefficients exist
-        assert layer.bandwidth_coeffs is not None
-        assert len(layer.bandwidth_coeffs) == 3  # One per input dimension
-
-        # Check they're learnable parameters
-        for _key, param in layer.bandwidth_coeffs.items():
-            assert param.requires_grad
-
-    def test_output_mapping_strategies(self):
-        """Test different output mapping strategies."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS,  # Use consistent circuit type
-            n_modes=4,
-            n_photons=2,
-        )
-
-        strategies = [
-            ML.OutputMappingStrategy.LINEAR,
-            ML.OutputMappingStrategy.LEXGROUPING,
-            ML.OutputMappingStrategy.MODGROUPING,
+        configs = [
+            {
+                "measurement_strategy": ML.MeasurementStrategy.PROBABILITIES,
+                "grouping_policy": None,
+            },
+            {
+                "measurement_strategy": ML.MeasurementStrategy.PROBABILITIES,
+                "grouping_policy": ML.LexGrouping,
+            },
+            {
+                "measurement_strategy": ML.MeasurementStrategy.PROBABILITIES,
+                "grouping_policy": ML.ModGrouping,
+            },
         ]
 
-        for strategy in strategies:
-            ansatz = ML.AnsatzFactory.create(
-                PhotonicBackend=experiment,
-                input_size=2,
-                output_size=4,
-                output_mapping_strategy=strategy,
-            )
+        for cfg in configs:
+            if cfg["grouping_policy"] is None:
+                layer = ML.QuantumLayer(
+                    input_size=2,
+                    input_state=[1, 0, 1, 0],
+                    builder=builder,
+                    measurement_strategy=cfg["measurement_strategy"],
+                )
 
-            layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
+                model = torch.nn.Sequential(
+                    layer, torch.nn.Linear(layer.output_size, 4)
+                )
 
-            x = torch.rand(3, 2)
-            output = layer(x)
+                x = torch.rand(3, 2)
+                output = model(x)
+                assert output.shape == (3, 4)
+                assert torch.all(torch.isfinite(output))
 
-            assert output.shape == (3, 4)
-            assert torch.all(torch.isfinite(output))
+            else:
+                layer = ML.QuantumLayer(
+                    input_size=2,
+                    input_state=[1, 0, 1, 0],
+                    builder=builder,
+                    measurement_strategy=cfg["measurement_strategy"],
+                )
+
+                model = torch.nn.Sequential(
+                    layer, cfg["grouping_policy"](layer.output_size, 4)
+                )
+
+                x = torch.rand(3, 2)
+                output = model(x)
+                assert output.shape == (3, 4)
+                assert torch.all(torch.isfinite(output))
 
     def test_string_representation(self):
         """Test string representation of the layer."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL_COLUMNS, n_modes=4, n_photons=2
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1, 2], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=3,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
 
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment, input_size=3, output_size=5
-        )
-
-        layer = ML.QuantumLayer(input_size=3, ansatz=ansatz)
         layer_str = str(layer)
-
+        print(f"Layer string representation:\n{layer_str}")
         assert "QuantumLayer" in layer_str
-        assert "parallel_columns" in layer_str
         assert "modes=4" in layer_str
         assert "input_size=3" in layer_str
-        assert "output_size=5" in layer_str
 
     def test_invalid_configurations(self):
         """Test that invalid configurations raise appropriate errors."""
-        # Test missing both ansatz and builder
+        # this tests include builder, simple and circuit-based API
         with pytest.raises(
             ValueError,
-            match="Either 'ansatz', 'circuit', or 'builder' must be provided",
+            match="Provide exactly one of 'circuit', 'builder', or 'experiment'.",
         ):
             ML.QuantumLayer(input_size=3)
 
         # Test invalid experiment configuration
-        with pytest.raises(ValueError):
-            ML.PhotonicBackend(
-                circuit_type=ML.CircuitType.SERIES,
-                n_modes=4,
-                n_photons=5,  # More photons than modes
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        # Input size mismatch between declaration and builder-produced features
+        with pytest.raises(
+            ValueError,
+            match="Input size \\(3\\) must equal the number of encoded input features generated by the circuit \\(2\\)\\.",
+        ):
+            ML.QuantumLayer(
+                input_size=3,
+                input_state=[1, 0, 1, 0],
+                builder=builder,
+                measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
             )
+
+        with pytest.raises(ValueError):
+            ML.QuantumLayer(
+                input_size=2,
+                output_size=5,
+                n_photons=5,  # more photons than modes
+                builder=builder,
+                measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+            )
+
+        with pytest.raises(TypeError):
+            ML.QuantumLayer.simple(n_params=0)
+
+    def test_subset_combinations_respected(self):
+        """Ensure subset combinations expose more parameters without breaking input size checks."""
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(
+            modes=[0, 1, 2], name="input", subset_combinations=True
+        )
+        builder.add_entangling_layer(trainable=True, name="U2")
+
+        layer = ML.QuantumLayer(
+            input_size=3,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+        )
+
+        assert layer.input_size == 3
 
     def test_none_output_mapping_with_correct_size(self):
         """Test NONE output mapping with correct size matching."""
-        experiment = ML.PhotonicBackend(
-            circuit_type=ML.CircuitType.PARALLEL, n_modes=3, n_photons=1
-        )
+        builder = ML.CircuitBuilder(n_modes=4)
+        builder.add_entangling_layer(trainable=True, name="U1")
+        builder.add_angle_encoding(modes=[0, 1], name="input")
+        builder.add_entangling_layer(trainable=True, name="U2")
 
-        # Create ansatz without specifying output size initially
-        ansatz = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment,
+        temp_layer = ML.QuantumLayer(
             input_size=2,
-            output_size=10,  # We'll override this
-            output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
         )
-
-        # Create layer to find out actual distribution size
-        temp_layer = ML.QuantumLayer(input_size=2, ansatz=ansatz)
 
         # Get actual distribution size
         dummy_input = torch.rand(1, 2)
         with torch.no_grad():
-            temp_output = temp_layer(dummy_input)
+            _temp_output = temp_layer(dummy_input)
 
         # Now create NONE strategy with correct size
-        ansatz_none = ML.AnsatzFactory.create(
-            PhotonicBackend=experiment,
+        layer_none = ML.QuantumLayer(
             input_size=2,
-            output_size=temp_output.shape[1],  # Match actual output size
-            output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
+            input_state=[1, 0, 1, 0],
+            builder=builder,
+            measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
         )
-
-        layer_none = ML.QuantumLayer(input_size=2, ansatz=ansatz_none)
 
         x = torch.rand(2, 2)
         output = layer_none(x)
 
-        # Output should be probability distribution
-        assert torch.all(output >= -1e6)  # Reasonable bounds
+        # Output should be amplitudes
+        assert torch.allclose(
+            torch.sum(output.abs() ** 2, dim=1), torch.ones(2), atol=1e-6
+        )
         assert output.shape[0] == 2
 
     def test_simple_perceval_circuit_no_input(self):
@@ -342,14 +503,27 @@ class TestQuantumLayer:
             circuit=circuit,
             input_state=input_state,
             trainable_parameters=["phi"],  # Parameters to train (by prefix)
-            input_parameters=None,  # No input parameters
-            output_size=3,
-            output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
+            input_parameters=[],  # No input parameters
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
+
+        output_size = math.comb(3, sum(input_state))  # Calculate output size
+        with pytest.raises(
+            ValueError,
+            match="Input size \\(2\\) must equal the number of input parameters generated by the circuit \\(0\\)\\.",
+        ):
+            layer = ML.QuantumLayer(
+                input_size=2,  # input_size > nb of input_parameters
+                circuit=circuit,
+                input_state=input_state,
+                trainable_parameters=["phi"],  # Parameters to train (by prefix)
+                input_parameters=None,  # No input parameters
+                measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+            )
 
         # Test layer properties
         assert layer.input_size == 0
-        assert layer.output_size == 3
+        assert layer.output_size == output_size
         # Check that it has trainable parameters
         trainable_params = [p for p in layer.parameters() if p.requires_grad]
         assert len(trainable_params) > 0, "Layer should have trainable parameters"
@@ -384,26 +558,31 @@ class TestQuantumLayer:
 
         # Create QuantumLayer with custom circuit
         layer = ML.QuantumLayer(
-            input_size=0,  # No input parameters
+            input_size=2,  # 2 input parameters
             circuit=circuit,
             input_state=input_state,
-            trainable_parameters=None,  # Parameters to train (by prefix)
+            trainable_parameters=[],  # No trainable parameters
             input_parameters=["phi"],  # No input parameters
-            output_size=3,
-            output_mapping_strategy=ML.OutputMappingStrategy.LINEAR,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
         )
+        model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 3))
 
         dummy_input = torch.rand(1, 2)
 
+        math.comb(3, sum(input_state))  # Calculate output size
         # Test layer properties
-        assert layer.input_size == 0
-        assert layer.output_size == 3
-        # Check that it has trainable parameters
-        trainable_params = [p for p in layer.parameters() if p.requires_grad]
-        assert len(trainable_params) > 0, "Layer should have trainable parameters"
+        assert layer.input_size == 2
+        assert model[1].out_features == 3
+        # Check that it has trainable parameters (only in Linear layer)
+        trainable_params_layer = [p for p in layer.parameters() if p.requires_grad]
+        assert len(trainable_params_layer) == 0, (
+            "Layer should have no trainable parameters"
+        )
+        trainable_params = [p for p in model.parameters() if p.requires_grad]
+        assert len(trainable_params) > 0, "Model should have trainable parameters"
 
         # Test forward pass (no input needed)
-        output = layer(dummy_input)
+        output = model(dummy_input)
         assert output.shape == (1, 3)
         assert torch.all(torch.isfinite(output))
 
@@ -412,6 +591,39 @@ class TestQuantumLayer:
         loss.backward()
 
         # Check that trainable parameters have gradients
-        for param in layer.parameters():
+        for param in model.parameters():
             if param.requires_grad:
                 assert param.grad is not None
+
+    @pytest.mark.parametrize(
+        ("computation_space"),
+        [
+            ML.ComputationSpace.UNBUNCHED,
+            ML.ComputationSpace.DUAL_RAIL,
+            ML.ComputationSpace.FOCK,
+        ],
+    )
+    def test_computation_space_normalized_output(self, computation_space):
+        """Test QuantumLayer with simple perceval circuit and no trainable parameters."""
+        # Create a simple perceval circuit with no input parameters
+        m = 8
+        n = 4
+        batch_size = 5
+        circuit = pcvl.Circuit(m)
+        circuit.add(0, pcvl.Unitary(pcvl.Matrix.random_unitary(m)))
+        for i in range(m):
+            circuit.add(i, pcvl.PS(pcvl.P(f"phi{i}")))
+        circuit.add(0, pcvl.Unitary(pcvl.Matrix.random_unitary(m)))
+
+        layer = ML.QuantumLayer(
+            input_size=m,
+            n_photons=n,
+            circuit=circuit,
+            input_parameters=["phi"],  # No input parameters
+            measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
+            computation_space=computation_space,
+        )
+
+        o = layer.forward(torch.rand(batch_size, m))
+
+        assert torch.allclose(torch.sum(o.abs() ** 2, dim=1), torch.ones(batch_size))

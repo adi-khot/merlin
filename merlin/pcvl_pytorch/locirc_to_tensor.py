@@ -37,7 +37,7 @@ from perceval.components import (
     Unitary,
 )
 
-from ..torch_utils.dtypes import resolve_float_complex
+from ..utils.dtypes import resolve_float_complex
 
 SUPPORTED_COMPONENTS = (PS, BS, PERM, Unitary, Barrier)
 """Tuple of quantum components supported by CircuitConverter.

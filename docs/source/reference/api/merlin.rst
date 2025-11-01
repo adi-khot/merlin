@@ -16,6 +16,7 @@ Subpackages
    merlin.builder
    merlin.core
    merlin.datasets
+   merlin.measurement
    merlin.pcvl_pytorch
    merlin.sampling
    merlin.torch_utils
@@ -27,3 +28,4 @@ Submodules
    :maxdepth: 1
 
    merlin.algorithms.kernels
+   merlin.utils

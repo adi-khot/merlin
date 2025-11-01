@@ -27,6 +27,10 @@ import torch.nn as nn
 
 import merlin as ml
 
+ANSATZ_SKIP = pytest.mark.skip(
+    reason="Legacy ansatz-based QuantumLayer API removed; test pending migration."
+)
+
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_load_model_on_cuda():
@@ -37,14 +41,18 @@ def test_load_model_on_cuda():
     )
 
     layer = ml.QuantumLayer(
-        input_size=2,
-        output_size=1,
+        input_size=0,
         circuit=circuit,
         input_state=[1, 1, 0, 0],
         trainable_parameters=["phi"],
         device=torch.device("cuda"),
+        measurement_strategy=ml.MeasurementStrategy.PROBABILITIES,
+    )
+    model = nn.Sequential(layer, torch.nn.Linear(layer.output_size, 1)).to(
+        torch.device("cuda")
     )
     assert layer.device == torch.device("cuda")
+    assert next(model.parameters()).device.type == "cuda"
     if len(layer.thetas) > 0:
         assert layer.thetas[0].device == torch.device("cuda", index=0)
     assert layer.computation_process.converter.device == torch.device("cuda")
@@ -65,15 +73,20 @@ def test_switch_model_to_cuda():
         shape=pcvl.InterferometerShape.RECTANGLE,
     )
     layer = ml.QuantumLayer(
-        input_size=2,
-        output_size=1,
+        input_size=0,
         circuit=circuit,
         input_state=[1, 1, 0, 0],
         trainable_parameters=["phi"],
         device=torch.device("cpu"),
+        measurement_strategy=ml.MeasurementStrategy.PROBABILITIES,
+    )
+    model = nn.Sequential(layer, torch.nn.Linear(layer.output_size, 1)).to(
+        torch.device("cpu")
     )
     assert layer.device == torch.device("cpu")
+    assert next(model.parameters()).device.type == "cpu"
     layer = layer.to(torch.device("cuda"))
+    model = model.to(torch.device("cuda"))
     _ = layer()
     layer.computation_process.input_state = torch.rand(
         (3, 6), device=torch.device("cuda")
@@ -92,42 +105,51 @@ def test_switch_model_to_cuda():
     ].device == torch.device("cuda", index=0)
 
 
-class QuantumClassifier_withAnsatz(nn.Module):
+class QuantumClassifier_withBuilder(nn.Module):
     def __init__(
         self,
         input_dim,
-        hidden_dim=100,
+        hidden_dim=10,
         modes=10,
         num_classes=2,
-        input_state=None,
-        device="cpu",
+        device=torch.device("cpu"),
     ):
         super().__init__()
 
         # This layer downscales the inputs to fit in the QLayer
         self.downscaling_layer = nn.Linear(input_dim, hidden_dim, device=device)
 
-        # Building the QLayer with Merlin
-        experiment = ml.PhotonicBackend(
-            circuit_type=ml.CircuitType.SERIES,
-            n_modes=modes,
-            n_photons=sum(input_state) if input_state else modes // 2,
-            state_pattern=ml.StatePattern.PERIODIC,
-        )
+        builder = ml.CircuitBuilder(n_modes=modes)
+        builder.add_entangling_layer(trainable=True, name="U1")
 
-        # PNR (Photon Number Resolving) output size
-        # output_size_slos = math.comb(modes + photons_count - 1, photons_count)
+        if hidden_dim <= 0:
+            raise ValueError("hidden_dim must be positive")
 
-        # Create ansatz for the quantum layer
-        ansatz = ml.AnsatzFactory.create(
-            PhotonicBackend=experiment,
-            input_size=hidden_dim,
-            output_mapping_strategy=ml.OutputMappingStrategy.NONE,
-        )
+        available_modes = list(range(modes))
+        if not available_modes:
+            raise ValueError("modes must be at least 1")
+        # we need to add as many input layers as needed to encode all features
+        full_chunks, remainder = divmod(hidden_dim, len(available_modes))
+        if hidden_dim < len(available_modes):
+            builder.add_angle_encoding(modes=available_modes[:hidden_dim], name="input")
+        else:
+            for _ in range(full_chunks):
+                builder.add_angle_encoding(modes=available_modes, name="input")
+                builder.add_superpositions(depth=2)
+            if remainder:
+                builder.add_angle_encoding(
+                    modes=available_modes[:remainder], name="input"
+                )
 
-        # Build the QLayer using Merlin
+        builder.add_rotations(trainable=True, name="theta")
+        builder.add_superpositions(depth=1)
+
         self.q_circuit = ml.QuantumLayer(
-            input_size=hidden_dim, ansatz=ansatz, device=device
+            input_size=hidden_dim,
+            builder=builder,
+            n_photons=modes // 2,
+            measurement_strategy=ml.MeasurementStrategy.PROBABILITIES,
+            device=device,
         )
 
         # Linear output layer as in the original paper
@@ -145,26 +167,24 @@ class QuantumClassifier_withAnsatz(nn.Module):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-def test_QuantumClassifier_withAnsatz():
-    """Test QuantumClassifier_withAnsatz functionality on GPU"""
+def test_QuantumClassifier_withBuilder():
+    """Test QuantumClassifier_withBuilder functionality on GPU"""
 
     device = torch.device("cuda")
 
     # Test parameters
     batch_size = 4
     input_dim = 768
-    hidden_dim = 100
-    modes = 8
+    hidden_dim = 10
+    modes = 10
     num_classes = 2
-    input_state = [1, 0, 1, 0, 1, 0, 0, 0]  # 3 photons in first 3 modes
 
     # Create the quantum classifier
-    model = QuantumClassifier_withAnsatz(
+    model = QuantumClassifier_withBuilder(
         input_dim=input_dim,
         hidden_dim=hidden_dim,
         modes=modes,
         num_classes=num_classes,
-        input_state=input_state,
         device=device,
     )
 
@@ -223,17 +243,16 @@ def test_different_configurations():
 
     # Test configurations
     configs = [
-        {"modes": 4, "hidden_dim": 50, "input_state": [1, 0, 1, 0]},
-        {"modes": 6, "hidden_dim": 100, "input_state": [1, 0, 1, 0, 1, 0]},
+        {"modes": 4, "hidden_dim": 50},
+        {"modes": 6, "hidden_dim": 100},
     ]
 
     for _i, config in enumerate(configs):
-        model = QuantumClassifier_withAnsatz(
+        model = QuantumClassifier_withBuilder(
             input_dim=768,
             hidden_dim=config["hidden_dim"],
             modes=config["modes"],
             num_classes=2,
-            input_state=config["input_state"],
             device=device,
         ).to(device)
 

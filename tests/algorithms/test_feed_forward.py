@@ -124,7 +124,7 @@ class TestFeedForwardBlock:
         """Ensure output keys are consistent after forward pass."""
         ff = FeedForwardBlock(input_size=3, n=2, m=3, depth=2, conditional_modes=[0])
         _ = ff(torch.rand(1, 3))
-        keys = ff.get_output_keys()
+        keys = ff.output_keys
         print(keys)
         assert isinstance(keys, list)
         assert len(keys) > 0
@@ -322,7 +322,7 @@ class TestPoolingFeedForward:
         pff = PoolingFeedForward(n_modes=16, n_photons=2, n_output_modes=8)
         pre_layer = define_layer_no_input(16, 2)
         post_layer = define_layer_no_input(8, 2)
-        _, amplitudes = pre_layer(return_amplitudes=True)
+        amplitudes = pre_layer()
         amplitudes = pff(amplitudes)
         post_layer.set_input_state(amplitudes)
         res = post_layer()
@@ -340,10 +340,10 @@ class TestPoolingFeedForward:
         optimizer = torch.optim.Adam(params)
 
         for _ in range(3):
-            _, amplitudes = pre_layer(return_amplitudes=True)
+            amplitudes = pre_layer()
             amplitudes = pff(amplitudes)
             post_layer.set_input_state(amplitudes)
-            res = post_layer().pow(2).sum()
+            res = post_layer().abs().pow(2).sum()
             res.backward()
             optimizer.step()
             optimizer.zero_grad()
