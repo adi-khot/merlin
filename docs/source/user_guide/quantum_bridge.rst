@@ -19,7 +19,7 @@ Minimal example
 
     import torch
     import perceval as pcvl
-    from merlin import QuantumLayer, OutputMappingStrategy
+    from merlin import MeasurementStrategy, QuantumLayer
     from merlin.bridge.quantum_bridge import ComputationSpace, QuantumBridge
 
     # Build a simple identity photonic circuit with m = sum(2**g) modes
@@ -31,7 +31,7 @@ Minimal example
         input_size=0,
         circuit=circuit,
         n_photons=len(qubit_groups),
-        output_mapping_strategy=OutputMappingStrategy.NONE,
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
         no_bunching=True,
         device=torch.device("cpu"),
         dtype=torch.float32,
@@ -66,6 +66,11 @@ from ``y`` back through the photonic layer into the upstream qubit state prepara
 Because ``nn.Sequential`` modules exchange a single argument, the bridge does not forward
 additional positional inputs; wrap bridge and layer in a custom module if you need to
 thread extra data alongside the statevector.
+
+.. note::
+   The :meth:`~merlin.bridge.quantum_bridge.QuantumBridge.qubit_to_fock_state` helper exposes the
+   exact bitstring → Fock-state mapping used internally. This is handy for spot-checking amplitudes
+   or visualising how logical qubits populate photonic modes before running a full simulation.
 
 Choosing the computation space
 ------------------------------
@@ -105,7 +110,7 @@ Constraints
 
 API
 ---
-.. autofunction:: merlin.bridge.QuantumBridge.to_fock_state
+.. automethod:: merlin.bridge.QuantumBridge.qubit_to_fock_state
 
 .. automodule:: merlin.bridge.QuantumBridge
    :members: QuantumBridge

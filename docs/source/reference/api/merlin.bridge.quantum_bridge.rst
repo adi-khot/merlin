@@ -24,6 +24,8 @@ Key Features
 * **Differentiable Pipeline**: Maintains gradient flow from Merlin back to PennyLane for end-to-end training
 * **Batch Processing**: Handles batched inputs efficiently
 * **Endianness Control**: Supports both little-endian and big-endian qubit wire ordering
+* **Inspectable Mapping**: :meth:`QuantumBridge.qubit_to_fock_state` reveals how individual bitstrings map
+  to photonic occupancies for debugging or educational purposes
 
 Architecture
 ------------
@@ -70,7 +72,7 @@ Parameters
 Helper Functions
 ----------------
 
-.. autofunction:: to_fock_state
+.. automethod:: merlin.bridge.QuantumBridge.qubit_to_fock_state
 
    Converts a bitstring to a photonic BasicState using one-photon-per-group encoding.
 
@@ -92,7 +94,7 @@ through the photonic layer:
 
    import torch
    import perceval as pcvl
-   from merlin import QuantumLayer, OutputMappingStrategy
+   from merlin import MeasurementStrategy, QuantumLayer
    from merlin.bridge.quantum_bridge import ComputationSpace, QuantumBridge
 
    # Create a simple identity circuit (m=4 modes, 2 photons)
@@ -101,7 +103,7 @@ through the photonic layer:
        input_size=0,
        circuit=circuit,
        n_photons=2,
-       output_mapping_strategy=OutputMappingStrategy.NONE,
+       measurement_strategy=MeasurementStrategy.PROBABILITIES,
        no_bunching=True,
    )
 
@@ -145,7 +147,7 @@ A complete example showing hybrid qubit-photonic classification:
    import torch.nn as nn
    import pennylane as qml
    import perceval as pcvl
-   from merlin import QuantumLayer, OutputMappingStrategy
+   from merlin import MeasurementStrategy, QuantumLayer
    from merlin.bridge.quantum_bridge import ComputationSpace, QuantumBridge
 
    class HybridQuantumClassifier(nn.Module):
@@ -174,7 +176,7 @@ A complete example showing hybrid qubit-photonic classification:
                input_size=0,
                circuit=circuit,
                n_photons=1,
-               output_mapping_strategy=OutputMappingStrategy.NONE,
+               measurement_strategy=MeasurementStrategy.PROBABILITIES,
                no_bunching=True,
            )
            

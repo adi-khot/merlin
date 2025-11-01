@@ -92,7 +92,7 @@ Example setup
 
    import perceval as pcvl
    import torch
-   from merlin import QuantumLayer, OutputMappingStrategy
+   from merlin import MeasurementStrategy, QuantumLayer
 
    # 3 logical qubits: first two qubits in a 4-mode block, third qubit dual-railed
    qubit_groups = [2, 1]
@@ -104,7 +104,7 @@ Example setup
        input_size=0,
        circuit=circuit,
        n_photons=n_photons,
-       output_mapping_strategy=OutputMappingStrategy.NONE,
+       measurement_strategy=MeasurementStrategy.PROBABILITIES,
        no_bunching=True,  # stay inside the unbunched/QLOQ space
        dtype=torch.float32,
    )

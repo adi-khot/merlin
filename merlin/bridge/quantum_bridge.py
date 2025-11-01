@@ -20,93 +20,20 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-"""
-Passive bridge between qubit statevectors and Merlin photonic computation spaces.
-"""
+"""Passive bridge between qubit statevectors and Merlin photonic computation spaces."""
 
 from __future__ import annotations
 
-import itertools
-from enum import Enum
-from typing import Any, Iterable, Literal, Sequence
+from collections.abc import Sequence
+from typing import Literal
 
 import perceval as pcvl
 import torch
 import torch.nn as nn
 
-from merlin.torch_utils.dtypes import resolve_float_complex
-
-
-class ComputationSpace(str, Enum):
-    """Photonic computation spaces supported by the bridge."""
-
-    FOCK = "fock"
-    UNBUNCHED = "unbunched"
-    DUAL_RAIL = "dual_rail"
-
-    @classmethod
-    def parse(cls, value: ComputationSpace | str) -> ComputationSpace:
-        if isinstance(value, ComputationSpace):
-            return value
-        normalized = value.lower().replace("-", "_")
-        try:
-            return ComputationSpace(normalized)
-        except ValueError as exc:
-            choices = ", ".join(item.value for item in cls)
-            raise ValueError(f"Unknown computation space '{value}'. Choose from {choices}.") from exc
-
-
-def to_fock_state(qubit_state: str, group_sizes: Sequence[int]) -> pcvl.BasicState:
-    """
-    Map a bitstring to a BasicState with one photon per qubit-group (one-hot over 2^k modes).
-    No ancilla/postselected modes are added. The number of modes is m = Σ 2^group_size.
-    """
-    fock_state: list[int] = []
-    bit_offset = 0
-    for size in group_sizes:
-        group_len = 2**size
-        bits = qubit_state[bit_offset : bit_offset + size]
-        idx = int(bits, 2)
-        fock_state += [1 if i == idx else 0 for i in range(group_len)]
-        bit_offset += size
-    return pcvl.BasicState(fock_state)
-
-
-def _to_occ_tuple(key: pcvl.BasicState | Sequence[int]) -> tuple[int, ...]:
-    """Convert a BasicState or occupancy list to a tuple for dict keys."""
-    if isinstance(key, pcvl.BasicState):
-        return tuple(key)
-    return tuple(key)
-
-
-def _stars_and_bars(n_modes: int, n_photons: int) -> list[tuple[int, ...]]:
-    """Enumerate Fock states (with bunching) using a lexicographic stars-and-bars scheme."""
-    states: list[tuple[int, ...]] = []
-
-    def recurse(mode: int, remaining: int, prefix: list[int]) -> None:
-        if mode == n_modes - 1:
-            prefix.append(remaining)
-            states.append(tuple(prefix))
-            prefix.pop()
-            return
-        for count in range(remaining + 1):
-            prefix.append(count)
-            recurse(mode + 1, remaining - count, prefix)
-            prefix.pop()
-
-    recurse(0, n_photons, [])
-    return list(reversed(states))
-
-
-def _unbunched_states(n_modes: int, n_photons: int) -> list[tuple[int, ...]]:
-    """Enumerate unbunched states (at most one photon per mode)."""
-    states: list[tuple[int, ...]] = []
-    for combo in itertools.combinations(range(n_modes), n_photons):
-        occ = [0] * n_modes
-        for idx in combo:
-            occ[idx] = 1
-        states.append(tuple(occ))
-    return states
+from ..core.computation_space import ComputationSpace
+from ..utils.combinadics import Combinadics
+from ..utils.dtypes import resolve_float_complex
 
 
 class QuantumBridge(nn.Module):
@@ -138,7 +65,7 @@ class QuantumBridge(nn.Module):
         *,
         qubit_groups: Sequence[int] | None = None,
         wires_order: Literal["little", "big"] = "little",
-        computation_space: ComputationSpace | str = ComputationSpace.UNBUNCHED,
+        computation_space: ComputationSpace = ComputationSpace.UNBUNCHED,
         normalize: bool = True,
         device: torch.device | None = None,
         dtype: torch.dtype = torch.float32,
@@ -147,7 +74,11 @@ class QuantumBridge(nn.Module):
         if wires_order not in ("little", "big"):
             raise ValueError("wires_order must be 'little' or 'big'.")
 
-        self.computation_space = ComputationSpace.parse(computation_space)
+        if not isinstance(computation_space, ComputationSpace):
+            raise TypeError(
+                "'computation_space' must be a ComputationSpace enum value."
+            )
+        self.computation_space = computation_space
         self._device = device
         self._dtype = dtype
         self.normalize = normalize
@@ -178,74 +109,43 @@ class QuantumBridge(nn.Module):
         self.expected_state_dim = 2**self.n_qubits
         self._norm_epsilon = 1e-12
 
-        self._basis_occupancies = self._build_qloq_basis()
-        self._output_basis = self._build_output_basis()
-        self._index_map = {occ: idx for idx, occ in enumerate(self._output_basis)}
+        self._output_enum = Combinadics(
+            self.computation_space.value,
+            self._n_photons,
+            self._n_modes,
+        )
 
-        missing = [occ for occ in self._basis_occupancies if occ not in self._index_map]
-        if missing:
+        try:
+            for occ in self._generate_qloq_basis():
+                self._output_enum.fock_to_index(occ)
+        except ValueError as exc:
             raise ValueError(
-                f"Selected computation space {self.computation_space.value} does not contain "
-                f"the QLOQ occupancies produced by the qubit groups. "
-                f"Example missing occupancy: {missing[0]}"
-            )
+                "Selected computation space does not contain the QLOQ occupancies produced by the qubit groups."
+            ) from exc
 
-        # Precompute sparse transition structure (rows, cols)
-        row_indices: list[int] = []
-        col_indices: list[int] = []
-        for col, occ in enumerate(self._basis_occupancies):
-            row = self._index_map[occ]
-            row_indices.append(row)
-            col_indices.append(col)
-
-        if row_indices:
-            indices = torch.tensor([row_indices, col_indices], dtype=torch.long)
-        else:
-            indices = torch.empty((2, 0), dtype=torch.long)
-        self._transition_indices = indices
-        self._transition_shape = (len(self._output_basis), self.expected_state_dim)
+        self._output_size = self._output_enum.compute_space_size()
+        self._transition_shape = (self._output_size, self.expected_state_dim)
+        transition = self._build_transition_matrix()
+        self.register_buffer("_transition", transition)
 
     # ------------------------------------------------------------------
     # Basis construction
     # ------------------------------------------------------------------
-    def _build_qloq_basis(self) -> tuple[tuple[int, ...], ...]:
-        occupancies: list[tuple[int, ...]] = []
+    def _generate_qloq_basis(self):
+        """Yield QLOQ occupancies in computational-basis order."""
         for idx in range(self.expected_state_dim):
             bits = format(idx, f"0{self.n_qubits}b")
-            if self.wires_order == "little":
-                bits = bits[::-1]
-            fock = to_fock_state(bits, self.group_sizes)
-            occupancies.append(_to_occ_tuple(fock))
-        return tuple(occupancies)
+            yield self._bitstring_to_occ(bits)
 
-    def _build_output_basis(self) -> tuple[tuple[int, ...], ...]:
-        if self.computation_space is ComputationSpace.DUAL_RAIL:
-            if any(g != 1 for g in self.group_sizes):
-                raise ValueError(
-                    "Computation space 'dual_rail' requires qubit_groups to contain only ones."
-                )
-            return tuple(self._basis_occupancies)
-
-        if self.computation_space is ComputationSpace.UNBUNCHED:
-            states = _unbunched_states(self._n_modes, self._n_photons)
-            return tuple(states)
-
-        # FOCK
-        states = _stars_and_bars(self._n_modes, self._n_photons)
-        return tuple(states)
-
-    # ------------------------------------------------------------------
-    # Properties
-    # ------------------------------------------------------------------
     @property
     def basis_occupancies(self) -> tuple[tuple[int, ...], ...]:
         """QLOQ occupancies indexed like the computational basis."""
-        return self._basis_occupancies
+        return tuple(self._generate_qloq_basis())
 
     @property
-    def output_basis(self) -> tuple[tuple[int, ...], ...]:
-        """Occupancies enumerating the selected computation space."""
-        return self._output_basis
+    def output_basis(self):  # type: ignore[override]
+        """Iterator over occupancies enumerating the selected computation space."""
+        return self._output_enum.iter_states()
 
     @property
     def n_modes(self) -> int:
@@ -255,43 +155,119 @@ class QuantumBridge(nn.Module):
     def n_photons(self) -> int:
         return self._n_photons
 
-    # ------------------------------------------------------------------
-    # Transition matrix
-    # ------------------------------------------------------------------
-    def transition_matrix(self, device: torch.device | None = None) -> torch.Tensor:
-        """
-        Sparse matrix mapping computational amplitudes (columns) to the computation-space ordering (rows).
-        """
-        target_device = (
-            device if device is not None else self._device if self._device is not None else torch.device("cpu")
-        )
+    @property
+    def output_size(self) -> int:
+        return self._output_size
+
+    def _build_transition_matrix(self) -> torch.Tensor:
+        """Precompute the sparse transition matrix on the configured device."""
+        rows: list[int] = []
+        cols: list[int] = []
+        for col, occ in enumerate(self._generate_qloq_basis()):
+            row = self._output_enum.fock_to_index(occ)
+            rows.append(row)
+            cols.append(col)
+
+        if rows:
+            indices = torch.tensor([rows, cols], dtype=torch.long)
+        else:
+            indices = torch.empty((2, 0), dtype=torch.long)
+
         _, target_complex = resolve_float_complex(self._dtype)
-        indices = self._transition_indices.to(device=target_device)
-        values = torch.ones(
-            indices.shape[1],
-            dtype=target_complex,
-            device=target_device,
+        target_device = (
+            self._device if self._device is not None else torch.device("cpu")
         )
-        transition = torch.sparse_coo_tensor(
+        values = torch.ones(
+            indices.shape[1], dtype=target_complex, device=target_device
+        )
+        indices = indices.to(device=target_device)
+        matrix = torch.sparse_coo_tensor(
             indices,
             values,
             size=self._transition_shape,
             dtype=target_complex,
             device=target_device,
         )
-        return transition.coalesce()
+        return matrix.coalesce()
+
+    def _bitstring_to_occ(self, bitstring: str) -> tuple[int, ...]:
+        """Convert a bitstring in computational order to an occupancy tuple."""
+        if self.wires_order == "little":
+            bitstring = bitstring[::-1]
+        fock_state: list[int] = []
+        bit_offset = 0
+        for size in self.group_sizes:
+            group_bits = bitstring[bit_offset : bit_offset + size]
+            idx = int(group_bits, 2)
+            fock_state.extend(1 if i == idx else 0 for i in range(2**size))
+            bit_offset += size
+        return tuple(fock_state)
+
+    # ------------------------------------------------------------------
+    # Transition matrix
+    # ------------------------------------------------------------------
+    def transition_matrix(self) -> torch.Tensor:
+        r"""
+        Return the precomputed transition matrix.
+
+        Returns
+        -------
+        torch.Tensor
+            Sparse COO tensor of shape ``(output_size, 2**n_qubits)`` mapping the qubit computational basis
+            onto the selected photonic computation space.
+        """
+        return self._transition
+
+    def qubit_to_fock_state(self, bitstring: str) -> pcvl.BasicState:
+        r"""
+        Convenience helper mirroring :func:`qubit_to_fock_state` with the bridge configuration.
+
+        Parameters
+        ----------
+        bitstring : str
+            Computational basis string. Its length must equal ``sum(self.group_sizes)``.
+
+        Returns
+        -------
+        perceval.BasicState
+            Photonic Fock state produced by the current qubit grouping convention.
+        """
+        if len(bitstring) != self.n_qubits:
+            raise ValueError(
+                f"Expected bitstring of length {self.n_qubits}, received {len(bitstring)}."
+            )
+        return pcvl.BasicState(self._bitstring_to_occ(bitstring))
 
     # ------------------------------------------------------------------
     # Forward pass
     # ------------------------------------------------------------------
-    def forward(self, psi: torch.Tensor, *extra_args: Any) -> torch.Tensor:
+    def forward(self, psi: torch.Tensor) -> torch.Tensor:
+        r"""
+        Project a qubit statevector onto the selected photonic computation space.
+
+        Parameters
+        ----------
+        psi : torch.Tensor
+            Input statevector with shape ``(2**n_qubits,)`` or ``(batch, 2**n_qubits)``. The tensor must
+            reside on the bridge device.
+
+        Returns
+        -------
+        torch.Tensor
+            Amplitudes ordered according to the computation-space enumeration. A 1D input returns a 1D
+            tensor; batched inputs preserve the leading batch dimension.
+
+        Raises
+        ------
+        TypeError
+            If ``psi`` is not a :class:`torch.Tensor`.
+        ValueError
+            If the tensor shape or device is inconsistent with the bridge configuration.
         """
-        Convert a qubit statevector ``psi`` into amplitudes ordered according to the computation space.
-        """
-        if extra_args:
-            raise ValueError("QuantumBridge no longer forwards auxiliary arguments; received extra inputs.")
         if not isinstance(psi, torch.Tensor):
-            raise TypeError("Statevector produced by the upstream module must be a torch.Tensor.")
+            raise TypeError(
+                "Statevector produced by the upstream module must be a torch.Tensor."
+            )
 
         squeeze = False
         if psi.ndim == 1:
@@ -303,8 +279,14 @@ class QuantumBridge(nn.Module):
             )
 
         _, target_complex = resolve_float_complex(self._dtype)
-        target_device = self._device if self._device is not None else psi.device
-        payload = psi.to(dtype=target_complex, device=target_device)
+
+        expected_device = self._transition.device
+        if psi.device != expected_device:
+            raise ValueError(
+                f"QuantumBridge expected input on device {expected_device}, received {psi.device}."
+            )
+
+        payload = psi.to(dtype=target_complex)
 
         if payload.shape[-1] != self.expected_state_dim:
             raise ValueError(
@@ -321,10 +303,11 @@ class QuantumBridge(nn.Module):
             )
             payload = payload / safe_norms
 
-        transition = self.transition_matrix(device=payload.device)
-        transformed = torch.sparse.mm(transition, payload.transpose(0, 1)).transpose(0, 1)
+        transformed = torch.sparse.mm(
+            self._transition, payload.transpose(0, 1)
+        ).transpose(0, 1)
 
         return transformed.squeeze(0) if squeeze else transformed
 
 
-__all__ = ["ComputationSpace", "QuantumBridge", "to_fock_state"]
+__all__ = ["QuantumBridge"]

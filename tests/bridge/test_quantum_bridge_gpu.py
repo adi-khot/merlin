@@ -2,7 +2,7 @@ import perceval as pcvl
 import pytest
 import torch
 
-from merlin import OutputMappingStrategy, QuantumLayer
+from merlin import QuantumLayer
 from merlin.bridge.quantum_bridge import ComputationSpace, QuantumBridge
 
 pytestmark = pytest.mark.skipif(
@@ -13,13 +13,12 @@ pytestmark = pytest.mark.skipif(
 def make_identity_layer(m: int, n_photons: int, device: torch.device) -> QuantumLayer:
     c = pcvl.Circuit(m)  # identity unitary
     return QuantumLayer(
-        input_size=0,
         circuit=c,
         n_photons=n_photons,
-        output_mapping_strategy=OutputMappingStrategy.NONE,
         no_bunching=True,
         device=device,
         dtype=torch.float32,
+        amplitude_encoding=True,
     )
 
 

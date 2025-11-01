@@ -4,24 +4,21 @@ import perceval as pcvl
 import pytest
 import torch
 
-from merlin import OutputMappingStrategy, QuantumLayer
-from merlin.bridge.quantum_bridge import (
-    ComputationSpace,
-    QuantumBridge,
-    to_fock_state,
-)
+from merlin import QuantumLayer
+from merlin.bridge.quantum_bridge import ComputationSpace, QuantumBridge
 
 
-def make_identity_layer(m: int, n_photons: int, *, no_bunching: bool = True) -> QuantumLayer:
+def make_identity_layer(
+    m: int, n_photons: int, *, no_bunching: bool = True
+) -> QuantumLayer:
     c = pcvl.Circuit(m)  # identity unitary
     layer = QuantumLayer(
-        input_size=0,
         circuit=c,
         n_photons=n_photons,
-        output_mapping_strategy=OutputMappingStrategy.NONE,
         no_bunching=no_bunching,
         device=torch.device("cpu"),
         dtype=torch.float32,
+        amplitude_encoding=True,
     )
     return layer
 
@@ -61,7 +58,7 @@ def test_basis_state_mapping_little_endian(basis_index: int, bits: str):
     assert out.shape[0] == 1
 
     # Expected Fock state for this basis (little-endian reverses the bitstring before grouping)
-    expected_bs = to_fock_state(bits[::-1], groups)
+    expected_bs = bridge.qubit_to_fock_state(bits)
     idx = find_key_index(layer, expected_bs)
 
     # Identity circuit should route basis |bits> to the same Fock key with prob ~1
@@ -92,8 +89,8 @@ def test_superposition_and_normalization():
     out = layer(payload)
     assert out.shape[0] == 2
 
-    idx_00 = find_key_index(layer, to_fock_state("00"[::-1], groups))
-    idx_11 = find_key_index(layer, to_fock_state("11"[::-1], groups))
+    idx_00 = find_key_index(layer, bridge.qubit_to_fock_state("00"))
+    idx_11 = find_key_index(layer, bridge.qubit_to_fock_state("11"))
 
     # After normalization, each component should carry 0.5 probability on identity circuit
     for b in range(2):
@@ -138,8 +135,8 @@ def test_bridge_with_pennylane_qnode():
     payload = bridge(psi)
     out = layer(payload)
 
-    idx_0 = find_key_index(layer, to_fock_state("0", groups))
-    idx_1 = find_key_index(layer, to_fock_state("1", groups))
+    idx_0 = find_key_index(layer, bridge.qubit_to_fock_state("0"))
+    idx_1 = find_key_index(layer, bridge.qubit_to_fock_state("1"))
 
     expected_zero = math.cos(angle / 2) ** 2
     expected_one = math.sin(angle / 2) ** 2
@@ -171,7 +168,7 @@ def test_wires_order_big_endian_changes_mapping():
 
     payload_big = bridge_big(psi)
     out_big = layer(payload_big)
-    idx_big = find_key_index(layer, to_fock_state("01", groups))
+    idx_big = find_key_index(layer, bridge_big.qubit_to_fock_state("01"))
 
     # Little-endian: reverse bits before grouping
     bridge_little = QuantumBridge(
@@ -182,7 +179,7 @@ def test_wires_order_big_endian_changes_mapping():
     )
     payload_little = bridge_little(psi)
     out_little = layer(payload_little)
-    idx_little = find_key_index(layer, to_fock_state("01"[::-1], groups))
+    idx_little = find_key_index(layer, bridge_little.qubit_to_fock_state("01"))
 
     assert torch.isclose(
         out_big[0, idx_big], torch.tensor(1.0, dtype=out_big.dtype), atol=1e-6
@@ -194,7 +191,7 @@ def test_wires_order_big_endian_changes_mapping():
     assert idx_big != idx_little
 
 
-def test_transition_matrix_dual_rail_identity():
+def test_transition_matrix_dual_rail_permutation():
     groups = [1, 1]
     bridge = QuantumBridge(
         qubit_groups=groups,
@@ -203,12 +200,15 @@ def test_transition_matrix_dual_rail_identity():
         computation_space=ComputationSpace.DUAL_RAIL,
         normalize=False,
     )
-    matrix = bridge.transition_matrix()
-    dense = matrix.to_dense()
-    torch.testing.assert_close(
-        dense,
-        torch.eye(2 ** sum(groups), dtype=dense.dtype),
-    )
+    dense = bridge.transition_matrix().to_dense()
+    col_sums = dense.real.sum(dim=0)
+    torch.testing.assert_close(col_sums, torch.ones_like(col_sums))
+    row_sums = dense.abs().sum(dim=1)
+    assert torch.all(row_sums <= 1.0 + 1e-6)
+    output_index = {occ: idx for idx, occ in enumerate(bridge.output_basis)}
+    for col, occ in enumerate(bridge.basis_occupancies):
+        row = output_index[occ]
+        assert torch.isclose(dense[row, col], torch.tensor(1.0, dtype=dense.dtype))
 
 
 def test_transition_matrix_unbunched_subset():
@@ -257,7 +257,7 @@ def test_bridge_properties_exposed():
     assert bridge.n_modes == m
     assert bridge.n_photons == len(groups)
     expected_size = math.comb(m, len(groups))
-    assert len(bridge.output_basis) == expected_size
+    assert bridge.output_size == expected_size
 
 
 def test_bridge_fock_space_matches_layer_keys():
@@ -277,7 +277,7 @@ def test_bridge_fock_space_matches_layer_keys():
     payload = bridge(psi)
     out = layer(payload)
 
-    expected_bs = to_fock_state("10"[::-1], groups)
+    expected_bs = bridge.qubit_to_fock_state("10")
     idx = find_key_index(layer, expected_bs)
 
     assert torch.isclose(out[0, idx], torch.tensor(1.0, dtype=out.dtype), atol=1e-6)
@@ -306,7 +306,7 @@ def test_large_qloq_encoding_basis_state():
     payload = bridge(psi)
     out = layer(payload)
 
-    expected_bs = to_fock_state(bits[::-1], groups)
+    expected_bs = bridge.qubit_to_fock_state(bits)
     idx = find_key_index(layer, expected_bs)
 
     assert torch.isclose(out[0, idx], torch.tensor(1.0, dtype=out.dtype), atol=1e-6)
@@ -315,8 +315,6 @@ def test_large_qloq_encoding_basis_state():
 
 def test_error_when_qubit_groups_do_not_match_state_length():
     # Provide a 2-qubit state but groups sum to 1
-    layer = make_identity_layer(m=2, n_photons=1)
-
     bridge = QuantumBridge(qubit_groups=[1], n_modes=2, n_photons=1)
 
     with pytest.raises(ValueError):
@@ -373,7 +371,7 @@ def test_quantum_bridge_sequential_backward_with_pennylane():
     model = torch.nn.Sequential(state_module, bridge, layer)
 
     output = model(torch.zeros(1, dtype=torch.float32))
-    idx_1 = find_key_index(layer, to_fock_state("1", groups))
+    idx_1 = find_key_index(layer, bridge.qubit_to_fock_state("1"))
     loss = output[0, idx_1]
 
     loss.backward()
