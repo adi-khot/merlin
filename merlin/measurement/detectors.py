@@ -294,8 +294,8 @@ class DetectorTransform(torch.nn.Module):
         else:
             distribution = distribution.reshape(-1, last_dim)
 
-        matrix_t = matrix.transpose(0, 1)
-        transformed = torch.sparse.mm(matrix_t, distribution.t()).t()
+        # Direct multiplication: distribution (batch, input_dim) @ matrix (input_dim, output_dim)
+        transformed = torch.sparse.mm(distribution, matrix)
 
         if len(original_shape) == 1:
             return transformed.squeeze(0)
