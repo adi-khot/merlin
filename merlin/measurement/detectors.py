@@ -332,13 +332,13 @@ class DetectorTransform(torch.nn.Module):
         values = matrix.values()
         mask = indices[0] == index
 
-        row = torch.zeros(output_dim, dtype=matrix_dtype, device=matrix_device)
+        row = torch.zeros(output_dim, dtype=target_dtype, device=target_device)
         if mask.any():
             cols = indices[1, mask]
             row_vals = values[mask]
+            if row_vals.dtype != target_dtype or row_vals.device != target_device:
+                row_vals = row_vals.to(dtype=target_dtype, device=target_device)
             row[cols] = row_vals
-        if target_dtype != row.dtype or target_device != row.device:
-            row = row.to(dtype=target_dtype, device=target_device)
         return row
 
 
