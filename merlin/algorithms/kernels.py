@@ -727,10 +727,11 @@ class FidelityKernel(torch.nn.Module):
             weights[self._input_state_index] = 1.0
             self._input_detection_index = self._input_state_index
         else:
-            matrix: Tensor = cast(Tensor, self._detector_transform._matrix)
-            row = matrix[self._input_state_index].to(dtype=self.dtype)
-            if self.device is not None:
-                row = row.to(self.device)
+            row = self._detector_transform.row(
+                self._input_state_index,
+                dtype=self.dtype,
+                device=self.device,
+            )
             weights = row
             nonzero = torch.nonzero(row > 1e-8, as_tuple=True)[0]
             self._input_detection_index = None
