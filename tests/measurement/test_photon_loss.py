@@ -166,7 +166,7 @@ class TestPhotonLossWithQuantumLayer:
             no_bunching=True,
         )
 
-        # Fail with a Detector present
+        # Warning with a Detector present
         with pytest.warns(UserWarning):
             layer_detectors = ML.QuantumLayer(
                 input_size=0,
