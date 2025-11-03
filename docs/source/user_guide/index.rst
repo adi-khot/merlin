@@ -16,4 +16,7 @@ User Guide
    hybrid_models
    output_mappings
    feed_forward
+   algorithms
+   computation_space
+   quantum_bridge
    kernels
