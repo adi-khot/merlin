@@ -13,6 +13,8 @@ merlin.algorithms.kernels module
    :class:`perceval.NoiseModel` (photon loss) before applying any detector
    transforms. The resulting kernel values therefore reflect both survival
    probabilities and detector post-processing.
+
+
 Examples
 --------
 
