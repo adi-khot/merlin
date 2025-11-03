@@ -577,6 +577,7 @@ class TestFidelityKernelFactoryMethods:
         assert kernel.feature_map.circuit.m == 4
         assert len(kernel.input_state) == 4
         assert sum(kernel.input_state) == 2
+        assert kernel.input_state == [1, 0, 1, 0]
 
     def test_simple_factory_default_photons(self):
         """Test simple factory with default n_photons."""
@@ -584,6 +585,7 @@ class TestFidelityKernelFactoryMethods:
 
         assert kernel.input_size == 3
         assert sum(kernel.input_state) == 3  # Should default to input_size photons
+        assert kernel.input_state == [1, 0, 1, 0, 1, 0]
 
     def test_simple_factory_with_custom_input_state(self):
         """Test simple factory with custom input state."""
@@ -650,6 +652,7 @@ class TestKernelCircuitBuilder:
         assert kernel.feature_map.circuit.m == 4
         assert len(kernel.input_state) == 4
         assert sum(kernel.input_state) == 2
+        assert kernel.input_state == [1, 0, 1, 0]
 
     def test_builder_fidelity_kernel_with_custom_input_state(self):
         """Test building FidelityKernel with custom input state."""

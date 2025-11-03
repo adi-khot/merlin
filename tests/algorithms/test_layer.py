@@ -168,6 +168,22 @@ class TestQuantumLayer:
         assert output.shape[0] == 1
         assert output.shape[1] == 3
 
+    def test_default_input_state_even_distribution(self):
+        """Omitted input_state should evenly distribute photons across modes."""
+        circuit = pcvl.Circuit(5)
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            circuit=circuit,
+            n_photons=2,
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+        )
+
+        expected_state = ML.StateGenerator.generate_state(
+            circuit.m, 2, ML.StatePattern.SPACED
+        )
+        assert layer.input_state == expected_state
+
     def test_gradient_computation(self):
         """Test that gradients flow through the layer."""
 
@@ -495,11 +511,10 @@ class TestQuantumLayer:
         circuit.add(1, pcvl.PS(pcvl.P("phi2")))  # Another phase shifter
 
         # Define input state (where photons are placed)
-        input_state = [1, 0, 0]  # 1 photon in first mode
+        input_state = pcvl.BasicState([1, 0, 0])  # 1 photon in first mode
 
         # Create QuantumLayer with custom circuit
         layer = ML.QuantumLayer(
-            input_size=0,  # No input parameters
             circuit=circuit,
             input_state=input_state,
             trainable_parameters=["phi"],  # Parameters to train (by prefix)
@@ -627,3 +642,21 @@ class TestQuantumLayer:
         o = layer.forward(torch.rand(batch_size, m))
 
         assert torch.allclose(torch.sum(o.abs() ** 2, dim=1), torch.ones(batch_size))
+
+    def test_basicstate_input(self):
+        bs1 = pcvl.BasicState("|1,0,1>")
+        ML.QuantumLayer(
+            circuit=pcvl.Circuit(bs1.m),
+            computation_space=ML.ComputationSpace.FOCK,
+            input_state=bs1,
+        )
+        # An annotated BasicState should raise as annotations are not supported
+        bs_annot = pcvl.BasicState("|{a:0},0,1>")
+        with pytest.raises(
+            ValueError, match="BasicState with annotations is not supported"
+        ):
+            _ = ML.QuantumLayer(
+                circuit=pcvl.Circuit(bs_annot.m),
+                computation_space=ML.ComputationSpace.FOCK,
+                input_state=bs_annot,
+            )

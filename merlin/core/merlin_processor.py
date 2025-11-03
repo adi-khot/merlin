@@ -429,8 +429,7 @@ class MerlinProcessor:
             circuit_params = {}
             for j, param_name in enumerate(input_param_names):
                 if j < input_chunk.shape[1]:
-                    # keep inputs in [0,1] and convert to radians by × π
-                    circuit_params[param_name] = float(input_np[i, j] * np.pi)
+                    circuit_params[param_name] = float(input_np[i, j])
                 else:
                     circuit_params[param_name] = 0.0
             sampler.add_iteration(circuit_params=circuit_params)

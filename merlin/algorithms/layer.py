@@ -31,6 +31,7 @@ from collections.abc import Iterable, Sequence
 from contextlib import contextmanager
 from typing import Any, cast
 
+import exqalibur as xqlbr
 import perceval as pcvl
 import torch
 import torch.nn as nn
@@ -40,12 +41,15 @@ from ..builder.circuit_builder import (
     CircuitBuilder,
 )
 from ..core.computation_space import ComputationSpace
+from ..core.generators import StateGenerator, StatePattern
 from ..core.process import ComputationProcessFactory
 from ..measurement import OutputMapper
 from ..measurement.autodiff import AutoDiffProcess
 from ..measurement.detectors import DetectorTransform, resolve_detectors
 from ..measurement.photon_loss import PhotonLossTransform, resolve_photon_loss
 from ..measurement.strategies import MeasurementStrategy
+from ..pcvl_pytorch.utils import pcvl_to_tensor
+from ..utils.dtypes import complex_dtype_for
 from ..utils.grouping import ModGrouping
 
 
@@ -139,7 +143,7 @@ class QuantumLayer(nn.Module):
         # Custom experiment construction
         experiment: pcvl.Experiment | None = None,
         # For both custom circuits and builder
-        input_state: list[int] | None = None,
+        input_state: list[int] | pcvl.BasicState | pcvl.StateVector | None = None,
         n_photons: int | None = None,
         # only for custom circuits and experiments
         trainable_parameters: list[str] | None = None,
@@ -153,6 +157,95 @@ class QuantumLayer(nn.Module):
         dtype: torch.dtype | None = None,
         **kwargs,
     ):
+        """Initialize a QuantumLayer from a builder, a Perceval circuit, or an experiment.
+
+        This constructor wires the selected photonic circuit (or experiment) into a
+        trainable PyTorch module and configures the computation space, input state,
+        encoding, and measurement strategy. Exactly one of ``builder``, ``circuit``,
+        or ``experiment`` must be provided.
+
+        Parameters
+        ----------
+        input_size : int | None, optional
+            Size of the classical input vector when angle encoding is used
+            (``amplitude_encoding=False``). If omitted, it is inferred from the
+            circuit metadata (input parameter prefixes and/or encoding specs).
+            Must be omitted when ``amplitude_encoding=True``.
+        builder : CircuitBuilder | None, optional
+            High-level circuit builder that defines trainable structure, input
+            encoders and their prefixes. Mutually exclusive with ``circuit`` and
+            ``experiment``.
+        circuit : pcvl.Circuit | None, optional
+            A fully defined Perceval circuit. Mutually exclusive with ``builder``
+            and ``experiment``.
+        experiment : pcvl.Experiment | None, optional
+            A Perceval experiment. Must be unitary and without post-selection or
+            heralding. Mutually exclusive with ``builder`` and ``circuit``.
+        input_state : list[int] | pcvl.BasicState | pcvl.StateVector | None, optional
+            Logical input state of the circuit. Accepted forms:
+            - list of occupations (length = number of modes),
+            - ``pcvl.BasicState`` without annotations (plain FockState only),
+            - ``pcvl.StateVector`` (converted to a tensor according to
+              ``computation_space``).
+            If omitted, ``n_photons`` must be provided to derive a default state.
+            The dual-rail space defaults to ``[1,0,1,0,...]`` while other spaces
+            evenly distribute the photons across the available modes.
+        n_photons : int | None, optional
+            Number of photons used to infer a default input state and to size the
+            computation space when amplitude encoding is enabled.
+        trainable_parameters : list[str] | None, optional
+            For custom circuits/experiments, the list of Perceval parameter
+            prefixes to expose as trainable PyTorch parameters. When a
+            ``builder`` is provided, these are taken from the builder and this
+            argument must be omitted.
+        input_parameters : list[str] | None, optional
+            Perceval parameter prefixes used for classical (angle) encoding. For
+            amplitude encoding, this must be empty/None.
+        amplitude_encoding : bool, default: False
+            When True, the forward call expects an amplitude vector (or batch) on
+            the first positional argument and propagates it through the quantum
+            layer; ``input_size`` must not be set in this mode and
+            ``n_photons`` must be provided.
+        computation_space : ComputationSpace | str | None, optional
+            Logical computation subspace to use: one of ``{"fock", "unbunched",
+            "dual_rail"}``. If omitted, defaults to ``UNBUNCHED`` unless
+            overridden by the deprecated ``no_bunching`` kwarg.
+        measurement_strategy : MeasurementStrategy, default: PROBABILITIES
+            Output mapping strategy. Supported values include ``PROBABILITIES``,
+            ``MODE_EXPECTATIONS`` and ``AMPLITUDES``.
+        device : torch.device | None, optional
+            Target device for internal tensors (e.g., ``torch.device("cuda")``).
+        dtype : torch.dtype | None, optional
+            Precision for internal tensors (e.g., ``torch.float32``). The matching
+            complex dtype is chosen automatically.
+        **kwargs
+            Additional (legacy) keyword arguments.
+
+        Raises
+        ------
+        ValueError
+            If an unexpected keyword argument is provided; if both or none of
+            ``builder``, ``circuit``, ``experiment`` are provided; if
+            ``amplitude_encoding=True`` and ``input_size`` is set; if
+            ``amplitude_encoding=True`` and ``n_photons`` is not provided; if
+            classical ``input_parameters`` are combined with
+            ``amplitude_encoding=True``; if ``no_bunching`` conflicts with the
+            selected ``computation_space``; if an ``experiment`` is not unitary or
+            uses post-selection/heralding; if neither ``input_state`` nor
+            ``n_photons`` is provided when required; or if an annotated
+            ``BasicState`` is passed (annotations are not supported).
+        TypeError
+            If an unknown measurement strategy is selected during setup.
+
+        Warns
+        -----
+        DeprecationWarning
+            When deprecated keywords (e.g. ``no_bunching``) are supplied.
+        UserWarning
+            When ``experiment.min_photons_filter`` or ``experiment.detectors`` are
+            present (currently ignored).
+
+        """
         super().__init__()
 
         self._validate_kwargs("__init__", kwargs)
@@ -160,8 +253,8 @@ class QuantumLayer(nn.Module):
 
         self.device = device
         self.dtype = dtype or torch.float32
+        self.complex_dtype = complex_dtype_for(self.dtype)
         self.input_size = input_size
-        self.no_bunching = no_bunching
         self.measurement_strategy = measurement_strategy
         self.experiment: pcvl.Experiment | None = None
 
@@ -170,7 +263,6 @@ class QuantumLayer(nn.Module):
         self._raw_output_keys: list[tuple[int, ...]] = []
         self._detector_is_identity: bool = True
         self._output_size: int = 0
-        self.input_state = input_state
         self.amplitude_encoding = amplitude_encoding
 
         # input_size management: input_size can be given only if amplitude_encoding is False
@@ -207,6 +299,27 @@ class QuantumLayer(nn.Module):
             )
 
         self.computation_space = computation_space_value
+
+        if isinstance(input_state, pcvl.BasicState):
+            if not isinstance(input_state, xqlbr.FockState):
+                raise ValueError("BasicState with annotations is not supported")
+            input_state = list(input_state)
+        elif isinstance(input_state, pcvl.StateVector):
+            if len(input_state) == 0:
+                raise ValueError("input_state StateVector cannot be empty")
+            sv_n_photons = input_state.n.pop()
+            if n_photons is not None and sv_n_photons != n_photons:
+                raise ValueError(
+                    "Inconsistent number of photons between input_state and n_photons."
+                )
+            self.n_photons = sv_n_photons
+            input_state = pcvl_to_tensor(
+                input_state,
+                self.computation_space,
+                device=device,
+                dtype=self.complex_dtype,
+            )
+        self.input_state = input_state
 
         # execution policy: when True, always simulate locally (do not offload)
         self._force_simulation: bool = False
@@ -368,9 +481,13 @@ class QuantumLayer(nn.Module):
         if input_state is not None:
             self.input_state = input_state
         elif n_photons is not None:
-            # Default behavior: place [1,0,1,0,...] in dual-rail, else first n_photons modes
+            # Default behavior: place [1,0,1,0,...] in dual-rail, else distribute photons across modes
             if self.computation_space is ComputationSpace.DUAL_RAIL:
                 self.input_state = [1, 0] * n_photons
+            elif not self.amplitude_encoding:
+                self.input_state = StateGenerator.generate_state(
+                    circuit.m, n_photons, StatePattern.SPACED
+                )
             else:
                 self.input_state = [1] * n_photons + [0] * (circuit.m - n_photons)
         else:
@@ -635,18 +752,7 @@ class QuantumLayer(nn.Module):
         if spec:
             return self._apply_angle_encoding(x, spec)
 
-        # For custom circuits without explicit encoding metadata, apply π scaling
-        return x * torch.pi
-
-    def _complex_dtype(self) -> torch.dtype:
-        """Return the complex dtype matching the layer precision."""
-        if self.dtype == torch.float16 and hasattr(torch, "complex32"):
-            return torch.complex32
-        if self.dtype == torch.float32:
-            return torch.complex64
-        if self.dtype == torch.float64:
-            return torch.complex128
-        raise ValueError(f"Unsupported dtype for amplitude encoding: {self.dtype}")
+        return x
 
     def _apply_angle_encoding(
         self, x: torch.Tensor, spec: dict[str, Any]
@@ -667,7 +773,7 @@ class QuantumLayer(nn.Module):
             )
 
         if not combos:
-            encoded = x_batch * torch.pi
+            encoded = x_batch
             return encoded.squeeze(0) if squeeze else encoded
 
         encoded_cols: list[torch.Tensor] = []
@@ -730,7 +836,7 @@ class QuantumLayer(nn.Module):
             amplitude = amplitude.to(self.device)
 
         if amplitude.is_complex():
-            amplitude = amplitude.to(self._complex_dtype())
+            amplitude = amplitude.to(self.complex_dtype)
         else:
             amplitude = amplitude.to(self.dtype)
 
@@ -893,17 +999,12 @@ class QuantumLayer(nn.Module):
         )
 
         # Convert amplitudes to probabilities if needed
-        if isinstance(amplitudes, torch.Tensor):
-            distribution = amplitudes.real**2 + amplitudes.imag**2
-        elif isinstance(amplitudes, tuple):
+        if isinstance(amplitudes, tuple):
             amplitudes = amplitudes[1]
-            distribution = amplitudes.real**2 + amplitudes.imag**2
-        else:
+        elif not isinstance(amplitudes, torch.Tensor):
             raise TypeError(f"Unexpected amplitudes type: {type(amplitudes)}")
 
-        # Optional no-bunching renormalization
-        if self.no_bunching:
-            sum_probs = distribution.sum(dim=1, keepdim=True)
+        # TODO: (Philippe) check why do we calculate distribution here, since it will be redone in measurement
         distribution = amplitudes.real**2 + amplitudes.imag**2
 
         # renormalize distribution and amplitudes for UNBUNCHED and DUAL_RAIL spaces
@@ -1067,6 +1168,7 @@ class QuantumLayer(nn.Module):
         """
         Export a standalone configuration for remote execution.
         """
+        # TODO: to be revisited - not all options seems to be exported
         self._update_current_params()
 
         if self.experiment is not None:
@@ -1106,7 +1208,6 @@ class QuantumLayer(nn.Module):
             else None,
             "trainable_parameters": list(self.trainable_parameters),
             "input_parameters": list(self.input_parameters),
-            "no_bunching": bool(self.no_bunching),
             "noise_model": self.noise_model,
         }
         return config

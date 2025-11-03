@@ -4,7 +4,7 @@ import perceval as pcvl
 import torch
 from perceval.components import BS, PS
 
-from ..core.generators import CircuitType
+from ..core.generators import CircuitType, StateGenerator, StatePattern
 from ..measurement.strategies import MeasurementStrategy
 from .layer import QuantumLayer
 
@@ -54,7 +54,7 @@ def define_layer_no_input(n_modes, n_photons, circuit_type=None):
     """
 
     circuit = create_circuit(n_modes, 0)
-    input_state = [1] * n_photons + [0] * (n_modes - n_photons)
+    input_state = StateGenerator.generate_state(n_modes, n_photons, StatePattern.SPACED)
 
     layer = QuantumLayer(
         input_size=0,
@@ -82,7 +82,7 @@ def define_layer_with_input(M, N, input_size, circuit_type=None):
     # (number of modes, number of photons, input size)
 
     circuit = create_circuit(M, input_size)
-    input_state = [1] * N + [0] * (M - N)
+    input_state = StateGenerator.generate_state(M, N, StatePattern.SPACED)
     layer = QuantumLayer(
         input_size=input_size,
         circuit=circuit,

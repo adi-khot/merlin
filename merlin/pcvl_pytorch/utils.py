@@ -25,7 +25,8 @@
 import perceval as pcvl  # type: ignore[import]
 import torch
 
-from merlin import Combinadics, ComputationSpace
+from ..core import ComputationSpace
+from ..utils import Combinadics
 
 
 def pcvl_to_tensor(

@@ -55,10 +55,27 @@ make html  # or: make livehtml (if sphinx-autobuild added manually)
 
 ### Tests & Benchmarks
 
-Run the full test suite:
+Run the full test suite (excluding tests on remote platform):
 ```bash
 pytest -q
 ```
+
+Cloud (remote) tests:
+
+- For most contributions, it's fine to run the suite as-is; tests that require a cloud token are skipped by default.
+- If your development involves tests that run against a remote platform (Quandela Cloud or another Perceval provider), please:
+  1) Have an active account on https://cloud.quandela.com (or the other supported Perceval provider), and
+  2) Configure Perceval remote access by following the official guide: https://perceval.quandela.net/docs/reference/runtime/remote_config.html#remoteconfig
+
+To run tests that require a cloud token, enable them with:
+```bash
+pytest -q --run-cloud-tests -r s tests/core/cloud
+```
+
+Notes:
+- Without `--run-cloud-tests`, only the token-requiring tests are skipped; other cloud-related tests still run.
+- If you pass `--run-cloud-tests` but no token is configured, those tests will still be skipped at runtime with a clear reason.
+- Use `-r s` (or `-r a`) to display skip reasons.
 
 Run only benchmarks (pytest-benchmark):
 ```bash

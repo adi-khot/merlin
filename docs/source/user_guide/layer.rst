@@ -165,7 +165,8 @@ Notes
 -----------
 
 - ``input_state`` must match the number of circuit modes. When unspecified,
-  ``n_photons`` controls how photons are packed into the first modes.
+  ``n_photons`` leads to an evenly spaced photon distribution (for instance, for dual-rail it
+  defaults to ``[1,0,1,0,...]``).
 - Sampling-based evaluations are available through ``shots`` and
   ``sampling_method``; the default returns exact SLOS probabilities.
 - The layer registers trainable parameters (if any) with PyTorch so they appear
