@@ -28,6 +28,7 @@ into PyTorch neural networks with automatic differentiation support.
 """
 
 # Core API - Most users will only need these
+from .algorithms.feed_forward import FeedForwardBlock, PoolingFeedForward
 from .algorithms.kernels import FeatureMap, FidelityKernel
 from .algorithms.layer import QuantumLayer
 from .algorithms.loss import NKernelAlignment
@@ -35,6 +36,7 @@ from .builder.circuit_builder import CircuitBuilder
 
 # Essential enums
 # Advanced components (for power users)
+from .core.computation_space import ComputationSpace
 from .core.generators import CircuitGenerator, CircuitType, StateGenerator, StatePattern
 from .core.photonicbackend import PhotonicBackend
 from .measurement import (
@@ -47,6 +49,7 @@ from .measurement.autodiff import AutoDiffProcess
 from .measurement.process import SamplingProcess
 from .measurement.strategies import MeasurementStrategy
 from .pcvl_pytorch import CircuitConverter, build_slos_distribution_computegraph
+from .utils.combinadics import Combinadics
 from .utils.grouping import LexGrouping, ModGrouping
 from .utils.torch_codes import FeatureEncoder
 
@@ -63,7 +66,9 @@ __all__ = [
     # Configuration enums
     "CircuitType",
     "StatePattern",
+    "ComputationSpace",
     "MeasurementStrategy",
+    "Combinadics",
     # Advanced components
     "CircuitGenerator",
     "StateGenerator",
@@ -81,5 +86,7 @@ __all__ = [
     "NKernelAlignment",
     "FeatureMap",
     "FidelityKernel",
+    "FeedForwardBlock",
+    "PoolingFeedForward",
     "CircuitBuilder",
 ]

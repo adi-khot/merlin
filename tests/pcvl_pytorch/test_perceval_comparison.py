@@ -38,7 +38,7 @@ class TestPercevalComparison:
     TOLERANCE = 0.005
     N_MODES = 12
     N_PHOTONS = 3
-    N_SAMPLES = 1000000
+    N_SAMPLES = 1_000_000
 
     def test_probability_distribution_comparison_simple(self):
         """Test that MerLin gives same probability distribution as direct Perceval QPU."""
@@ -71,40 +71,35 @@ class TestPercevalComparison:
             .add(0, reservoir_U, merge=False)
         )
 
-        # Create input state
-        input_state = [1] * self.N_PHOTONS + [0] * (
-            self.N_MODES - self.N_PHOTONS
-        )  # Place photons in first modes
+        # Create input state (photons in the first modes)
+        input_state = [1] * self.N_PHOTONS + [0] * (self.N_MODES - self.N_PHOTONS)
 
-        # Check what parameters the circuit actually has
+        # Parameter names present in the circuit
         circuit_params = [p.name for p in chip.get_parameters()]
+        input_size = len(circuit_params)
 
-        # Select some parameters for training and some for input
-        all_params = circuit_params
-        input_size = len(all_params)
-
-        # Create MerLin quantum layer with custom circuit
+        # --- FIX: do not pass `shots` to QuantumLayer.__init__ (modern API) ---
         merlin_layer = ML.QuantumLayer(
-            input_size=len(all_params),
+            input_size=input_size,
             circuit=chip,
             input_state=input_state,
             n_photons=self.N_PHOTONS,
             input_parameters=["φ"],
             trainable_parameters=[],
             measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
-            shots=0,
         )
 
         # Create dummy input to get parameters (add batch dimension)
         dummy_input = torch.zeros(1, input_size, dtype=torch.float32)
 
-        # Get MerLin probability distribution (no gradients to avoid sampling warnings)
+        # Get MerLin probability distribution (deterministic, no sampling)
         with torch.no_grad():
             merlin_params = merlin_layer.prepare_parameters([dummy_input])
             unitary = merlin_layer.computation_process.converter.to_tensor(
                 *merlin_params
             )
-            # perfect distribution (no sampling)
+
+            # exact amplitudes via simulation graph
             keys, merlin_distribution = (
                 merlin_layer.computation_process.simulation_graph.compute(
                     unitary, input_state
@@ -112,7 +107,8 @@ class TestPercevalComparison:
             )
             probabilities = merlin_distribution.real**2 + merlin_distribution.imag**2
             sum_probs = probabilities.sum(dim=1, keepdim=True)
-            # Only normalize when sum > 0 to avoid division by zero
+
+            # Normalize only when sum > 0
             valid_entries = sum_probs > 0
             if valid_entries.any():
                 probabilities = torch.where(
@@ -121,57 +117,43 @@ class TestPercevalComparison:
                     / torch.where(valid_entries, sum_probs, torch.ones_like(sum_probs)),
                     probabilities,
                 )
+
             merlin_probs = probabilities.detach().numpy()
 
-        # Set parameter values to match MerLin's computation
+        # Set parameter values in Perceval to match MerLin's input tensor
         for param_tensor in merlin_params:
             param_array = param_tensor.detach().numpy()
             for p, val in zip(parameters, param_array.flatten(), strict=True):
                 p.set_value(val)
 
-        # Create QPU processor
+        # Build Perceval processor/QPU
         qpu = pcvl.Processor("SLOS", chip)
         qpu.with_input(pcvl.BasicState(input_state))
         qpu.min_detected_photons_filter(self.N_PHOTONS)
 
-        # Get probability distribution from Perceval
+        # Empirical probability distribution from Perceval sampling
         sampler = Sampler(qpu)
         perceval_sample_count = sampler.sample_count(self.N_SAMPLES)["results"]
 
-        # Convert to probability distribution
-        perceval_probs = np.zeros(len(keys))
-
-        # Create mapping from BasicState to index
-        key_to_index = {}
-        for i, key in enumerate(keys):
-            key_to_index[pcvl.BasicState(key)] = i
-
-        # Fill perceval probability array
+        # Map BasicState -> index into MerLin keys
+        key_to_index = {pcvl.BasicState(k): i for i, k in enumerate(keys)}
+        perceval_probs = np.zeros(len(keys), dtype=float)
         for state, count in perceval_sample_count.items():
-            if state in key_to_index:
-                perceval_probs[key_to_index[state]] = count / self.N_SAMPLES
+            idx = key_to_index.get(state)
+            if idx is not None:
+                perceval_probs[idx] = count / self.N_SAMPLES
 
-        perceval_probs /= sum(perceval_probs)  # Normalize to ensure it sums to 1
+        # Normalize (defensive)
+        total = perceval_probs.sum()
+        if total > 0:
+            perceval_probs /= total
 
-        # Compare probability distributions
-        # Allow for small numerical differences due to sampling
-        tolerance = (
-            self.TOLERANCE
-        )  # 1% tolerance due to computation and sampling differences
-
-        # Check that distributions are similar
+        # Compare probability distributions (allow small sampling differences)
         diff = np.abs(merlin_probs - perceval_probs)
         max_diff = np.max(diff)
+        mean_diff = np.mean(diff)
 
-        # print(f"MerLin probabilities: {merlin_probs}")
-        # print(f"Perceval probabilities: {perceval_probs}")
-        # print(f"Maximum difference: {max_diff}")
-        # print(f"Mean absolute difference: {np.mean(diff)}")
-
-        # The distributions should be reasonably close
-        assert max_diff < tolerance, (
-            f"Probability distributions differ by more than {tolerance}: max_diff={max_diff}"
+        assert max_diff < self.TOLERANCE, (
+            f"Probability distributions differ by more than {self.TOLERANCE}: max_diff={max_diff}"
         )
-        assert np.mean(diff) < tolerance / 2, (
-            f"Mean difference too large: {np.mean(diff)}"
-        )
+        assert mean_diff < self.TOLERANCE / 2, f"Mean difference too large: {mean_diff}"

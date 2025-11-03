@@ -36,33 +36,31 @@ from collections.abc import Callable
 import torch
 import torch.jit as jit
 
-
-def _get_complex_dtype_for_float(dtype):
-    """Helper function to get the corresponding complex dtype for a float dtype."""
-    if dtype == torch.float16 and hasattr(torch, "complex32"):
-        return torch.complex32
-    elif dtype == torch.float:
-        return torch.cfloat
-    elif dtype == torch.float64:
-        return torch.cdouble
-    else:
-        raise ValueError(
-            f"Unsupported dtype: {dtype}. Must be torch.float16, torch.float, or torch.float64"
-        )
+from merlin.core.computation_space import ComputationSpace
+from merlin.utils.dtypes import resolve_float_complex
 
 
-def _get_float_dtype_for_complex(dtype):
-    """Helper function to get the corresponding float dtype for a complex dtype."""
-    if dtype == torch.complex32:
-        return torch.float16
-    elif dtype == torch.cfloat:
-        return torch.float
-    elif dtype == torch.cdouble:
-        return torch.float64
-    else:
-        raise ValueError(
-            f"Unsupported complex dtype: {dtype}. Must be torch.complex32, torch.cfloat, or torch.cdouble"
-        )
+def _get_complex_dtype_for_float(dtype: torch.dtype) -> torch.dtype:
+    """Return the complex dtype corresponding to the provided float dtype.
+
+    This wrapper uses `resolve_float_complex` from `merlin.utils.dtypes` so the
+    logic is centralized and automatically picks up optional `complex32` support
+    when present in the running PyTorch build.
+    """
+    try:
+        float_dt, complex_dt = resolve_float_complex(dtype)
+    except TypeError as exc:
+        raise ValueError(str(exc)) from exc
+    return complex_dt
+
+
+def _get_float_dtype_for_complex(dtype: torch.dtype) -> torch.dtype:
+    """Return the float dtype corresponding to the provided complex dtype."""
+    try:
+        float_dt, complex_dt = resolve_float_complex(dtype)
+    except TypeError as exc:
+        raise ValueError(str(exc)) from exc
+    return float_dt
 
 
 def prepare_vectorized_operations(operations_list, device=None):
@@ -154,6 +152,112 @@ def layer_compute_vectorized(
     return result
 
 
+def layer_compute_batch(
+    unitary: torch.Tensor,
+    prev_amplitudes: torch.Tensor,
+    sources: torch.Tensor,
+    destinations: torch.Tensor,
+    modes: torch.Tensor,
+    p: list[int],
+) -> torch.Tensor:
+    """
+    Propagate a layer of the SLOS computation graph while evaluating several
+    coherent input components in parallel.
+
+    The pre-computed ``sources``, ``destinations`` and ``modes`` tensors encode
+    the sparse transitions that must be applied to go from the amplitudes of the
+    previous layer to the amplitudes of the current layer. Each transition picks
+    a value from ``prev_amplitudes`` using ``sources`` (the index of the parent
+    state), multiplies it by the relevant unitary element ``U[modes, p]`` for
+    the photon that is currently being injected, and scatters the contribution
+    into ``destinations`` (the index of the child state). When several input
+    superposition components need to be evaluated, ``p`` provides the photon
+    indices for every component and the computations are vectorised along the
+    last axis.
+
+    Args:
+        unitary (torch.Tensor): Batch of unitary matrices with shape
+            ``[batch_size, m, m]``. The unitary entries are looked up according
+            to ``modes`` and the photon indices ``p`` so the tensor can reside
+            on either CPU or CUDA as long as it matches the device of
+            ``prev_amplitudes``.
+        prev_amplitudes (torch.Tensor): Complex amplitudes produced by the
+            previous layer with shape ``[batch_size, prev_size, num_inputs]``.
+            The third dimension indexes the different coherent input components.
+        sources (torch.Tensor): Integer tensor of shape ``[num_ops]`` containing
+            the index of the parent state for every sparse transition.
+        destinations (torch.Tensor): Integer tensor of shape ``[num_ops]`` with
+            the index within the current layer where each contribution must be
+            accumulated.
+        modes (torch.Tensor): Integer tensor of shape ``[num_ops]`` describing
+            which output mode of the unitary matrix is involved in each
+            transition.
+        p (list[int]): Photon occupation indices for the layer, one entry per
+            superposition component. The list length must match the third
+            dimension of ``prev_amplitudes``.
+
+    Returns:
+        torch.Tensor: Tensor with shape ``[batch_size, next_size, num_inputs]``
+        that contains the amplitudes of the current layer after applying all
+        transitions. ``next_size`` equals ``destinations.max() + 1`` so the
+        method adapts automatically to the sparsity structure.
+
+    Notes:
+        * The function is side-effect free: input tensors are never modified in
+          place.
+        * Zero operations (``len(sources) == 0``) short-circuit to the input in
+          order to keep TorchScript graphs simple and avoid unnecessary tensor
+          allocations.
+    """
+
+    batch_size = unitary.shape[0]
+    num_input_states = len(p)
+
+    # Handle empty operations case
+    if sources.shape[0] == 0:
+        return prev_amplitudes
+
+    # Determine output size
+    next_size = int(destinations.max().item()) + 1
+
+    # Convert p to tensor for indexing
+    p_tensor = torch.tensor(p, device=unitary.device, dtype=torch.long)
+
+    # Get unitary elements for all operations and input states
+    # Shape: [batch_size, num_ops, num_input_states]
+    modes_expanded = modes.unsqueeze(-1).expand(-1, num_input_states).to(unitary.device)
+    p_expanded = p_tensor.unsqueeze(0).expand(modes.shape[0], -1)
+    u_elements = unitary[:, modes_expanded, p_expanded]
+
+    # Get source amplitudes for all operations
+    # Shape: [batch_size, num_ops, num_input_states]
+    prev_amps = prev_amplitudes[:, sources.to(prev_amplitudes.device), :]
+
+    # Compute contributions
+    # Shape: [batch_size, num_ops, num_input_states]
+    contributions = u_elements.to(prev_amps.device) * prev_amps
+
+    # Create result tensor with same dtype as input
+    result = torch.zeros(
+        (batch_size, next_size, num_input_states),
+        dtype=prev_amplitudes.dtype,
+        device=destinations.device,
+    )
+
+    # Scatter add contributions to result
+    # Need to expand destinations for all input states
+    destinations_expanded = (
+        destinations.unsqueeze(0).unsqueeze(-1).expand(batch_size, -1, num_input_states)
+    )
+    result.scatter_add_(
+        1,  # dimension to scatter on (1 for the state indices)
+        destinations_expanded.to(destinations.device),
+        contributions.to(destinations.device),
+    )
+
+    return result
+
+
 def layer_compute_backward(
     unitary: torch.Tensor,
     sources: torch.Tensor,
@@ -212,7 +316,7 @@ class SLOSComputeGraph:
     """
     A class that builds and stores the computation graph for SLOS algorithm.
 
-    This separates the graph construction (which depends only on input state, no_bunching,
+    This separates the graph construction (which depends only on input state, computation_space,
     and output_map_func) from the actual computation using the unitary matrix.
     """
 
@@ -221,7 +325,7 @@ class SLOSComputeGraph:
         m: int,
         n_photons: int,
         output_map_func: Callable[[tuple[int, ...]], tuple[int, ...] | None] = None,
-        no_bunching: bool = True,
+        computation_space: ComputationSpace = ComputationSpace.UNBUNCHED,
         keep_keys: bool = True,
         device=None,  # Optional device parameter
         dtype: torch.dtype = torch.float,  # Optional dtype parameter
@@ -234,7 +338,7 @@ class SLOSComputeGraph:
             m (int): Number of modes in the circuit
             n_photons (int): Number of photons in the input state given to the model during the forward pass
             output_map_func (callable, optional): Function that maps output states
-            no_bunching (bool): If True, the algorithm is optimized for no-bunching states only
+            computation_space (ComputationSpace): Enumeration domain.
             keep_keys (bool): If True, output state keys are returned
             device: Optional device to place tensors on (CPU, CUDA, etc.)
             dtype: Data type precision for floating point calculations (default: torch.float)
@@ -247,7 +351,13 @@ class SLOSComputeGraph:
         self.m = m
         self.n_photons = n_photons
         self.output_map_func = output_map_func
-        self.no_bunching = no_bunching
+        if computation_space is ComputationSpace.DUAL_RAIL:
+            if m % 2 != 0:
+                raise ValueError("dual_rail compute space requires even m")
+            if n_photons != m // 2:
+                raise ValueError("dual_rail compute space requires n_photons = m // 2")
+
+        self.computation_space = computation_space
         self.keep_keys = keep_keys
         self.device = device
         self.prev_amplitudes = None
@@ -294,8 +404,16 @@ class SLOSComputeGraph:
                 for i in range(
                     self.index_photons[idx][0], self.index_photons[idx][1] + 1
                 ):
-                    if nstate[i] and self.no_bunching:
+                    if (
+                        self.computation_space
+                        in (ComputationSpace.UNBUNCHED, ComputationSpace.DUAL_RAIL)
+                        and nstate[i]
+                    ):
                         continue
+                    if self.computation_space is ComputationSpace.DUAL_RAIL:
+                        pair_start = (i // 2) * 2
+                        if nstate[pair_start] + nstate[pair_start + 1] >= 1:
+                            continue
 
                     nstate[i] += 1
                     nstate_tuple = tuple(nstate)
@@ -458,10 +576,18 @@ class SLOSComputeGraph:
         if any(n < 0 for n in input_state) or sum(input_state) == 0:
             raise ValueError("Photon numbers cannot be negative or all zeros")
 
-        if self.no_bunching and not all(x in [0, 1] for x in input_state):
+        if self.computation_space is ComputationSpace.UNBUNCHED and not all(
+            x in (0, 1) for x in input_state
+        ):
             raise ValueError(
-                "Input state must be binary (0s and 1s only) in non-bunching mode"
+                "Input state must be binary (0s and 1s only) in unbunched mode"
             )
+        if self.computation_space is ComputationSpace.DUAL_RAIL:
+            for k in range(0, self.m, 2):
+                if input_state[k] + input_state[k + 1] != 1:
+                    raise ValueError(
+                        "Input state must contain exactly one photon per pair in dual_rail mode"
+                    )
 
         batch_size, m, m2 = unitary.shape
         if m != m2 or m != self.m:
@@ -509,6 +635,110 @@ class SLOSComputeGraph:
 
         amplitudes *= torch.sqrt(self.norm_factor_output.to(amplitudes.device))
         amplitudes /= math.sqrt(self.norm_factor_input)
+        self.prev_amplitudes = amplitudes  # type: ignore[assignment]
+
+        # Apply output mapping if needed
+        if self.output_map_func is not None:
+            keys = self.mapped_keys
+        else:
+            keys = self.final_keys if self.keep_keys else None
+        # Remove batch dimension if input was single unitary
+
+        return keys, amplitudes
+
+    def compute_batch(
+        self, unitary: torch.Tensor, input_states: list[list[int]]
+    ) -> tuple[list[tuple[int, ...]], torch.Tensor]:
+        """
+        Compute the probability distribution using the pre-built graph.
+
+        Args:
+            unitary (torch.Tensor): Single unitary matrix [m x m] or batch of unitaries [b x m x m].\
+                The unitary should be provided in the complex dtype corresponding to the graph's dtype.\
+                For example, for torch.float32, use torch.cfloat; for torch.float64, use torch.cdouble.
+            input_state (list[int]): Input_state of length self.m with self.n_photons in the input state
+
+        Returns:
+            Tuple[List[Tuple[int, ...]], torch.Tensor]:
+                - List of tuples representing output Fock state configurations
+                - Probability distribution tensor
+        """
+        if len(unitary.shape) == 2:
+            unitary = unitary.unsqueeze(0)  # Add batch dimension [1 x m x m]
+        else:
+            pass
+
+        if any(n < 0 for n in input_states[0]) or sum(input_states[0]) == 0:
+            raise ValueError("Photon numbers cannot be negative or all zeros")
+
+        if self.computation_space is ComputationSpace.UNBUNCHED and not all(
+            x in (0, 1) for x in input_states[0]
+        ):
+            raise ValueError(
+                "Input state must be binary (0s and 1s only) in unbunched mode"
+            )
+        if self.computation_space is ComputationSpace.DUAL_RAIL:
+            for k in range(0, self.m, 2):
+                if input_states[0][k] + input_states[0][k + 1] != 1:
+                    raise ValueError(
+                        "Input state must contain exactly one photon per pair in dual_rail mode"
+                    )
+
+        batch_size, m, m2 = unitary.shape
+        if m != m2 or m != self.m:
+            raise ValueError(
+                f"Unitary matrix must be square with dimension {self.m}x{self.m}"
+            )
+
+        # Check dtype - it should match the complex dtype used for the graph building
+        if unitary.dtype != self.complex_dtype:
+            # Raise an error instead of just warning and converting
+            raise ValueError(
+                f"Unitary dtype {unitary.dtype} doesn't match the expected complex dtype {self.complex_dtype} "
+                f"for the graph built with dtype {self.dtype}. Please provide a unitary with the correct dtype "
+                f"or rebuild the graph with a compatible dtype."
+            )
+        idx_n: list[list[int]] = [[] for _ in range(sum(input_states[0]))]
+        norm_factor_input = torch.ones((1, 1, len(input_states)))
+        for j, input_state in enumerate(input_states):
+            k = 0
+            for i, count in enumerate(input_state):
+                for c in range(count):
+                    norm_factor_input[0, 0, j] *= c + 1
+                    idx_n[k].append(i)
+                    k += 1
+                    if (i > self.index_photons[len(idx_n) - 1][1]) or (
+                        i < self.index_photons[len(idx_n) - 1][0]
+                    ):
+                        raise ValueError(
+                            f"Input state photons must be bounded by {self.index_photons}"
+                        )
+
+        # Get device from unitary
+        device = unitary.device
+
+        # Initial amplitude (batch of 1s on same device as unitary with appropriate dtype)
+        amplitudes = torch.ones(
+            (batch_size, 1, len(input_states)), dtype=self.complex_dtype, device=device
+        )
+
+        # Apply each layer
+        for layer_idx, _ in enumerate(self.layer_functions):
+            p = idx_n[layer_idx]
+            sources, destinations, modes = self.vectorized_operations[layer_idx]
+            amplitudes = layer_compute_batch(
+                unitary,
+                amplitudes,
+                sources,
+                destinations,
+                modes,
+                p,
+            )
+
+        amplitudes *= torch.sqrt(
+            self.norm_factor_output.to(amplitudes.device).unsqueeze(0).unsqueeze(2)
+        )
+        amplitudes /= torch.sqrt(norm_factor_input.to(amplitudes.device))
         self.prev_amplitudes = amplitudes  # type: ignore[assignment]
 
         # Apply output mapping if needed
@@ -597,10 +827,18 @@ class SLOSComputeGraph:
         if any(n < 0 for n in input_state) or sum(input_state) == 0:
             raise ValueError("Photon numbers cannot be negative or all zeros")
 
-        if self.no_bunching and not all(x in [0, 1] for x in input_state):
+        if self.computation_space is ComputationSpace.UNBUNCHED and not all(
+            x in (0, 1) for x in input_state
+        ):
             raise ValueError(
-                "Input state must be binary (0s and 1s only) in non-bunching mode"
+                "Input state must be binary (0s and 1s only) in unbunched mode"
             )
+        if self.computation_space is ComputationSpace.DUAL_RAIL:
+            for k in range(0, self.m, 2):
+                if input_state[k] + input_state[k + 1] != 1:
+                    raise ValueError(
+                        "Input state must contain exactly one photon per pair in dual_rail mode"
+                    )
 
         batch_size, m, m2 = unitary.shape
         if m != m2 or m != self.m:
@@ -681,7 +919,10 @@ class SLOSComputeGraph:
             probabilities = self.mapping_function(probabilities)
             keys = self.mapped_keys
         else:
-            if self.no_bunching:
+            if self.computation_space in (
+                ComputationSpace.UNBUNCHED,
+                ComputationSpace.DUAL_RAIL,
+            ):
                 sum_probs = probabilities.sum(dim=1, keepdim=True)
                 # Only normalize when sum > 0 to avoid division by zero
                 valid_entries = sum_probs > 0
@@ -706,24 +947,50 @@ def build_slos_distribution_computegraph(
     m,
     n_photons,
     output_map_func: Callable[[tuple[int, ...]], tuple[int, ...] | None] | None = None,
-    no_bunching: bool = False,
+    computation_space: ComputationSpace | None = None,
+    no_bunching: bool | None = None,
     keep_keys: bool = True,
     device=None,
     dtype: torch.dtype = torch.float,
     index_photons: list[tuple[int, ...]] | None = None,
 ) -> SLOSComputeGraph:
-    """
-    Build a computation graph for Strong Linear Optical Simulation (SLOS) algorithm
-    that can be reused for multiple unitaries.
+    """Construct a reusable SLOS computation graph.
 
-    [existing docstring...]
+    Parameters
+    ----------
+    m : int
+        Number of modes in the circuit.
+    n_photons : int
+        Total number of photons injected in the circuit.
+    output_map_func : callable, optional
+        Mapping applied to each output Fock state, allowing post-processing.
+    computation_space : ComputationSpace, optional
+    keep_keys : bool, optional
+        Whether to keep the list of mapped Fock states.
+    device : torch.device, optional
+        Device on which tensors should be allocated.
+    dtype : torch.dtype, optional
+        Real dtype controlling numerical precision.
+    index_photons : list[tuple[int, ...]], optional
+        Bounds for each photon placement.
+
+    Returns
+    -------
+    SLOSComputeGraph
+        Pre-built computation graph ready for repeated evaluations.
     """
+
+    # backward compatibility for deprecated no_bunching parameter
+    if computation_space is None:
+        computation_space = (
+            ComputationSpace.UNBUNCHED if no_bunching else ComputationSpace.FOCK
+        )
 
     compute_graph = SLOSComputeGraph(
         m,
         n_photons,
         output_map_func,
-        no_bunching,
+        computation_space,
         keep_keys,
         device,
         dtype,
@@ -747,7 +1014,7 @@ def build_slos_distribution_computegraph(
         metadata = {
             "m": compute_graph.m,
             "n_photons": compute_graph.n_photons,
-            "no_bunching": compute_graph.no_bunching,
+            "computation_space": compute_graph.computation_space.value,
             "keep_keys": compute_graph.keep_keys,
             "dtype_str": str(compute_graph.dtype),
             "has_output_map_func": output_map_func is not None,
@@ -809,7 +1076,7 @@ def load_slos_distribution_computegraph(path):
     # Create a minimal graph instance
     m = metadata["m"]
     n_photons = metadata["n_photons"]
-    no_bunching = metadata["no_bunching"]
+    computation_space = ComputationSpace.coerce(metadata.get("computation_space"))
     keep_keys = metadata["keep_keys"]
 
     # Parse dtype
@@ -822,7 +1089,9 @@ def load_slos_distribution_computegraph(path):
         dtype = torch.float32
 
     # Create basic graph (without output_map_func for now)
-    graph = SLOSComputeGraph(m, n_photons, None, no_bunching, keep_keys, dtype=dtype)
+    graph = SLOSComputeGraph(
+        m, n_photons, None, computation_space, keep_keys, dtype=dtype
+    )
     # Restore saved attributes
     graph.vectorized_operations = saved_data["vectorized_operations"]
     graph.final_keys = saved_data["final_keys"]
@@ -855,7 +1124,7 @@ def compute_slos_distribution(
     unitary: torch.Tensor,
     input_state: list[int],
     output_map_func: Callable[[tuple[int, ...]], tuple[int, ...] | None] | None = None,
-    no_bunching: bool = False,
+    computation_space: ComputationSpace = ComputationSpace.UNBUNCHED,
     keep_keys: bool = True,
     index_photons: list[tuple[int, ...]] | None = None,
 ) -> tuple[list[tuple[int, ...]], torch.Tensor]:
@@ -870,7 +1139,7 @@ def compute_slos_distribution(
         unitary (torch.Tensor): Single unitary matrix [m x m] or batch of unitaries [b x m x m]
         input_state (List[int]): Number of photons in every mode of the circuit
         output_map_func (callable, optional): Function that maps output states
-        no_bunching (bool): If True, the algorithm is optimized for no-bunching states only
+        computation_space ComputationSpace): Enumeration domain.
         keep_keys (bool): If True, output state keys are returned
         index_photons: List of tuples (first_integer, second_integer). The first_integer is the\
                   lowest index layer a photon can take and the second_integer is the highest index
@@ -892,7 +1161,7 @@ def compute_slos_distribution(
         len(input_state),
         sum(input_state),
         output_map_func,
-        no_bunching,
+        computation_space,
         keep_keys,
         device=device,
         dtype=dtype,

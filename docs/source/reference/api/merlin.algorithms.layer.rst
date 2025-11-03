@@ -6,6 +6,10 @@ merlin.algorithms.layer module
    :undoc-members:
    :show-inheritance:
 
+.. note::
+
+   Quantum layers built from a :class:`perceval.Experiment` now apply the experiment's per-mode detector configuration before returning classical outputs. When no detectors are specified, ideal photon-number resolving detectors are used by default.
+
 Example: Quickstart QuantumLayer
 --------------------------------
 

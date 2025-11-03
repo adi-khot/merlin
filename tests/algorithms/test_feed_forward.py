@@ -124,7 +124,7 @@ class TestFeedForwardBlock:
         """Ensure output keys are consistent after forward pass."""
         ff = FeedForwardBlock(input_size=3, n=2, m=3, depth=2, conditional_modes=[0])
         _ = ff(torch.rand(1, 3))
-        keys = ff.get_output_keys()
+        keys = ff.output_keys
         print(keys)
         assert isinstance(keys, list)
         assert len(keys) > 0

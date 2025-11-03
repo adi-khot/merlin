@@ -28,10 +28,10 @@ Quantum outputs are expected to be:
 2. Per state probabilities, if the processing was on hardware
 """
 
-import warnings
-
 import torch
 import torch.nn as nn
+
+from merlin.core import ComputationSpace
 
 from .strategies import MeasurementStrategy
 
@@ -47,7 +47,7 @@ class OutputMapper:
     @staticmethod
     def create_mapping(
         strategy: MeasurementStrategy,
-        no_bunching: bool = True,
+        computation_space: ComputationSpace = ComputationSpace.FOCK,
         keys: list[tuple[int, ...]] | None = None,
     ):
         """
@@ -73,7 +73,7 @@ class OutputMapper:
                 raise ValueError(
                     "When using ModeExpectations measurement strategy, keys must be provided."
                 )
-            return ModeExpectations(no_bunching, keys)
+            return ModeExpectations(computation_space, keys)
         elif strategy == MeasurementStrategy.AMPLITUDES:
             return Amplitudes()
         else:
@@ -95,26 +95,29 @@ class Probabilities(nn.Module):
         Returns:
             Fock states probability tensor of shape (batch_size, num_states) or (num_states,)
         """
-        single_input = x.ndim == 1
-        if single_input:
-            x = x.unsqueeze(0)
+        trailing_dim = x.shape[-1]
+        # Collapse any leading batch dimensions so amplitude detection works uniformly for scalars, matrices or tensors.
+        leading_shape = x.shape[:-1]
+        reshaped = x.reshape(-1, trailing_dim)
 
         # Determine if x represents amplitudes (normalized squared norm)
-        norm = torch.sum(x.abs() ** 2, dim=1, keepdim=True)
+        norm = torch.sum(reshaped.abs() ** 2, dim=1, keepdim=True)
         is_amplitude = torch.allclose(norm, torch.ones_like(norm), atol=1e-6)
 
         if is_amplitude:
-            prob = x.abs() ** 2
+            prob = reshaped.abs() ** 2
         else:
-            prob = x
+            prob = reshaped
 
-        return prob.squeeze(0) if single_input else prob
+        return prob.reshape(*leading_shape, trailing_dim)
 
 
 class ModeExpectations(nn.Module):
     """Maps quantum state amplitudes or probabilities to the per mode expected number of photons."""
 
-    def __init__(self, no_bunching: bool, keys: list[tuple[int, ...]]):
+    def __init__(
+        self, computation_space: ComputationSpace, keys: list[tuple[int, ...]]
+    ):
         """Initialize the expectation grouping mapper.
 
         Args:
@@ -124,7 +127,7 @@ class ModeExpectations(nn.Module):
                   mapping. e.g., [(0,1,0,2), (1,0,1,0), ...]
         """
         super().__init__()
-        self.no_bunching = no_bunching
+        self.computation_space = computation_space
         self.keys = keys
 
         if not keys:
@@ -135,7 +138,10 @@ class ModeExpectations(nn.Module):
 
         # Create mask and register as buffer
         keys_tensor = torch.tensor(keys, dtype=torch.long)
-        if no_bunching:
+        if computation_space in {
+            ComputationSpace.UNBUNCHED,
+            ComputationSpace.DUAL_RAIL,
+        }:
             mask = (keys_tensor >= 1).T.float()
         else:
             mask = keys_tensor.T.float()
@@ -205,16 +211,6 @@ class Amplitudes(nn.Module):
         original_shape = x.shape
         if x.ndim == 1:
             x = x.unsqueeze(0)
-        n_batch, n_amplitudes = x.shape
-        if not torch.allclose(
-            torch.sum(x.abs() ** 2, dim=1),
-            torch.ones(n_batch, device=x.device),
-            atol=1e-6,
-        ):
-            warnings.warn(
-                "The given input to this mapper is not a valid Fock state amplitudes tensor. It will be returned as is, but cannot be interpreted as an amplitude state vector.",
-                stacklevel=2,
-            )
         if len(original_shape) == 1:
             x = x.squeeze(0)
         return x

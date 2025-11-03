@@ -20,10 +20,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from .locirc_to_tensor import CircuitConverter
-from .slos_torchscript import build_slos_distribution_computegraph
+"""QuantumBridge components."""
 
-__all__ = [
-    "build_slos_distribution_computegraph",
-    "CircuitConverter",
-]
+from .quantum_bridge import ComputationSpace, QuantumBridge
+
+__all__ = ["ComputationSpace", "QuantumBridge"]
