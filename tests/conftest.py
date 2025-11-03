@@ -1,23 +1,18 @@
-import os
-import random
+from __future__ import annotations
 
-import numpy as np
 import pytest
-import torch
 
 
-@pytest.fixture(autouse=True)
-def set_seed():
-    seed = int(os.environ.get("PYTEST_SEED", 42))
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register top-level test options so they are available at pytest startup.
 
-
-@pytest.fixture(scope="module")
-def cuda_device():
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-    return torch.device("cuda")
+    The actual cloud-focused helpers live in `tests/core/cloud/conftest.py`,
+    but registering the CLI option here ensures `--run-cloud-tests` is
+    recognized when pytest parses command-line arguments.
+    """
+    parser.addoption(
+        "--run-cloud-tests",
+        action="store_true",
+        default=False,
+        help="include tests under tests/core/cloud",
+    )
