@@ -151,12 +151,13 @@ class TestPhotonLossWithQuantumLayer:
     def test_photon_loss_unbunched(self):
         """No-bunching simulations should run (unless a Detector is specified) and keep binary-valued keys after loss."""
         circuit = pcvl.Circuit(3)
+        circuit.add((0, 1), pcvl.BS())
         experiment = pcvl.Experiment(circuit)
         experiment.noise = pcvl.NoiseModel(brightness=0.7)
 
         experiment_detectors = pcvl.Experiment(circuit)
         experiment_detectors.noise = pcvl.NoiseModel(brightness=0.7)
-        experiment_detectors.detectors[0] = pcvl.Detector.pnr()
+        experiment_detectors.detectors[0] = pcvl.Detector.ppnr(n_wires=2)
 
         layer = ML.QuantumLayer(
             input_size=0,
@@ -166,11 +167,8 @@ class TestPhotonLossWithQuantumLayer:
         )
 
         # Fail with a Detector present
-        with pytest.raises(
-            RuntimeError,
-            match="no_bunching must be False if Experiment contains at least one Detector.",
-        ):
-            ML.QuantumLayer(
+        with pytest.warns(UserWarning):
+            layer_detectors = ML.QuantumLayer(
                 input_size=0,
                 experiment=experiment_detectors,
                 input_state=[1, 1, 1],
@@ -186,6 +184,9 @@ class TestPhotonLossWithQuantumLayer:
         )
         expected_keys = {tuple(bits) for bits in itertools.product((0, 1), repeat=3)}
         assert set(keys) == expected_keys
+
+        output_detectors = layer_detectors()
+        assert torch.allclose(output, output_detectors, atol=1e-6)
 
     def test_photon_loss_no_experiment(self):
         """Layers built without experiment must default to identity loss transform."""

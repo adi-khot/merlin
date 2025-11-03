@@ -402,12 +402,16 @@ class QuantumLayer(nn.Module):
         self._has_custom_detectors = not empty_detectors
         self.detectors = self._detectors  # Backward compatibility alias
 
-        # Verify that detectors and noise model are allowed:
-        # TODO: change no_bunching check with computation_space check
-        # if self._has_custom_detectors and not ComputationSpace.FOCK:
-        if self._has_custom_detectors and no_bunching:
-            raise RuntimeError(
-                "no_bunching must be False if Experiment contains at least one Detector."
+        # Detectors are ignored if ComputationSpace is not FOCK
+        if (
+            self._has_custom_detectors
+            and not self.computation_space == ComputationSpace.FOCK
+        ):
+            self._detectors = [pcvl.Detector.pnr()] * resolved_circuit.m
+            warnings.warn(
+                f"Detectors are ignored in favor of ComputationSpace: {self.computation_space}",
+                UserWarning,
+                stacklevel=2,
             )
         # Detector and NoiseModel not allowed with MeasurementStrategy.AMPLITUDES
         if (
