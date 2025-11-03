@@ -28,19 +28,30 @@ into PyTorch neural networks with automatic differentiation support.
 """
 
 # Core API - Most users will only need these
-from .core.ansatz import Ansatz, AnsatzFactory
+from .algorithms.feed_forward import FeedForwardBlock, PoolingFeedForward
+from .algorithms.kernels import FeatureMap, FidelityKernel
+from .algorithms.layer import QuantumLayer
+from .algorithms.loss import NKernelAlignment
+from .builder.circuit_builder import CircuitBuilder
 
 # Essential enums
 # Advanced components (for power users)
+from .core.computation_space import ComputationSpace
 from .core.generators import CircuitGenerator, CircuitType, StateGenerator, StatePattern
-from .core.layer import QuantumLayer
 from .core.photonicbackend import PhotonicBackend
+from .measurement import (
+    Amplitudes,
+    ModeExpectations,
+    OutputMapper,
+    Probabilities,
+)
+from .measurement.autodiff import AutoDiffProcess
+from .measurement.process import SamplingProcess
+from .measurement.strategies import MeasurementStrategy
 from .pcvl_pytorch import CircuitConverter, build_slos_distribution_computegraph
-from .sampling.autodiff import AutoDiffProcess
-from .sampling.mappers import LexGroupingMapper, ModGroupingMapper, OutputMapper
-from .sampling.process import SamplingProcess
-from .sampling.strategies import OutputMappingStrategy
-from .torch_utils.torch_codes import FeatureEncoder
+from .utils.combinadics import Combinadics
+from .utils.grouping import LexGrouping, ModGrouping
+from .utils.torch_codes import FeatureEncoder
 
 # Version and metadata
 __version__ = "0.1.0"
@@ -52,12 +63,12 @@ __all__ = [
     # Core classes (most common usage)
     "QuantumLayer",
     "PhotonicBackend",
-    "Ansatz",
-    "AnsatzFactory",
     # Configuration enums
     "CircuitType",
     "StatePattern",
-    "OutputMappingStrategy",
+    "ComputationSpace",
+    "MeasurementStrategy",
+    "Combinadics",
     # Advanced components
     "CircuitGenerator",
     "StateGenerator",
@@ -65,8 +76,17 @@ __all__ = [
     "SamplingProcess",
     "AutoDiffProcess",
     "OutputMapper",
-    "LexGroupingMapper",
-    "ModGroupingMapper",
+    "Probabilities",
+    "ModeExpectations",
+    "Amplitudes",
+    "LexGrouping",
+    "ModGrouping",
     "CircuitConverter",
     "build_slos_distribution_computegraph",
+    "NKernelAlignment",
+    "FeatureMap",
+    "FidelityKernel",
+    "FeedForwardBlock",
+    "PoolingFeedForward",
+    "CircuitBuilder",
 ]

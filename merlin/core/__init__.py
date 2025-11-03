@@ -22,23 +22,27 @@
 
 """Core quantum layer components."""
 
-from .ansatz import Ansatz, AnsatzFactory
 from .base import AbstractComputationProcess
+from .circuit import Circuit
+from .components import BeamSplitter, Component, EntanglingBlock, Rotation
+from .computation_space import ComputationSpace
 from .generators import CircuitGenerator, CircuitType, StateGenerator, StatePattern
-from .layer import QuantumLayer
 from .photonicbackend import PhotonicBackend
 from .process import ComputationProcess, ComputationProcessFactory
 
 __all__ = [
-    "QuantumLayer",
     "PhotonicBackend",
-    "Ansatz",
-    "AnsatzFactory",
     "AbstractComputationProcess",
     "ComputationProcess",
     "ComputationProcessFactory",
+    "ComputationSpace",
     "CircuitType",
     "StatePattern",
     "CircuitGenerator",
     "StateGenerator",
+    "Component",
+    "Rotation",
+    "BeamSplitter",
+    "EntanglingBlock",
+    "Circuit",
 ]
