@@ -693,7 +693,7 @@ def test_ebs_wrt_quantumlayer(
     expected_output = expected_output / expected_output.norm(
         p=2, dim=1, keepdim=True
     ).clamp_min(1e-12)
-
+    # TODO: investigate why this tests failed with rtol=1e-6, atol=1e-8
     assert torch.allclose(ebs_output, expected_output, rtol=1e-4, atol=1e-6), (
         "EBS output deviates from the superposed QuantumLayer results."
     )

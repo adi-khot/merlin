@@ -10,6 +10,8 @@ merlin.algorithms.layer module
 
    Quantum layers built from a :class:`perceval.Experiment` now apply the experiment's per-mode detector configuration before returning classical outputs. When no detectors are specified, ideal photon-number resolving detectors are used by default.
 
+   If the experiment carries a :class:`perceval.NoiseModel` (via ``experiment.noise``), MerLin inserts a :class:`~merlin.measurement.photon_loss.PhotonLossTransform` ahead of any detector transform. The resulting ``output_keys`` and ``output_size`` therefore include every survival/loss configuration implied by the model, and amplitude read-out is disabled whenever custom detectors or photon loss are present.
+
 Example: Quickstart QuantumLayer
 --------------------------------
 

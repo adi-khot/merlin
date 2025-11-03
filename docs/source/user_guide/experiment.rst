@@ -19,6 +19,9 @@ Why use an Experiment?
 - **Detector customization** – You can mix photon-number-resolving (PNR),
   threshold, or partially projected detectors mode-by-mode while keeping the
   rest of the configuration identical.
+- **Photon-loss modelling** – Attach a :class:`perceval.NoiseModel` and MerLin
+  will propagate its brightness/transmittance parameters before any detector
+  logic, exposing photon loss events in the returned classical outcomes.
 - **Consistent defaults** – Any unspecified mode automatically falls back to an
   ideal PNR detector, matching Perceval's behaviour.
 
@@ -44,6 +47,38 @@ layer converts the raw Fock probabilities into detector keys through
 ``DetectorTransform`` (see :mod:`merlin.sampling.detectors`), so probabilities
 remain properly normalised regardless of the detection model.
 
+-----------
+Photon loss with NoiseModel
+-----------
+
+Perceval’s :class:`~perceval.NoiseModel` stores photon-loss parameters that
+MerLin reads automatically. Assign it to the ``experiment.noise`` attribute with 
+*brightness* and *transmittance*. The quantum layer combines
+them into a survival probability and inserts a
+:class:`~merlin.measurement.photon_loss.PhotonLossTransform` ahead of any
+detector mapping. As a result, ``output_keys`` include configurations where
+photons disappear before detection and probability mass still sums to one.
+
+.. code-block:: python
+
+   experiment = pcvl.Experiment(circuit)
+   # Model 10% loss from the source (brightness) and 15% from propagation loss
+   experiment.noise = pcvl.NoiseModel(brightness=0.9, transmittance=0.85)
+
+   layer = ML.QuantumLayer(
+       input_size=0,
+       experiment=experiment,
+       input_state=[1, 1],
+   )
+
+   probs = layer()
+   layer.output_keys  # includes both survival and loss outcomes
+
+If only one of the parameters is set, MerLin assumes the other equals 1.0.
+Detectors and photon loss stack cleanly: the loss transform expands the Fock
+basis and the detector transform then maps it to classical outcomes (threshold,
+PNR, etc.).
+
 --------
 Usage example
 --------
@@ -60,8 +95,9 @@ Usage example
    circuit.add(2, pcvl.PS(pcvl.P("px")))
    circuit.add((1, 2), pcvl.BS())
 
-   # 2. Wrap it in a Perceval Experiment and configure detectors
+   # 2. Wrap it in a Perceval Experiment, configure noise model and detectors
    experiment = pcvl.Experiment(circuit)
+   experiment.noise = pcvl.NoiseModel(brightness=0.9, transmittance=0.85)
    experiment.detectors[0] = pcvl.Detector.threshold()
    experiment.detectors[1] = pcvl.Detector.pnr()
    experiment.detectors[2] = pcvl.Detector.ppnr(n_wires=2)
@@ -73,9 +109,8 @@ Usage example
        input_state=[1, 1, 1],
        input_parameters=["px"],
    )
-   
-   x = torch.rand(4, 1)  # Generate data 
-   probs = layer(x)  # Detector-aware probability tensor
+   x = torch.rand(4, 1)  # Generate data
+   probs = layer(x)  # NoiseModel-aware & Detector-aware probability tensor
    keys = layer.output_keys  # Classical outcomes produced by the detectors
 
    # 3.2 Feed the experiment into a quantum kernel FeatureMap to build a FidelityKernel
@@ -102,6 +137,11 @@ Practical notes
 - Experiments used with QuantumLayer **must be unitary** and cannot carry
   Perceval heralding detectors.
 - If at least one detector is defined, the quantum layer needs to have ``computation_space="fock"`` (default value). Photon filtering and detector post-processing are incompatible.
+- Photon-loss noise models extend the classical basis returned by the layer. The
+  **amplitude measurement strategy is therefore unavailable when detectors or a
+  noise model are attached** to the experiment.
+- Provide either brightness, transmittance, or both. Any missing parameter is
+  treated as 1.0 so you can model source-only or circuit-only loss independently.
 - Detector assignments use standard Python indexing or the Perceval
   ``.detectors`` mapping interface. Out-of-range indices raise the original
   Perceval error.

@@ -18,6 +18,9 @@ Overview
   :class:`perceval.Circuit` or a fully specified :class:`perceval.Experiment`.
 - **Detector awareness** – Layers automatically derive detector transforms from
   the experiment, enabling threshold, PNR, or hybrid detection schemes.
+- **Photon-loss aware** – Experiments carrying a :class:`perceval.NoiseModel`
+  trigger an automatic photon-loss transform so survival and loss outcomes share
+  a single, normalised output distribution.
 - **Measurement strategies** – Select between probabilities, per-mode expectations,
   or raw amplitudes through :class:`~merlin.measurement.strategies.MeasurementStrategy`.
   The layer validates incompatible combinations (e.g. detectors with amplitude read-out).
@@ -112,13 +115,13 @@ Experiment-driven
 ~~~~~~~~~~~~~~~~~
 
 For detector-heavy workflows, configure a :class:`perceval.Experiment` and pass
-it directly. The layer inherits both the circuit and the detector selection. This scheme
+it directly. The layer inherits the circuit, detectors, and any photon-loss
+noise model you attached. This scheme
 is the one that gives the user the most options when utilizing a QuantumLayer.
 
 .. code-block:: python
 
    import perceval as pcvl
-   import torch
    import torch
    import merlin as ML
 
@@ -128,6 +131,7 @@ is the one that gives the user the most options when utilizing a QuantumLayer.
    experiment = pcvl.Experiment(circuit)
    experiment.detectors[0] = pcvl.Detector.threshold()
    experiment.detectors[1] = pcvl.Detector.pnr()
+   experiment.noise = pcvl.NoiseModel(brightness=0.95, transmittance=0.9)
 
    layer = ML.QuantumLayer(
        input_size=0,
@@ -140,16 +144,19 @@ is the one that gives the user the most options when utilizing a QuantumLayer.
    detector_keys = layer.output_keys
 
 -----------
-Detector integration
+Photon loss and detectors
 -----------
 
 - If any detector is set on the experiment, ``no_bunching`` must be ``False``.
   The layer enforces this by raising a ``RuntimeError`` when both are requested.
 - Without an experiment, the layer defaults to ideal PNR detection on every
   mode, mirroring Perceval’s default behaviour.
+- ``experiment.noise = pcvl.NoiseModel(...)`` adds photon-loss sampling ahead of
+  detector transforms. The resulting ``output_keys`` and ``output_size`` cover
+  every survival/loss configuration implied by the noise model.
 - ``MeasurementStrategy.AMPLITUDES`` requires access to raw complex amplitudes
-  and is therefore incompatible with custom detectors. Attempting this combination
-  raises a ``RuntimeError``.
+  and is therefore incompatible with custom detectors **or** photon-loss noise
+  models. Attempting this combination raises a ``RuntimeError``.
 - Call :meth:`~merlin.algorithms.layer.QuantumLayer.output_keys` to inspect
   the classical outcomes produced by the detector transform.
 
@@ -164,6 +171,8 @@ Notes
   ``sampling_method``; the default returns exact SLOS probabilities.
 - The layer registers trainable parameters (if any) with PyTorch so they appear
   in ``layer.parameters()``.
+- Inspect ``layer.has_custom_noise_model`` and ``layer.output_keys`` to confirm
+  whether photon loss is active and how it alters the classical basis.
 
 -----------
 API Reference

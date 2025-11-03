@@ -46,6 +46,7 @@ from ..core.process import ComputationProcessFactory
 from ..measurement import OutputMapper
 from ..measurement.autodiff import AutoDiffProcess
 from ..measurement.detectors import DetectorTransform, resolve_detectors
+from ..measurement.photon_loss import PhotonLossTransform, resolve_photon_loss
 from ..measurement.strategies import MeasurementStrategy
 from ..pcvl_pytorch.utils import pcvl_to_tensor
 from ..utils.dtypes import complex_dtype_for
@@ -389,25 +390,35 @@ class QuantumLayer(nn.Module):
             raise RuntimeError("Experiment must be initialised.")
 
         self.circuit = resolved_circuit
+
+        self._photon_survival_probs, empty_noise_model = resolve_photon_loss(
+            self.experiment, resolved_circuit.m
+        )
+        self.has_custom_noise_model = not empty_noise_model
+
         self._detectors, empty_detectors = resolve_detectors(
             self.experiment, resolved_circuit.m
         )
         self._has_custom_detectors = not empty_detectors
         self.detectors = self._detectors  # Backward compatibility alias
 
-        # Verify that detectors are allowed:
-        # TODO: change no_bunching check with computation_space check
-        # if self._has_custom_detectors and not ComputationSpace.FOCK:
-        if self._has_custom_detectors and no_bunching:
-            raise RuntimeError(
-                "no_bunching must be False if Experiment contains at least one Detector."
-            )
+        # Detectors are ignored if ComputationSpace is not FOCK
         if (
             self._has_custom_detectors
-            and measurement_strategy == MeasurementStrategy.AMPLITUDES
+            and not self.computation_space == ComputationSpace.FOCK
         ):
+            self._detectors = [pcvl.Detector.pnr()] * resolved_circuit.m
+            warnings.warn(
+                f"Detectors are ignored in favor of ComputationSpace: {self.computation_space}",
+                UserWarning,
+                stacklevel=2,
+            )
+        # Detector and NoiseModel not allowed with MeasurementStrategy.AMPLITUDES
+        if (
+            self._has_custom_detectors or self.has_custom_noise_model
+        ) and measurement_strategy == MeasurementStrategy.AMPLITUDES:
             raise RuntimeError(
-                "measurement_strategy=MeasurementStrategy.AMPLITUDES cannot be used when Experiment contains at least one Detector."
+                "measurement_strategy=MeasurementStrategy.AMPLITUDES cannot be used when Experiment contains at least one Detector or when it contains a defined NoiseModel."
             )
 
         # persist prefixes for export/introspection
@@ -501,10 +512,13 @@ class QuantumLayer(nn.Module):
             computation_space=self.computation_space,
         )
 
-        # Setup DetectorTransform
+        # Setup PhotonLossTransform & DetectorTransform
         self.n_photons = self.computation_process.n_photons
-        raw_keys = self.computation_process.simulation_graph.mapped_keys
+        raw_keys = cast(
+            list[tuple[int, ...]], self.computation_process.simulation_graph.mapped_keys
+        )
         self._raw_output_keys = [self._normalize_output_key(key) for key in raw_keys]
+        self._initialize_photon_loss_transform()
         self._initialize_detector_transform()
 
         # Pick the effective state space after the factory creates the process so
@@ -595,10 +609,23 @@ class QuantumLayer(nn.Module):
         self, measurement_strategy: MeasurementStrategy
     ):
         """Setup output mapping for custom circuit construction."""
+        if self._photon_loss_transform is None:
+            raise RuntimeError(
+                "Photon loss transform must be initialised before sizing."
+            )
         if self._detector_transform is None:
             raise RuntimeError("Detector transform must be initialised before sizing.")
 
-        dist_size = self._detector_transform.output_size
+        if measurement_strategy == MeasurementStrategy.AMPLITUDES:
+            keys = list(self._raw_output_keys)
+        else:
+            keys = (
+                list(self._photon_loss_keys)
+                if self._detector_is_identity
+                else list(self._detector_keys)
+            )
+
+        dist_size = len(keys)
 
         # Determine output size (upstream model)
         if measurement_strategy == MeasurementStrategy.PROBABILITIES:
@@ -615,8 +642,6 @@ class QuantumLayer(nn.Module):
             self._output_size = dist_size
         else:
             raise TypeError(f"Unknown measurement_strategy: {measurement_strategy}")
-
-        keys = self._detector_keys
 
         # Create measurement mapping
         self.measurement_mapping = OutputMapper.create_mapping(
@@ -1014,6 +1039,7 @@ class QuantumLayer(nn.Module):
             MeasurementStrategy.PROBABILITIES,
             MeasurementStrategy.MODE_EXPECTATIONS,
         ):
+            distribution = self._apply_photon_loss_transform(distribution)
             distribution = self._apply_detector_transform(distribution)
 
             # Apply sampling if requested
@@ -1057,6 +1083,10 @@ class QuantumLayer(nn.Module):
                 self.dtype, device
             )
 
+            # Photon loss Module
+            if self._photon_loss_transform is not None:
+                self._photon_loss_transform = self._photon_loss_transform.to(device)
+            # Detector Module
             if self._detector_transform is not None:
                 self._detector_transform = self._detector_transform.to(device)
 
@@ -1064,13 +1094,17 @@ class QuantumLayer(nn.Module):
 
     @property
     def output_keys(self):
-        if getattr(self, "_detector_transform", None) is None:
-            return self.computation_process.simulation_graph.mapped_keys
+        """Return the Fock basis associated with the layer outputs."""
+        if (
+            getattr(self, "_photon_loss_transform", None) is None
+            or getattr(self, "_detector_transform", None) is None
+        ):
+            return [self._normalize_output_key(key) for key in self._raw_output_keys]
         if self.measurement_strategy == MeasurementStrategy.AMPLITUDES:
-            return self._raw_output_keys
-        return (
-            self._raw_output_keys if self._detector_is_identity else self._detector_keys
-        )
+            return list(self._raw_output_keys)
+        if self._detector_is_identity:
+            return list(self._photon_loss_keys)
+        return list(self._detector_keys)
 
     @property
     def output_size(self) -> int:
@@ -1080,9 +1114,19 @@ class QuantumLayer(nn.Module):
     def has_custom_detectors(self) -> bool:
         return self._has_custom_detectors
 
+    def _initialize_photon_loss_transform(self) -> None:
+        self._photon_loss_transform = PhotonLossTransform(
+            self._raw_output_keys,
+            self._photon_survival_probs,
+            dtype=self.dtype,
+            device=self.device,
+        )
+        self._photon_loss_keys = self._photon_loss_transform.output_keys
+        self._photon_loss_is_identity = self._photon_loss_transform.is_identity
+
     def _initialize_detector_transform(self) -> None:
         self._detector_transform = DetectorTransform(
-            self._raw_output_keys,
+            self._photon_loss_keys,
             self._detectors,
             dtype=self.dtype,
             device=self.device,
@@ -1097,6 +1141,15 @@ class QuantumLayer(nn.Module):
         if isinstance(key, torch.Tensor):
             return tuple(int(v) for v in key.tolist())
         return tuple(int(v) for v in key)
+
+    def _apply_photon_loss_transform(self, distribution: torch.Tensor) -> torch.Tensor:
+        if self._photon_loss_transform is None:
+            raise RuntimeError(
+                "Photon loss transform must be initialised before applying photon loss."
+            )
+        if self._photon_loss_is_identity:
+            return distribution
+        return self._photon_loss_transform(distribution)
 
     def _apply_detector_transform(self, distribution: torch.Tensor) -> torch.Tensor:
         if self._detector_transform is None:

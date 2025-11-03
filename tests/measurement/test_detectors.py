@@ -560,29 +560,28 @@ class TestDetectorsWithQuantumLayer:
 
         assert torch.allclose(layer_probs, reference, atol=1e-6)
 
-    def test_detector_plus_no_bunching_error(self):
+    def test_detector_plus_no_bunching_warning(self):
+        """Using detectors with no_bunching=True should raise a warning, and ignore the detectors."""
+        random_unitary = pcvl.Unitary(pcvl.Matrix.random_unitary(4))
+
         # Define Experiment without Detector
         experiment = pcvl.Experiment()
-        experiment.set_circuit(pcvl.Unitary(pcvl.Matrix.random_unitary(4)))
+        experiment.set_circuit(random_unitary)
         # No detector
 
         # Define Experiement with pnr Detector
         experiment_pnr_detector = pcvl.Experiment()
-        experiment_pnr_detector.set_circuit(pcvl.Unitary(pcvl.Matrix.random_unitary(4)))
+        experiment_pnr_detector.set_circuit(random_unitary)
         experiment_pnr_detector.detectors[1] = pcvl.Detector.pnr()
 
         # Define Experiement with threshold Detector
         experiment_threshold_detector = pcvl.Experiment()
-        experiment_threshold_detector.set_circuit(
-            pcvl.Unitary(pcvl.Matrix.random_unitary(4))
-        )
+        experiment_threshold_detector.set_circuit(random_unitary)
         experiment_threshold_detector.detectors[3] = pcvl.Detector.threshold()
 
         # Define Experiement with ppnr Detertors
         experiment_ppnr_detector = pcvl.Experiment()
-        experiment_ppnr_detector.set_circuit(
-            pcvl.Unitary(pcvl.Matrix.random_unitary(4))
-        )
+        experiment_ppnr_detector.set_circuit(random_unitary)
         experiment_ppnr_detector.detectors[0] = pcvl.Detector.ppnr(n_wires=2)
         experiment_ppnr_detector.detectors[2] = pcvl.Detector.ppnr(n_wires=2)
 
@@ -593,7 +592,7 @@ class TestDetectorsWithQuantumLayer:
             input_state=[1, 1, 1, 1],
             no_bunching=False,
         )
-        ML.QuantumLayer(
+        layer_unbunched = ML.QuantumLayer(
             input_size=0,
             experiment=experiment,
             input_state=[1, 1, 1, 1],
@@ -606,8 +605,8 @@ class TestDetectorsWithQuantumLayer:
             no_bunching=False,
         )
 
-        with pytest.raises(RuntimeError):
-            ML.QuantumLayer(
+        with pytest.warns(UserWarning):
+            layer_pnr_unbunched = ML.QuantumLayer(
                 input_size=0,
                 experiment=experiment_pnr_detector,
                 input_state=[1, 1, 1, 1],
@@ -619,8 +618,8 @@ class TestDetectorsWithQuantumLayer:
             input_state=[1, 1, 1, 1],
             no_bunching=False,
         )
-        with pytest.raises(RuntimeError):
-            ML.QuantumLayer(
+        with pytest.warns(UserWarning):
+            layer_threshold_unbunched = ML.QuantumLayer(
                 input_size=0,
                 experiment=experiment_threshold_detector,
                 input_state=[1, 1, 1, 1],
@@ -632,13 +631,22 @@ class TestDetectorsWithQuantumLayer:
             input_state=[1, 1, 1, 1],
             no_bunching=False,
         )
-        with pytest.raises(RuntimeError):
-            ML.QuantumLayer(
+        with pytest.warns(UserWarning):
+            layer_ppnr_unbunched = ML.QuantumLayer(
                 input_size=0,
                 experiment=experiment_ppnr_detector,
                 input_state=[1, 1, 1, 1],
                 no_bunching=True,
             )
+
+        result_unbunched = layer_unbunched()
+        result_pnr_unbunched = layer_pnr_unbunched()
+        result_threshold_unbunched = layer_threshold_unbunched()
+        result_ppnr_unbunched = layer_ppnr_unbunched()
+
+        assert torch.allclose(result_unbunched, result_pnr_unbunched, atol=1e-6)
+        assert torch.allclose(result_unbunched, result_threshold_unbunched, atol=1e-6)
+        assert torch.allclose(result_unbunched, result_ppnr_unbunched, atol=1e-6)
 
     @pytest.mark.parametrize(
         "label, detector_specs",

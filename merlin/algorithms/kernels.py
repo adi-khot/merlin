@@ -12,6 +12,7 @@ from ..builder.circuit_builder import ANGLE_ENCODING_MODE_ERROR, CircuitBuilder
 from ..core.generators import StateGenerator, StatePattern
 from ..measurement.autodiff import AutoDiffProcess
 from ..measurement.detectors import DetectorTransform, resolve_detectors
+from ..measurement.photon_loss import PhotonLossTransform, resolve_photon_loss
 from ..pcvl_pytorch.locirc_to_tensor import CircuitConverter
 from ..pcvl_pytorch.slos_torchscript import (
     build_slos_distribution_computegraph as build_slos_graph,
@@ -713,40 +714,80 @@ class FidelityKernel(torch.nn.Module):
             device=device,
             dtype=self.dtype,
         )
-        # Find index of input state in output distribution
-        keys = self._slos_graph.final_keys
-        self._input_state_index = keys.index(tuple(input_state))
+        # Resolve raw simulation keys and photon loss transform
+        raw_keys = [tuple(int(v) for v in key) for key in self._slos_graph.final_keys]
+        self._raw_output_keys = raw_keys
+        try:
+            self._input_state_index = raw_keys.index(tuple(input_state))
+        except ValueError as exc:  # pragma: no cover - defensive guard
+            raise ValueError(
+                "Input state is not present in the simulation basis produced by the circuit."
+            ) from exc
+
+        self._photon_survival_probs, empty_noise_model = resolve_photon_loss(
+            self.experiment, m
+        )
+        self.has_custom_noise_model = not empty_noise_model
+
+        self._photon_loss_transform = PhotonLossTransform(
+            raw_keys,
+            self._photon_survival_probs,
+            dtype=self.dtype,
+            device=self.device,
+        )
+        self._photon_loss_is_identity = self._photon_loss_transform.is_identity
+        self._photon_loss_keys = self._photon_loss_transform.output_keys
+        try:
+            self._photon_loss_input_index = self._photon_loss_keys.index(
+                tuple(input_state)
+            )
+        except ValueError as exc:  # pragma: no cover - defensive guard
+            raise RuntimeError(
+                "Photon loss transform did not preserve the original input Fock state."
+            ) from exc
+
         self._detector_transform = DetectorTransform(
-            keys,
+            self._photon_loss_keys,
             self._detectors,
             dtype=self.dtype,
             device=self.device,
         )
         self._detector_is_identity = self._detector_transform.is_identity
-        detection_dim = self._detector_transform.output_size
         weight_device = self.device or torch.device("cpu")
-        if self._detector_is_identity:
-            weights = torch.zeros(detection_dim, dtype=self.dtype, device=weight_device)
-            weights[self._input_state_index] = 1.0
-            self._input_detection_index = self._input_state_index
-        else:
-            row = self._detector_transform.row(
-                self._input_state_index,
-                dtype=self.dtype,
-                device=self.device,
-            )
-            weights = row
-            nonzero = torch.nonzero(row > 1e-8, as_tuple=True)[0]
-            self._input_detection_index = None
-            if nonzero.numel() == 1 and torch.isclose(
-                row[nonzero[0]],
-                torch.tensor(1.0, dtype=row.dtype, device=row.device),
-                atol=1e-6,
-            ):
-                self._input_detection_index = int(nonzero[0].item())
-        self.register_buffer("_input_detection_weights", weights)
+        one_hot = torch.zeros(
+            len(self._raw_output_keys), dtype=self.dtype, device=weight_device
+        )
+        one_hot[self._input_state_index] = 1.0
+        loss_vector = self._apply_photon_loss_transform(one_hot)
+        if loss_vector.ndim > 1:
+            loss_vector = loss_vector.squeeze(0)
+        detection_vector = (
+            loss_vector
+            if self._detector_is_identity
+            else self._detector_transform(loss_vector)
+        )
+        if detection_vector.ndim > 1:
+            detection_vector = detection_vector.squeeze(0)
+        detection_vector = detection_vector.to(dtype=self.dtype, device=weight_device)
+        nonzero = torch.nonzero(detection_vector > 1e-8, as_tuple=True)[0]
+        self._input_detection_index = None
+        if nonzero.numel() == 1 and torch.isclose(
+            detection_vector[nonzero[0]],
+            torch.tensor(
+                1.0, dtype=detection_vector.dtype, device=detection_vector.device
+            ),
+            atol=1e-6,
+        ):
+            self._input_detection_index = int(nonzero[0].item())
+        self.register_buffer("_input_detection_weights", detection_vector)
         # For sampling
         self._autodiff_process = AutoDiffProcess()
+
+    def _apply_photon_loss_transform(self, distribution: Tensor) -> Tensor:
+        """Apply photon loss transform when a noise model is defined."""
+        if self._photon_loss_is_identity:
+            return distribution
+        return self._photon_loss_transform(distribution)
 
     def forward(
         self,
@@ -835,17 +876,14 @@ class FidelityKernel(torch.nn.Module):
         if probabilities.ndim == 1:
             probabilities = probabilities.unsqueeze(0)
         probabilities = probabilities.to(dtype=self.dtype)
-        detection_probs = self._detector_transform(probabilities)
+        loss_probs = self._apply_photon_loss_transform(probabilities)
+        detection_probs = self._detector_transform(loss_probs)
 
         if self.shots > 0:
-            probabilities = self._autodiff_process.sampling_noise.pcvl_sampler(
-                probabilities, self.shots, self.sampling_method
-            )
             detection_probs = self._autodiff_process.sampling_noise.pcvl_sampler(
                 detection_probs, self.shots, self.sampling_method
             )
 
-        transition_probs = probabilities[:, self._input_state_index]
         if self._input_detection_index is not None:
             transition_probs = detection_probs[:, self._input_detection_index]
         else:
@@ -931,12 +969,10 @@ class FidelityKernel(torch.nn.Module):
             probabilities = probabilities.unsqueeze(0)
         probabilities = probabilities.to(dtype=self.dtype, device=self.device)
 
-        detection_probs = self._detector_transform(probabilities)
+        loss_probs = self._apply_photon_loss_transform(probabilities)
+        detection_probs = self._detector_transform(loss_probs)
 
         if self.shots > 0:
-            probabilities = self._autodiff_process.sampling_noise.pcvl_sampler(
-                probabilities, self.shots, self.sampling_method
-            )
             detection_probs = self._autodiff_process.sampling_noise.pcvl_sampler(
                 detection_probs, self.shots, self.sampling_method
             )

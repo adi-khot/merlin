@@ -6,6 +6,15 @@ merlin.algorithms.kernels module
    :undoc-members:
    :show-inheritance:
 
+.. note::
+
+   When the wrapped :class:`~merlin.algorithms.kernels.FeatureMap` exposes a
+   :class:`perceval.Experiment`, fidelity kernels compose the attached
+   :class:`perceval.NoiseModel` (photon loss) before applying any detector
+   transforms. The resulting kernel values therefore reflect both survival
+   probabilities and detector post-processing.
+
+
 Examples
 --------
 
@@ -34,41 +43,37 @@ Quickstart: Fidelity kernel in a few lines
     K_train = kernel(X_train)               # (N, N)
     K_test = kernel(X_test, X_train)        # (M, N)
 
-Custom circuit with FeatureMap
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Custom experiment with FeatureMap
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
     import torch
     import perceval as pcvl
     from merlin.algorithms.kernels import FeatureMap, FidelityKernel
-    from merlin.core.generators import CircuitType, StatePattern
-    from merlin.core.photonicbackend import PhotonicBackend
 
-    # Backend describes modes/photons/topology
-    backend = PhotonicBackend(
-        circuit_type=CircuitType.SERIES,
-        n_modes=6,
-        n_photons=2,
-        state_pattern=StatePattern.PERIODIC,
-    )
+    # Define a photonic circuit
+    circuit = pcvl.Circuit(6)
+    # Add whatever to the circuit...
 
-    # Use the backend to create a FeatureMap automatically
+    # Define the Experiment
+    experiment = pcvl.Experiment(circuit)
+    # Add noise models, detectors, etc...
+    experiment.noise = pcvl.NoiseModel(brightness=0.9)
+    experiment.detectors[0] = pcvl.Detector.threshold()
+    experiment.detectors[5] = pcvl.Detector.ppnr(n_wires=3)
+
+    # Use the experiment to create a FeatureMap automatically
     feature_map = FeatureMap.from_photonic_backend(
-        input_size=3,
-        photonic_backend=backend,
-        dtype=torch.float32,
-        device=torch.device("cpu"),
+        input_size=0,
+        experiment=experiment,
     )
 
-    # Build the kernel; you can pass a custom input Fock state if desired
+    # Build the kernel with a specific input state
     kernel = FidelityKernel(
         feature_map=feature_map,
-        input_state=[1, 1, 0, 0, 0, 0],
-        shots=0,
+        input_state=[2, 0, 2, 0, 2, 0],
         no_bunching=False,
-        device=torch.device("cpu"),
-        dtype=torch.float32,
     )
 
     X = torch.rand(8, 3)
