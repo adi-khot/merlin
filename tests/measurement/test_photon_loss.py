@@ -151,7 +151,7 @@ class TestPhotonLossWithQuantumLayer:
     def test_photon_loss_unbunched(self):
         """No-bunching simulations should run (unless a Detector is specified) and keep binary-valued keys after loss."""
         circuit = pcvl.Circuit(3)
-        circuit.add((0, 1), pcvl.BS())
+        circuit.add((0, 1), pcvl.BS(theta=math.pi / 6))
         experiment = pcvl.Experiment(circuit)
         experiment.noise = pcvl.NoiseModel(brightness=0.7)
 
