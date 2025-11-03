@@ -37,7 +37,7 @@ class DetectorTransform(torch.nn.Module):
             raise ValueError("simulation_keys must contain at least one Fock state.")
 
         self._dtype = dtype or torch.float32
-        self._device = torch.device(device) if device is not None else None
+        device_obj = torch.device(device) if device is not None else None
 
         self._simulation_keys = self._normalize_keys(simulation_keys)
         self._n_modes = len(self._simulation_keys[0])
@@ -55,22 +55,12 @@ class DetectorTransform(torch.nn.Module):
             tuple[int, int], list[tuple[tuple[int, ...], float]]
         ] = {}
 
-        matrix, detector_keys, is_identity = self._build_transform()
+        matrix, detector_keys, is_identity = self._build_transform(device_obj)
 
         self._detector_keys: list[tuple[int, ...]] = detector_keys
         self._is_identity = is_identity
 
-        if is_identity:
-            buffer_kwargs = {}
-            if self._device is not None:
-                buffer_kwargs["device"] = self._device
-            buffer = torch.empty(
-                (0, 0),
-                dtype=self._dtype,
-                device=buffer_kwargs.get("device", None),
-            )
-            self.register_buffer("_matrix", buffer, persistent=False)
-        else:
+        if not is_identity:
             self.register_buffer("_matrix", matrix)
 
     # ------------------------------------------------------------------
@@ -144,7 +134,7 @@ class DetectorTransform(torch.nn.Module):
         return responses
 
     def _build_transform(
-        self,
+        self, device: torch.device | None
     ) -> tuple[torch.Tensor | None, list[tuple[int, ...]], bool]:
         """
         Construct the detection transform matrix and associated classical keys.
@@ -193,18 +183,37 @@ class DetectorTransform(torch.nn.Module):
 
         rows = len(self._simulation_keys)
         cols = len(detector_keys)
-        device_kwargs = {}
-        if self._device is not None:
-            device_kwargs["device"] = self._device
 
-        matrix = torch.zeros(
-            (rows, cols),
-            dtype=self._dtype,
-            device=device_kwargs.get("device", None),
-        )
+        row_indices: list[int] = []
+        col_indices: list[int] = []
+        values: list[float] = []
+
         for row_idx, entries in enumerate(row_entries):
             for col_idx, prob in entries.items():
-                matrix[row_idx, col_idx] = prob
+                row_indices.append(row_idx)
+                col_indices.append(col_idx)
+                values.append(prob)
+
+        if not values:
+            raise RuntimeError(
+                "Detector transform construction produced an empty matrix; check detector responses."
+            )
+
+        if device is not None:
+            indices = torch.tensor(
+                [row_indices, col_indices],
+                dtype=torch.long,
+                device=device,
+            )
+            value_tensor = torch.tensor(values, dtype=self._dtype, device=device)
+        else:
+            indices = torch.tensor([row_indices, col_indices], dtype=torch.long)
+            value_tensor = torch.tensor(values, dtype=self._dtype)
+        matrix = torch.sparse_coo_tensor(
+            indices,
+            value_tensor,
+            size=(rows, cols),
+        ).coalesce()
 
         return matrix, detector_keys, False
 
@@ -268,29 +277,69 @@ class DetectorTransform(torch.nn.Module):
 
         matrix: torch.Tensor = cast(torch.Tensor, self._matrix)  # type: ignore[attr-defined]
         if distribution.dtype != matrix.dtype:
-            matrix = matrix.to(distribution.dtype)
+            raise TypeError(
+                "Detector transform dtype mismatch: "
+                f"distribution={distribution.dtype}, transform={matrix.dtype}"
+            )
         if distribution.device != matrix.device:
-            matrix = matrix.to(distribution.device)
+            raise RuntimeError(
+                "Detector transform device mismatch: "
+                f"distribution={distribution.device}, transform={matrix.device}"
+            )
 
-        return distribution @ matrix
+        original_shape = distribution.shape
+        last_dim = original_shape[-1]
+        if distribution.dim() == 1:
+            distribution = distribution.unsqueeze(0)
+        else:
+            distribution = distribution.reshape(-1, last_dim)
 
-    def to(self, *args, **kwargs):
-        result = super().to(*args, **kwargs)
+        # Direct multiplication: distribution (batch, input_dim) @ matrix (input_dim, output_dim)
+        transformed = torch.sparse.mm(distribution, matrix)
 
-        dtype = kwargs.get("dtype")
-        device = kwargs.get("device")
+        if len(original_shape) == 1:
+            return transformed.squeeze(0)
+        return transformed.reshape(*original_shape[:-1], transformed.shape[-1])
 
-        if dtype is None and len(args) > 0 and isinstance(args[0], torch.dtype):
-            dtype = args[0]
-        if device is None and len(args) > 0 and isinstance(args[0], torch.device):
-            device = args[0]
+    def row(
+        self,
+        index: int,
+        *,
+        dtype: torch.dtype | None = None,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
+        """
+        Return a single detector transform row as a dense tensor.
+        """
+        if index < 0 or index >= len(self._simulation_keys):
+            raise IndexError(f"Row index {index} out of bounds.")
 
-        if dtype is not None:
-            self._dtype = dtype
-        if device is not None:
-            self._device = device
+        matrix = cast(torch.Tensor, self._matrix)  # type: ignore[attr-defined]
+        matrix_device = matrix.device
+        matrix_dtype = matrix.dtype
 
-        return result
+        target_device = torch.device(device) if device is not None else matrix_device
+        target_dtype = dtype or matrix_dtype
+
+        output_dim = len(self._detector_keys)
+
+        if self._is_identity:
+            row = torch.zeros(output_dim, dtype=target_dtype, device=target_device)
+            row[index] = 1.0
+            return row
+
+        indices = matrix.indices()
+        values = matrix.values()
+        mask = indices[0] == index
+
+        row = torch.zeros(output_dim, dtype=target_dtype, device=target_device)
+        if mask.any():
+            cols = indices[1, mask]
+            row_vals = values[mask]
+            if row_vals.dtype != target_dtype or row_vals.device != target_device:
+                row_vals = row_vals.to(dtype=target_dtype, device=target_device)
+            row[cols] = row_vals
+        return row
 
 
 def resolve_detectors(

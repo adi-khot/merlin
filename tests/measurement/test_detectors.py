@@ -24,11 +24,106 @@
 Tests for the main QuantumLayer class.
 """
 
+from collections.abc import Iterable, Sequence
+
+import numpy as np
 import perceval as pcvl
 import pytest
 import torch
+from perceval.algorithm.sampler import Sampler
 
 import merlin as ML
+
+N_MODES = 8
+INPUT_STATE = [1, 0, 1, 0, 1, 0, 1, 0]
+N_PHOTONS = sum(INPUT_STATE)
+SAMPLING_SHOTS = 200_000
+SAMPLING_TOLERANCE = 0.02
+
+
+def _haar_random_unitary(dim: int, seed: int) -> pcvl.Matrix:
+    """Generate a deterministic Haar-random unitary using QR decomposition."""
+    rng = np.random.default_rng(seed)
+    components = rng.normal(size=(dim, dim)) + 1j * rng.normal(size=(dim, dim))
+    q, r = np.linalg.qr(components)
+    diag = np.diag(r)
+    phases = np.where(np.abs(diag) > 0, diag / np.abs(diag), 1.0)
+    unitary = q * phases
+    return pcvl.Matrix(unitary)
+
+
+def _detector_from_spec(spec: str | tuple[str, dict[str, int]]) -> pcvl.Detector | None:
+    """Instantiate a Perceval detector from a simple specification."""
+    if spec is None:
+        return None
+
+    if isinstance(spec, tuple):
+        kind, params = spec
+    else:
+        kind, params = spec, {}
+
+    params = dict(params)
+
+    if kind == "pnr":
+        return pcvl.Detector.pnr()
+    if kind == "threshold":
+        return pcvl.Detector.threshold()
+    if kind == "ppnr":
+        return pcvl.Detector.ppnr(**params)
+    raise ValueError(f"Unsupported detector kind: {kind}")
+
+
+def _build_experiment(
+    detector_specs: Sequence[str | tuple[str, dict[str, int]] | None],
+) -> pcvl.Experiment:
+    """Create a Perceval experiment with a shared unitary and detector configuration."""
+    experiment = pcvl.Experiment()
+    _haar_random_unitary_8 = _haar_random_unitary(N_MODES, seed=42)
+    experiment.set_circuit(pcvl.Unitary(_haar_random_unitary_8))
+    for mode, spec in enumerate(detector_specs):
+        detector = _detector_from_spec(spec)
+        if detector is not None:
+            experiment.detectors[mode] = detector
+    return experiment
+
+
+def _normalize_key(key: Iterable[int] | torch.Tensor) -> tuple[int, ...]:
+    """Convert detection keys to plain tuples to ease dictionary lookups."""
+    if isinstance(key, torch.Tensor):
+        return tuple(int(v) for v in key.tolist())
+    return tuple(int(v) for v in key)
+
+
+def _detector_kind(spec: str | tuple[str, dict[str, int]] | None) -> str | None:
+    """Return the detector identifier string for convenience checks."""
+    if spec is None:
+        return None
+    if isinstance(spec, tuple):
+        return spec[0]
+    return spec
+
+
+DETECTOR_SCENARIOS: Sequence[
+    tuple[str, Sequence[str | tuple[str, dict[str, int]] | None]]
+] = [
+    ("no_detectors", [None] * N_MODES),
+    ("pnr", [("pnr", {})] * N_MODES),
+    ("threshold", [("threshold", {})] * N_MODES),
+    ("ppnr", [("ppnr", {"n_wires": 3})] * N_MODES),
+    (
+        "mixed",
+        [
+            ("threshold", {}),
+            ("pnr", {}),
+            ("ppnr", {"n_wires": 2}),
+            ("threshold", {}),
+            ("pnr", {}),
+            ("ppnr", {"n_wires": 4}),
+            ("threshold", {}),
+            ("pnr", {}),
+        ],
+    ),
+]
 
 
 class TestDetectorsWithQuantumLayer:
@@ -544,6 +639,123 @@ class TestDetectorsWithQuantumLayer:
                 input_state=[1, 1, 1, 1],
                 no_bunching=True,
             )
+
+    @pytest.mark.parametrize(
+        "label, detector_specs",
+        DETECTOR_SCENARIOS,
+        ids=lambda item: item[0] if isinstance(item, tuple) else item,
+    )
+    def test_sampling_matches_perceval_across_detectors(
+        self,
+        label: str,
+        detector_specs: Sequence[str | tuple[str, dict[str, int]] | None],
+    ):
+        """QuantumLayer sampling, probabilities, and expectations should track Perceval for diverse detectors."""
+        _ = label  # id used only for parametrized display
+        # Prepare Merlin layer for probability distribution
+        layer_experiment = _build_experiment(detector_specs)
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=layer_experiment,
+            input_state=INPUT_STATE,
+        )
+        probabilities = layer().squeeze(0)
+        keys = [_normalize_key(key) for key in layer.output_keys]
+        key_to_index = {key: idx for idx, key in enumerate(keys)}
+
+        # Build reference Perceval processor
+        reference_experiment = _build_experiment(detector_specs)
+        processor = pcvl.Processor("SLOS", reference_experiment)
+        processor.with_input(pcvl.BasicState(INPUT_STATE))
+
+        # Threshold / hybrid detectors can merge photons, making a strict photon-count filter unreliable.
+        if any(_detector_kind(spec) not in {None, "pnr"} for spec in detector_specs):
+            processor.min_detected_photons_filter(1)
+        else:
+            processor.min_detected_photons_filter(N_PHOTONS)
+
+        raw_probabilities = processor.probs()["results"]
+        probability_map = {
+            tuple(int(v) for v in state): float(prob)
+            for state, prob in raw_probabilities.items()
+        }
+        reference_probabilities = torch.tensor(
+            [probability_map.get(key, 0.0) for key in keys],
+            dtype=probabilities.dtype,
+        )
+
+        assert torch.allclose(probabilities, reference_probabilities, atol=1e-6)
+
+        # Compare sampling statistics between Merlin and Perceval
+        torch.manual_seed(12_345)
+        sampled_distribution = layer(
+            shots=SAMPLING_SHOTS,
+            sampling_method="multinomial",
+        ).squeeze(0)
+
+        sampler = Sampler(processor)
+        sample_counts = sampler.sample_count(max_samples=SAMPLING_SHOTS)["results"]
+        total_samples = sum(sample_counts.values()) or 1
+        perceval_sampled = torch.zeros_like(probabilities)
+        for state, count in sample_counts.items():
+            key = tuple(int(v) for v in state)
+            index = key_to_index.get(key)
+            if index is not None:
+                perceval_sampled[index] = count / total_samples
+
+        max_pairwise_delta = torch.max(
+            torch.abs(sampled_distribution - perceval_sampled)
+        )
+        assert max_pairwise_delta < SAMPLING_TOLERANCE
+        assert (
+            torch.max(torch.abs(sampled_distribution - reference_probabilities))
+            < SAMPLING_TOLERANCE
+        )
+        assert (
+            torch.max(torch.abs(perceval_sampled - reference_probabilities))
+            < SAMPLING_TOLERANCE
+        )
+
+        # Expectation values per mode must also coincide
+        expectation_layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=_build_experiment(detector_specs),
+            input_state=INPUT_STATE,
+            measurement_strategy=ML.MeasurementStrategy.MODE_EXPECTATIONS,
+        )
+        expectations = expectation_layer().squeeze(0)
+        assert [_normalize_key(key) for key in expectation_layer.output_keys] == keys
+
+        keys_tensor = torch.tensor(keys, dtype=probabilities.dtype)
+        reference_expectations = reference_probabilities @ keys_tensor
+        assert torch.allclose(expectations, reference_expectations, atol=1e-5)
+
+    def test_threshold_detectors_preserve_unbunched_distribution(self):
+        """Threshold detectors should not alter probabilities when computation space forbids bunching."""
+        threshold_specs = [("threshold", {})] * N_MODES
+        experiment_threshold = _build_experiment(threshold_specs)
+        experiment_reference = _build_experiment([None] * N_MODES)
+
+        layer_threshold = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment_threshold,
+            input_state=INPUT_STATE,
+            computation_space=ML.ComputationSpace.UNBUNCHED,
+        )
+        layer_reference = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment_reference,
+            input_state=INPUT_STATE,
+            computation_space=ML.ComputationSpace.UNBUNCHED,
+        )
+
+        probs_threshold = layer_threshold().squeeze(0)
+        probs_reference = layer_reference().squeeze(0)
+        keys_threshold = [_normalize_key(key) for key in layer_threshold.output_keys]
+        keys_reference = [_normalize_key(key) for key in layer_reference.output_keys]
+
+        assert keys_threshold == keys_reference
+        assert torch.allclose(probs_threshold, probs_reference, atol=1e-6)
 
 
 class TestDetectorsWithKernels:
