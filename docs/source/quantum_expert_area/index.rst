@@ -1,15 +1,14 @@
 :github_url: https://github.com/merlinquantum/merlin
 
-.. _research:
+.. _quantum_expert_area:
 
-===========
-Expert Area
-===========
+===================
+Quantum Expert Area
+===================
 
 .. toctree::
    :maxdepth: 1
-   :caption: Expert Area
+   :caption: Table of Contents
 
    architectures
    building_intuition
-   reproduced_papers

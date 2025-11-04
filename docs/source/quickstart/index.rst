@@ -7,10 +7,9 @@ Quickstart
 ==========
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 3
    :caption: Table of Contents
 
    installation
    basic_concepts
    first_quantum_layer
-
