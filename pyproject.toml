@@ -57,7 +57,6 @@ docs = [
     "ipykernel",
     "gitpython",
     "jinja2==3.0.0",
-    "sphinx-multiversion-contrib @ git+https://github.com/Quandela/sphinx-multiversion-contrib.git@1.1.1",
     "scikit-learn>=1.0.0",
 ]
 examples = [
