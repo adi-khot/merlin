@@ -1,14 +1,13 @@
 :github_url: https://github.com/merlinquantum/merlin
 
-.. _reference:
+.. _performance:
 
-=========
-Reference
-=========
+===========
+Performance
+===========
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: Table of Contents
 
-   api/modules
    performance
