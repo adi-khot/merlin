@@ -12,3 +12,4 @@ Quantum Expert Area
 
    architectures
    building_intuition
+   SLOS
