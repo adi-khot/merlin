@@ -7,16 +7,9 @@ User Guide
 ==========
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 3
    :caption: Table of Contents
 
-   circuit_types
-   experiment
-   layer
-   hybrid_models
-   output_mappings
-   feed_forward
-   algorithms
-   computation_space
-   quantum_bridge
-   kernels
+   quantum_layers
+   remote_processing
+   other_algorithms
