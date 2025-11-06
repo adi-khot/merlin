@@ -49,10 +49,16 @@ Here, we could write
 
 For a deeper understanding of photonic quantum computing fundamentals, see :doc:`../quantum_expert_area/architectures`.
 
+First, we present the overview of the building of a QuantumLayer, brick by brick using the `CircuitBuilder`.  
+.. figure:: ../_static/img/diagrams.png
+   :alt: Flow from data preprocessing to quantum layer and measurement
+
+   Overview of the Merlin hybrid workflow.
+
 2. Backend : Mathematical Models
 ========================================
 
-The **Backend** provides mathematical representations of quantum circuits, handling the complex quantum mechanics while exposing a clean interface for machine learning.
+To run this `layer`, the **Backend** provides mathematical representations of quantum circuits, handling the complex quantum mechanics while exposing a clean interface for machine learning.
 
 Key responsibilities:
 
@@ -228,11 +234,6 @@ Here's how all these concepts work together in practice:
     # - Quantum computation
     # - Quantum-to-classical measurement (plus optional grouping)
 
-This hybrid model first preprocesses inputs classically, then encodes them into a quantum circuit defined by the ``CircuitBuilder``. After quantum processing, it measures and groups the outputs before passing them to a final classical classifier. This Sequential structure is compatible with autogradient optimization in PyTorch.
-.. figure:: ../_static/img/quickstart_flow.png
-   :alt: Flow from data preprocessing to quantum layer and measurement
-
-   Overview of the Merlin hybrid workflow. Update or replace this diagram to match your project specifics.
 
 Design Guidelines
 =================
