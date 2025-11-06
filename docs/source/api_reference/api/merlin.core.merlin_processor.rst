@@ -1,407 +1,245 @@
-MerlinProcessor User Guide
-==========================
+===============================
+MerlinProcessor API Reference
+===============================
+
+.. module:: merlin.core.merlin_processor
 
 Overview
---------
+========
+:class:`MerlinProcessor` is an RPC-style bridge that offloads **quantum leaves**
+(e.g., layers exposing ``export_config()``) to a Perceval
+:class:`~perceval.runtime.RemoteProcessor`, while keeping classical layers local.
+It supports batched execution with chunking, limited intra-leaf concurrency,
+per-call/global timeouts, cooperative cancellation, and a Torch-friendly async
+interface returning :class:`torch.futures.Future`.
 
-``MerlinProcessor`` is a lightweight RPC-style bridge between your PyTorch
-models and Quandela Cloud via Perceval's ``RemoteProcessor``. It lets you:
+Key Capabilities
+----------------
+* Automatic traversal of a PyTorch module; offloads only **quantum leaves**.
+* Batch **chunking** (``microbatch_size``) and **parallel** submission per leaf
+  (``chunk_concurrency``).
+* **Synchronous** (``forward``) and **asynchronous** (``forward_async``) APIs.
+* **Cancellation** of a single call or **all** calls in flight.
+* **Timeouts** that cancel in-flight cloud jobs.
+* Per-call pool of cloned :class:`~perceval.runtime.RemoteProcessor` objects
+  (avoid cross-thread handler sharing).
+* Stable, descriptive cloud job names (capped to 50 chars).
 
-* Offload **quantum leaves** (e.g. ``QuantumLayer``) to the cloud while keeping
-  **classical layers** local.
-* Submit batched inputs; when batches are large, Merlin will **chunk** them and
-  (optionally) **run chunks in parallel**.
-* Drive execution **synchronously** (``forward``) or **asynchronously**
-  (``forward_async`` returning a ``torch.futures.Future``).
-* Monitor status, collect **job IDs**, **cancel** jobs, and enforce **timeouts**.
-* Estimate **required shot counts per input** ahead of time.
+.. note::
+   Execution is supported both with exact probabilities (if the backend exposes
+   the ``"probs"`` command) and with sampling (``"sample_count"`` or
+   ``"samples"``). Shots are *user-controlled* via ``nsample``; there is no
+   hidden auto-shot selection.
 
-Merlin deliberately avoids hidden "auto-shots": **you control sampling**. The
-optional estimator is provided to help you choose appropriate values.
+Class Reference
+===============
 
-Prerequisites
--------------
+MerlinProcessor
+---------------
+.. class:: MerlinProcessor(remote_processor, microbatch_size=32, timeout=3600.0, max_shots_per_call=None, chunk_concurrency=1)
 
-* `perceval-quandela` configured with a valid cloud token (via
-  ``pcvl.RemoteConfig`` cache or environment).
-* A Perceval ``RemoteProcessor`` instance (e.g. a simulator like
-  ``"sim:slos"`` or a QPU-backed platform).
-* A Merlin **quantum layer** that provides ``export_config()`` (e.g.
-  ``merlin.algorithms.QuantumLayer``).
+   Create a processor that offloads quantum leaves to the given Perceval
+   :class:`~perceval.runtime.RemoteProcessor`.
 
-Quick Start
------------
+   :param perceval.runtime.RemoteProcessor remote_processor:
+      Authenticated Perceval remote processor (simulator or QPU-backed).
+   :param int microbatch_size: Maximum **rows per cloud job** (chunk size).
+      Values > 32 are accepted but effectively capped by platform/job strategy.
+   :param float timeout: Default wall-time limit (seconds) per call. Must be a
+      finite float. Per-call override via ``timeout=...`` on API methods.
+   :param int | None max_shots_per_call: Hard cap on **shots per cloud call**.
+      If ``None``, a safe default is used internally.
+   :param int chunk_concurrency: Max number of chunk jobs in flight **per
+      quantum leaf** during a single call. ``>=1`` (default: 1, i.e., serial).
 
-.. code-block:: python
+   **Attributes**
 
-    import perceval as pcvl
-    import torch
-    import torch.nn as nn
+   .. attribute:: backend_name
 
-    from merlin.algorithms import QuantumLayer
-    from merlin.builder.circuit_builder import CircuitBuilder
-    from merlin.core.merlin_processor import MerlinProcessor
-    from merlin.measurement.strategies import MeasurementStrategy
+      ``str`` - Best-effort backend name of ``remote_processor``.
 
-    # 1) Create the Perceval RemoteProcessor (token must already be configured)
-    rp = pcvl.RemoteProcessor("sim:slos")
+   .. attribute:: available_commands
 
-    # 2) Wrap it with MerlinProcessor
-    proc = MerlinProcessor(
-        rp,
-        microbatch_size=32,        # batch chunk size per cloud call (<=32)
-        timeout=3600.0,           # default wall-time per forward (seconds)
-        max_shots_per_call=None,  # optional cap per cloud call (see below)
-        chunk_concurrency=1       # parallel chunk jobs within a quantum leaf
-    )
+      ``list[str]`` - Commands exposed by the backend (e.g., ``"probs"``,
+      ``"sample_count"``, ``"samples"``). Empty if unknown.
 
-    # 3) Build a QuantumLayer and a small model
-    b = CircuitBuilder(n_modes=6)
-    b.add_rotations(trainable=True, name="theta")
-    b.add_angle_encoding(modes=[0, 1], name="px")
-    b.add_entangling_layer()
+   .. attribute:: microbatch_size
+                  default_timeout
+                  max_shots_per_call
+                  chunk_concurrency
 
-    q = QuantumLayer(
-        input_size=2,
-        builder=b,
-        n_photons=2,
-        no_bunching=True,
-        measurement_strategy=MeasurementStrategy.PROBABILITIES,  # raw probability vector
-    ).eval()
+      Constructor options reflected on the instance.
 
-    model = nn.Sequential(
-        nn.Linear(3, 2, bias=False),
-        q,
-        nn.Linear(15, 4, bias=False),   # 15 = C(6,2) from the chosen circuit
-        nn.Softmax(dim=-1)
-    ).eval()
+   .. attribute:: DEFAULT_MAX_SHOTS
+                  DEFAULT_SHOTS_PER_CALL
 
-    # 4) Run remotely with sampling (nsample) or exact probs if available
-    X = torch.rand(8, 3)
-    y = proc.forward(model, X, nsample=5000)   # synchronous
-    print(y.shape)
+      Library constants used when computing defaults for sampling paths.
 
-Instantiation & Options
------------------------
+Context Management
+------------------
+.. method:: __enter__()
+.. method:: __exit__(exc_type, exc, tb)
 
-``MerlinProcessor(remote_processor, *, max_batch_size=32, timeout=3600.0,
-max_shots_per_call=None, chunk_concurrency=1)``
+   Entering returns the processor. Exiting triggers a best-effort
+   :meth:`cancel_all` to ensure no stray jobs remain.
 
-* **remote_processor (pcvl.RemoteProcessor)**: your authenticated platform.
-  Merlin clones it internally per quantum leaf so multiple jobs can run safely
-  in parallel without altering your original instance.
+Execution APIs
+--------------
+.. method:: forward(module, input, *, nsample=None, timeout=None) -> torch.Tensor
 
-* **max_batch_size (int)**: maximum number of input rows per **cloud job**.
-  If your input batch ``B`` is larger, the batch is split into chunks of size
-  ``<= microbatch_size``. Hard-capped by Merlin at 32.
+   Synchronous convenience around :meth:`forward_async`.
 
-* **timeout (float)**: default wall-clock limit (in seconds) for each
-  ``forward/forward_async`` call. Use per-call override (see below). This must
-  be a real number (not ``None``).
+   :param torch.nn.Module module: A Torch module/tree. Leaves exposing
+      ``export_config()`` (and not ``force_local=True``) are offloaded.
+   :param torch.Tensor input: 2D batch ``[B, D]`` or shape required by the
+      first leaf. Tensors are moved to CPU for remote execution if needed; the
+      result is moved back to the input's original device/dtype.
+   :param int | None nsample: Shots per input when sampling. Ignored if the
+      backend supports exact probabilities (``"probs"``).
+   :param float | None timeout: Per-call override. ``None``/``0`` == unlimited.
+   :returns: Output tensor with batch dimension ``B`` and leaf-determined
+      distribution dimension.
+   :rtype: torch.Tensor
+   :raises RuntimeError: If ``module`` is in training mode.
+   :raises TimeoutError: On global per-call timeout (remote cancel is issued).
+   :raises concurrent.futures.CancelledError: If the call is cooperatively
+      cancelled via the async API.
 
-* **max_shots_per_call (int | None)**: cap for **each** cloud call. If
-  ``None``, Merlin passes a safe default internally for Perceval. If you want a
-  stricter cap, set this explicitly. (This is **not** an auto-shot chooser.)
+.. method:: forward_async(module, input, *, nsample=None, timeout=None) -> torch.futures.Future
 
-* **chunk_concurrency (int)**: maximum number of **chunks** submitted in
-  parallel **per quantum leaf**. Default ``1`` (serial). Increase for higher
-  throughput when the backend allows it.
+   Asynchronous execution. Returns a :class:`torch.futures.Future` with extra
+   helpers attached:
 
-Execution API
--------------
+   **Future extensions**
 
-Synchronous
-^^^^^^^^^^^
+   * ``future.job_ids: list[str]`` - Accumulates job IDs across all chunk jobs.
+   * ``future.status() -> dict`` - Current state/progress/message plus chunk
+     counters: ``{"chunks_total", "chunks_done", "active_chunks"}``.
+   * ``future.cancel_remote() -> None`` - Cooperative cancel; in-flight jobs are
+     best-effort cancelled and ``future.wait()`` raises
+     ``CancelledError``.
 
-.. code-block:: python
+   :param module: See :meth:`forward`.
+   :param input: See :meth:`forward`.
+   :param nsample: See :meth:`forward`.
+   :param timeout: See :meth:`forward`.
+   :returns: Future that resolves to the same tensor as :meth:`forward`.
 
-    y = proc.forward(layer_or_model, X, nsample=20000, timeout=15.0)
+Job & Lifecycle Utilities
+-------------------------
+.. method:: cancel_all() -> None
 
-* **nsample (int | None)**:
-  * If the backend exposes ``"probs"`` in ``remote_processor.available_commands``,
-    Merlin uses exact probabilities and ignores ``nsample``.
-  * Otherwise, Merlin uses sampling; ``nsample`` controls the shots per input.
-    (Subject to your platform limits and ``max_shots_per_call``.)
+   Best-effort cancellation of **all** active jobs across outstanding calls.
 
-* **timeout (float | None)**: overrides the constructor default for this call.
-  * ``None`` --> no time limit for this call.
-  * ``0`` or falsy is treated as "no limit".
-  * Otherwise --> seconds until a **global timeout** cancels all in-flight jobs
-    launched for this call and raises ``TimeoutError``.
+.. method:: get_job_history() -> list[perceval.runtime.RemoteJob]
 
-Asynchronous
-^^^^^^^^^^^^
+   Returns a list of all jobs observed/submitted by this instance during the
+   process lifetime (useful for diagnostics).
 
-.. code-block:: python
+.. method:: clear_job_history() -> None
 
-    fut = proc.forward_async(layer_or_model, X, nsample=3000, timeout=None)
-    # Helpers injected on the Future:
-    fut.job_ids         # list[str]: job ids across all chunks/leaves
-    fut.status()        # dict: {state, progress, message, chunks_*}
-    fut.cancel_remote() # request cancellation; .wait() -> CancelledError
-    y = fut.wait()
+   Clears the internal job history list.
 
-* **Cancellation**:
-  * ``fut.cancel_remote()`` signals the worker to cancel and issues remote job
-    cancellation (best effort). ``fut.wait()`` then raises
-    ``concurrent.futures.CancelledError``.
-  * ``proc.cancel_all()`` cancels **all** active jobs across all futures.
+Shot Estimation (No Submission)
+-------------------------------
+.. method:: estimate_required_shots_per_input(layer, input, desired_samples_per_input) -> list[int]
 
-* **Context manager**:
-  Exiting a ``with MerlinProcessor(...) as proc:`` block triggers
-  ``cancel_all()``, ensuring stray jobs are stopped.
+   Ask the platform estimator how many shots are required **per input row** to
+   reach a target number of *useful* samples.
+
+   :param torch.nn.Module layer: A quantum leaf (must implement
+      ``export_config()``).
+   :param torch.Tensor input: ``[B, D]`` or a single vector ``[D]``. Values are
+      mapped to the circuit parameters as they would be during execution.
+   :param int desired_samples_per_input: Target **useful** samples per input.
+   :returns: ``list[int]`` of length ``B`` (``0`` indicates "not viable" under
+      current settings).
+   :rtype: list[int]
+   :raises TypeError: If ``layer`` does not expose ``export_config()``.
+   :raises ValueError: If ``input`` is not 1D or 2D.
+
+Execution Semantics
+-------------------
+Traversal & Offload
+^^^^^^^^^^^^^^^^^^^
+* Leaves with ``export_config()`` are treated as **quantum leaves** and are
+  offloaded unless they expose a ``should_offload(remote_processor, nsample)``
+  method that returns ``False``, or they set ``force_local=True``.
+* Non-quantum leaves run locally under ``torch.no_grad()``.
 
 Batching & Chunking
--------------------
+^^^^^^^^^^^^^^^^^^^
+* If ``B > microbatch_size``, the batch is split into chunks of size
+  ``<= microbatch_size``. Up to ``chunk_concurrency`` chunk jobs per quantum
+  leaf are submitted in parallel.
 
-* If ``len(X) > microbatch_size``, Merlin splits into chunks of size
-  ``<= microbatch_size`` and submits up to ``chunk_concurrency`` chunk-jobs in
-  parallel **for that quantum leaf**.
-* The Future aggregates **all job IDs** across leaves in
-  ``future.job_ids``. It also exposes chunk counters via ``future.status()``:
+Backends & Commands
+^^^^^^^^^^^^^^^^^^^
+* If the backend exposes ``"probs"``, the processor queries exact probabilities
+  and ignores ``nsample``.
+* Otherwise it uses ``"sample_count"`` or ``"samples"`` with
+  ``nsample or DEFAULT_SHOTS_PER_CALL``.
 
-  .. code-block:: text
+Timeouts & Cancellation
+^^^^^^^^^^^^^^^^^^^^^^^
+* Per-call timeouts are enforced as **global deadlines**. On expiry,
+  in-flight jobs are cancelled and a :class:`TimeoutError` is raised.
+* ``future.cancel_remote()`` performs cooperative cancellation; awaiting the
+  future raises :class:`concurrent.futures.CancelledError`.
 
-      {"state": "...", "progress": ..., "message": "...",
-       "chunks_total": N, "chunks_done": k, "active_chunks": c}
+Job Naming & Traceability
+^^^^^^^^^^^^^^^^^^^^^^^^^
+* Each chunk job receives a descriptive name of the form
+  ``"mer:{layer}:{call_id}:{idx}/{total}:{pool_slot}:{cmd}"``, sanitized and
+  truncated to 50 characters with a stable hash suffix when necessary.
 
-Device & dtype round-trip
--------------------------
+Threading & Pools
+^^^^^^^^^^^^^^^^^
+* For each call and for each quantum leaf, the processor creates a **pool** of
+  cloned :class:`~perceval.runtime.RemoteProcessor` objects sized to
+  ``chunk_concurrency``. Each clone has its own RPC handler to avoid
+  cross-thread sharing.
 
-Inputs are moved to CPU for remote execution when needed, and the final tensor
-is returned on the **original device and dtype** of your input (e.g., preserve
-CUDA when possible for downstream ops).
+Return Shapes & Mapping
+^^^^^^^^^^^^^^^^^^^^^^^
+* Distribution size is inferred from the leaf graph or from
+  ``(n_modes, n_photons)`` and whether ``no_bunching`` is enabled. Probability
+  vectors are normalized if needed.
 
-Offload Policy & Local Overrides
---------------------------------
-
-* By default, modules that provide ``export_config()`` are treated as
-  **quantum leaves** and offloaded.
-* Set ``layer.force_local = True`` to force **local** execution
-  (useful for debugging and A/B comparisons).
-* Many Merlin tests also use a context helper ``with layer.as_simulation():``
-  to temporarily force local-mode (if your layer provides it).
-
-Estimating Required Shots (No Auto-Execute)
--------------------------------------------
-
-Merlin includes a helper that proxies Perceval's built-in estimator and **does
-not** submit jobs:
-
+Examples
+========
+Synchronous execution
+---------------------
 .. code-block:: python
 
-    estimates = proc.estimate_required_shots_per_input(
-        layer=q,
-        input=X,                          # shape [B, D] or [D]
-        desired_samples_per_input=2_000
-    )
-    # -> list[int] length B (or 1 for a single vector).
-    #    0 means "not viable" under current platform/perfs/filters).
+   y = proc.forward(model, X, nsample=20_000)
 
-Behavior:
-
-* For each input row, Merlin maps your feature vector to the circuit parameter
-  values (same mapping used during remote execution), then calls
-  ``remote_processor.estimate_required_shots(...)``.
-* It mirrors the layer's exported **circuit** and **input state** (including
-  detected-photon filters) so the estimate aligns with actual execution.
-* This is a **planner** only; it doesn't modify processor/job history.
-
-Timeouts & Errors
------------------
-
-* **Timeout**: if a per-call or default timeout elapses, Merlin issues remote
-  cancellation and raises ``TimeoutError``.
-* **Cancellation**:
-  * ``fut.cancel_remote()`` or ``proc.cancel_all()`` --> pending chunk workers
-    raise ``CancelledError``; completed chunks are discarded for the call.
-* **Remote failures**:
-  * If the backend marks a job as failed, Merlin raises a ``RuntimeError`` with
-    the platform message. If the message indicates an explicit remote cancel,
-    Merlin maps it to ``CancelledError``.
-
-Multiple Quantum Layers
------------------------
-
-Sequential models with multiple quantum leaves are supported:
-
-* Each quantum leaf is processed in order; each may chunk and run those chunks
-  with its own intra-leaf concurrency (``chunk_concurrency``).
-* ``future.job_ids`` will include all job IDs across both leaves.
-
-Controlling Shots Explicitly
-----------------------------
-
-* Sampling backends respect the **per-call** ``nsample`` you pass to
-  ``forward/forward_async``; Merlin does not auto-derive or override it.
-* Use ``estimate_required_shots_per_input`` ahead of time to pick good values.
-* ``max_shots_per_call`` lets you enforce a **hard cap** for each cloud job.
-
-Workflow Recipes (End-to-End Examples)
---------------------------------------
-
-The following examples mirror tested workflows (see
-``tests/core/cloud/test_userguide_examples.py``).
-
-Mixed classical --> quantum --> classical
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
+Asynchronous with status and cancellation
+-----------------------------------------
 .. code-block:: python
 
-    # Build the quantum layer and probe its output size
-    q = QuantumLayer(...).eval()  # see Quick Start builder pattern
-    dist = q(torch.rand(2, q.input_size)).shape[1]
+   fut = proc.forward_async(model, X, nsample=5_000, timeout=None)
+   print(fut.status())        # {'state': ..., 'progress': ..., ...}
+   # If needed:
+   fut.cancel_remote()        # cooperative cancel
+   try:
+       y = fut.wait()
+   except Exception as e:
+       print("Cancelled:", type(e).__name__)
 
-    model = nn.Sequential(
-        nn.Linear(3, q.input_size, bias=False),
-        q,                          # offloaded by Merlin
-        nn.Linear(dist, 4, bias=False),
-        nn.Softmax(dim=-1),
-    ).eval()
-
-    proc = MerlinProcessor(pcvl.RemoteProcessor("sim:slos"))
-    # Prefer exact probabilities if supported; else sample.
-    use_probs = "probs" in getattr(proc, "available_commands", [])
-    nsamp = None if use_probs else 20_000
-
-    X = torch.rand(6, 3)
-    fut = proc.forward_async(model, X, nsample=nsamp)
-    Y = fut.wait()
-    print("shape:", Y.shape, "job_ids:", len(fut.job_ids))  # expect >= 1
-
-Gradient-free fine-tuning with COBYLA (no autograd on quantum layer)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
+High-throughput chunking
+------------------------
 .. code-block:: python
 
-    # Optional dependency: SciPy
-    from scipy.optimize import minimize
-
-    # Small model: Linear -> Quantum -> Linear(scalar)
-    q = QuantumLayer(...).eval()
-    dist = q(torch.rand(2, q.input_size)).shape[1]
-    readout = nn.Linear(dist, 1, bias=False).eval()
-    pre = nn.Linear(3, q.input_size, bias=False).eval()
-    model = nn.Sequential(pre, q, readout).eval()
-
-    # Flatten quantum params we will tune (keep classical layers fixed)
-    q_params = [(n, p) for n, p in q.named_parameters() if p.requires_grad]
-    shapes = [p.shape for _, p in q_params]
-    sizes = [p.numel() for _, p in q_params]
-
-    def get_flat():
-        import torch
-        return torch.cat([p.detach().flatten().cpu() for _, p in q_params], dim=0)
-
-    def set_from_flat(vec):
-        import torch
-        off = 0
-        with torch.no_grad():
-            for (_, p), sz, shp in zip(q_params, sizes, shapes, strict=False):
-                chunk = vec[off:off+sz].view(shp).to(p.dtype)
-                p.data.copy_(chunk.to(p.device))
-                off += sz
-
-    x0 = get_flat().double().numpy()
-    proc = MerlinProcessor(pcvl.RemoteProcessor("sim:slos"))
-    nsamp = None if "probs" in getattr(proc, "available_commands", []) else 20_000
-    X = torch.rand(8, 3)
-
-    # Objective: maximize mean scalar output -> minimize negative
-    def objective(v_np):
-        v = torch.from_numpy(v_np).to(torch.float64)
-        set_from_flat(v.to(torch.float32))
-        with torch.no_grad():
-            y = proc.forward(model, X, nsample=nsamp)
-            return -float(y.mean().item())
-
-    res = minimize(objective, x0, method="COBYLA",
-                   options={"maxiter": 12, "rhobeg": 0.5})
-    print("final objective:", res.fun)
-
-Local vs remote A/B (force simulation)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-    q = QuantumLayer(...).eval()
-    X = torch.rand(4, q.input_size)
-    proc = MerlinProcessor(pcvl.RemoteProcessor("sim:slos"))
-
-    # Remote path (offloaded)
-    y_remote = proc.forward(q, X, nsample=5000)
-
-    # Local path (force simulation)
-    q.force_local = True
-    y_local = proc.forward(q, X, nsample=5000)
-
-    # Compare distributions (allowing some sampling noise)
-    print((y_local - y_remote).abs().mean())
-
-Monitoring status & safe cancellation
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-    fut = proc.forward_async(q, torch.rand(16, q.input_size), nsample=40000, timeout=None)
-    # Poll status (state/progress/message + chunk counters)
-    print(fut.status())
-    # If needed, cancel cooperatively
-    fut.cancel_remote()
-    try:
-        _ = fut.wait()
-    except Exception as e:
-        print("Cancelled:", type(e).__name__)
-
-High-throughput batching with chunking
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-    proc = MerlinProcessor(
-        pcvl.RemoteProcessor("sim:slos"),
-        microbatch_size=8,          # split big batches into <=8 rows per job
-        chunk_concurrency=2        # up to 2 chunk-jobs in flight per quantum leaf
-    )
-    X = torch.rand(64, q.input_size)  # big batch
-    fut = proc.forward_async(q, X, nsample=3000)
-    Y = fut.wait()
-    print("chunks_total/done/active:", fut.status())
-
-Troubleshooting
----------------
-
-* **No job IDs appear**:
-  * Your backend may be very fast, or your layer ran locally (e.g.,
-    ``force_local=True``).
-* **Perceval requires ``max_shots_per_call``**:
-  * Merlin passes a safe default when you leave it ``None``. If your org policy
-    requires explicit bounds, set it at construction.
-* **Timeouts in CI**:
-  * Backends vary. Make tests resilient to fast or slow responses by polling
-    ``future.done()`` before asserting on timeout exceptions.
-
-API Reference (Summary)
------------------------
-
-* ``forward(module, input, *, nsample=None, timeout=None) -> torch.Tensor``
-* ``forward_async(module, input, *, nsample=None, timeout=None) -> Future``
-  * Future helpers:
-    * ``future.job_ids: list[str]``
-    * ``future.status() -> dict``
-    * ``future.cancel_remote() -> None``
-* ``cancel_all() -> None``
-* ``estimate_required_shots_per_input(layer, input, desired_samples_per_input) -> list[int]``
-* ``get_job_history() -> list[RemoteJob]``
-* ``clear_job_history() -> None``
+   proc = MerlinProcessor(rp, microbatch_size=8, chunk_concurrency=2)
+   y = proc.forward(q_layer, X, nsample=3_000)
 
 Version Notes
--------------
+=============
+* Default ``chunk_concurrency`` is **1** (serial).
+* The constructor ``timeout`` must be a **float**; use per-call ``timeout=None``
+  for an unlimited call.
+* Shots are **user-controlled** (no auto-shot chooser); use the estimator helper
+  to plan values ahead of time.
 
-* Default ``chunk_concurrency`` is **1** (serial intra-leaf). Opt in to
-  parallelism by setting it > 1.
-* Constructor ``timeout`` must be a **float**. Use per-call ``timeout=None`` for
-  an unlimited call.
-* Estimation helper added to keep **shot selection user-driven** without
-  auto-submitting jobs.
 
