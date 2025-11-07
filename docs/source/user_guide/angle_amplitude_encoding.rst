@@ -237,7 +237,7 @@ Encodings Key Differences
 +========================+============================+==================================+
 | Input to ``forward``   | Real features ``x``        | Complex statevector amplitudes   |
 +------------------------+----------------------------+----------------------------------+
-| Number of inputs       | User-defined               | Fixed by n_modes and n_photons  |
+| Number of inputs       | User-defined               | Fixed by n_modes and n_photons   |
 |                        | (``input_size``)           | (combinatorial formula)          |
 +------------------------+----------------------------+----------------------------------+
 | Circuit dependence     | Features set parameters    | State defines input quantum      |
