@@ -21,7 +21,7 @@ QLOQ: One-Hot Encoding for Photonics
 
 The Quantum Bridge implements the Qubit Logic on Qudits (QLOQ) encoding from Lysaght et al., which uses a one-hot encoding scheme to map groups of qubits to photonic Fock states. Each group of qubits is encoded using exactly one photon distributed across multiple modes.
 
-.. figure:: docs/source/quantum_expert_area/images/qloq_onehot_encoding.png
+.. figure:: images/qloq_onehot_encoding.png
    :align: center
    :width: 600px
    :alt: QLOQ one-hot encoding diagram
@@ -165,7 +165,7 @@ When qubits are in different groups, each group gets its own one-hot encoded pho
 Complete Amplitude Mapping Example
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. figure:: docs/source/quantum_expert_area/images/qloq_amplitude_flow.png
+.. figure:: images/qloq_amplitude_flow.png
    :align: center
    :width: 500px
 
@@ -269,7 +269,7 @@ The transition matrix implements this one-hot mapping::
 Custom Encoding Schemes
 ========================
 
-.. figure:: docs/source/quantum_expert_area/images/qloq_grouping_strategies.png
+.. figure:: images/qloq_grouping_strategies.png
    :align: center
    :width: 600px
 
