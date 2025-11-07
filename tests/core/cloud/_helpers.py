@@ -5,6 +5,7 @@ import time
 
 from merlin.algorithms import QuantumLayer
 from merlin.builder.circuit_builder import CircuitBuilder
+from merlin.core.computation_space import ComputationSpace
 
 
 def spin_until(pred, timeout_s: float = 10.0, sleep_s: float = 0.02) -> bool:
@@ -34,5 +35,5 @@ def make_layer(
         input_size=input_size,
         builder=b,
         n_photons=n,
-        no_bunching=no_bunching,
+        computation_space=ComputationSpace.default(no_bunching=no_bunching),
     ).eval()

@@ -17,6 +17,7 @@ import pytest
 import torch
 
 from merlin import QuantumLayer
+from merlin.core.computation_space import ComputationSpace
 from merlin.core.process import ComputationProcess
 from merlin.measurement.strategies import MeasurementStrategy
 
@@ -83,7 +84,7 @@ class TestComputeEbsSimultaneously:
             input_parameters=self.input_parameters,
             dtype=torch.float64,
             device=device,
-            no_bunching=True,
+            computation_space=ComputationSpace.UNBUNCHED,
         )
         # Create computation process
         self.process = self.layer.computation_process

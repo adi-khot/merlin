@@ -4,6 +4,7 @@ import perceval as pcvl
 import torch
 from perceval.components import BS, PS
 
+from ..core.computation_space import ComputationSpace
 from ..core.generators import CircuitType, StateGenerator, StatePattern
 from ..measurement.strategies import MeasurementStrategy
 from .layer import QuantumLayer
@@ -63,7 +64,7 @@ def define_layer_no_input(n_modes, n_photons, circuit_type=None):
         input_state=input_state,  # Random Initial quantum state used only for initialization
         measurement_strategy=MeasurementStrategy.AMPLITUDES,
         trainable_parameters=["phi"],
-        no_bunching=True,
+        computation_space=ComputationSpace.UNBUNCHED,
     )
     return layer
 
@@ -91,7 +92,7 @@ def define_layer_with_input(M, N, input_size, circuit_type=None):
         measurement_strategy=MeasurementStrategy.AMPLITUDES,
         input_parameters=["pl"],  # Optional: Specify device
         trainable_parameters=["phi"],
-        no_bunching=True,
+        computation_space=ComputationSpace.UNBUNCHED,
     )
     return layer
 
@@ -609,13 +610,17 @@ class PoolingFeedForward(torch.nn.Module):
             0,
             circuit=pcvl.Circuit(n_modes),
             n_photons=n_photons,
-            no_bunching=no_bunching,
+            computation_space=ComputationSpace.UNBUNCHED
+            if no_bunching
+            else ComputationSpace.FOCK,
         ).computation_process.simulation_graph.mapped_keys
         keys_out = QuantumLayer(
             0,
             circuit=pcvl.Circuit(n_output_modes),
             n_photons=n_photons,
-            no_bunching=no_bunching,
+            computation_space=ComputationSpace.UNBUNCHED
+            if no_bunching
+            else ComputationSpace.FOCK,
         ).computation_process.simulation_graph.mapped_keys
 
         # If no pooling structure is provided, construct a balanced one

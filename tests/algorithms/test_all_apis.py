@@ -97,7 +97,6 @@ def test_simple_api_pipeline_on_iris(iris_batch):
 
     layer = QuantumLayer.simple(
         input_size=features.shape[1],
-        n_params=10,
         dtype=features.dtype,
     )
     base = layer.quantum_layer if hasattr(layer, "quantum_layer") else layer

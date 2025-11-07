@@ -15,7 +15,7 @@ def make_identity_layer(
     layer = QuantumLayer(
         circuit=c,
         n_photons=n_photons,
-        no_bunching=no_bunching,
+        computation_space=ComputationSpace.default(no_bunching=no_bunching),
         device=torch.device("cpu"),
         dtype=torch.float32,
         amplitude_encoding=True,

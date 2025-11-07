@@ -257,11 +257,14 @@ class TestQuantumLayer:
         # ---------- TRAIN: sampling request is overridden (no sampling during training) ----------
         layer.train()
         # Request sampling, but autodiff backend should turn it off for differentiability
-        y_train = layer(x, shots=100, sampling_method="multinomial")
-        loss = y_train.sum()
-        loss.backward()  # should succeed with gradients flowing (no sampling taken)
-        # At least one trainable parameter should have a gradient
-        assert any(p.grad is not None for p in layer.parameters() if p.requires_grad)
+        with pytest.warns():
+            y_train = layer(x, shots=100, sampling_method="multinomial")
+            loss = y_train.sum()
+            loss.backward()  # should succeed with gradients flowing (no sampling taken)
+            # At least one trainable parameter should have a gradient
+            assert any(
+                p.grad is not None for p in layer.parameters() if p.requires_grad
+            )
 
         # ---------- Invalid sampling method should error ----------
         with pytest.raises(ValueError):
@@ -269,7 +272,7 @@ class TestQuantumLayer:
 
     def test_simple_wrapper_forwards_sampling_args(self):
         """The .simple() wrapper should accept shots/sampling_method and forward them to the quantum layer."""
-        model = ML.QuantumLayer.simple(input_size=2, n_params=10)
+        model = ML.QuantumLayer.simple(input_size=2)
         x = torch.rand(3, 2)
 
         # Works without sampling
@@ -277,6 +280,7 @@ class TestQuantumLayer:
         assert y.shape[0] == x.shape[0]
 
         # Works with sampling (multinomial default in the wrapper)
+        model.eval()
         y2 = model(x, shots=50)
         assert y2.shape[0] == x.shape[0]
 

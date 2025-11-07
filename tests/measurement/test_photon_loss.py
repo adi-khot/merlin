@@ -32,6 +32,7 @@ import pytest
 import torch
 
 import merlin as ML
+from merlin.core.computation_space import ComputationSpace
 
 
 class TestPhotonLossWithQuantumLayer:
@@ -46,12 +47,13 @@ class TestPhotonLossWithQuantumLayer:
             transmittance=0.9,
         )
 
-        layer = ML.QuantumLayer(
-            input_size=0,
-            experiment=experiment,
-            input_state=[1, 1],
-            no_bunching=False,
-        )
+        with pytest.warns():  # no_bunching will issue a warning
+            layer = ML.QuantumLayer(
+                input_size=0,
+                experiment=experiment,
+                input_state=[1, 1],
+                no_bunching=False,
+            )
 
         output = layer()
         keys = layer.output_keys
@@ -85,6 +87,7 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             experiment=experiment_perfect,
             input_state=[1, 1],
+            computation_space=ComputationSpace.FOCK,
         )
 
         output = layer()
@@ -163,7 +166,6 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[1, 1, 1],
-            no_bunching=True,
         )
 
         # Warning with a Detector present
@@ -172,7 +174,6 @@ class TestPhotonLossWithQuantumLayer:
                 input_size=0,
                 experiment=experiment_detectors,
                 input_state=[1, 1, 1],
-                no_bunching=True,
             )
 
         output = layer()
@@ -197,7 +198,6 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             circuit=circuit,
             input_state=[1, 0],
-            no_bunching=True,
         )
 
         output = layer()
@@ -213,7 +213,7 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             circuit=circuit,
             input_state=[1, 4],
-            no_bunching=False,
+            computation_space=ML.ComputationSpace.FOCK,
         )
 
         output = layer()
@@ -235,19 +235,18 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             circuit=circuit,
             input_state=[1, 0],
-            no_bunching=False,
+            computation_space=ML.ComputationSpace.FOCK,
         )
         layer_experiment = ML.QuantumLayer(
             input_size=0,
             experiment=experiment,
             input_state=[1, 0],
-            no_bunching=False,
+            computation_space=ML.ComputationSpace.FOCK,
         )
         layer_experiment_unbunched = ML.QuantumLayer(
             input_size=0,
             experiment=experiment,
             input_state=[1, 0],
-            no_bunching=True,
         )
 
         assert torch.allclose(layer_direct(), layer_experiment(), atol=1e-6)
@@ -266,7 +265,7 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             circuit=circuit,
             input_state=[1, 1],
-            no_bunching=False,
+            computation_space=ML.ComputationSpace.FOCK,
         )
 
         experiment_brightness = pcvl.Experiment(circuit)
@@ -276,7 +275,7 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             experiment=experiment_brightness,
             input_state=[1, 1],
-            no_bunching=False,
+            computation_space=ML.ComputationSpace.FOCK,
         )
 
         experiment_transmittance = pcvl.Experiment(circuit)
@@ -286,7 +285,7 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             experiment=experiment_transmittance,
             input_state=[1, 1],
-            no_bunching=False,
+            computation_space=ML.ComputationSpace.FOCK,
         )
 
         keys = base_layer.output_keys
@@ -321,6 +320,7 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[1, 0],
+            computation_space=ComputationSpace.FOCK,
         )
 
         output = layer()
@@ -338,6 +338,7 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[4, 0],
+            computation_space=ComputationSpace.FOCK,
         )
 
         output_4 = layer_4_photons()
@@ -364,7 +365,7 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             circuit=circuit,
             input_state=[1, 1],
-            no_bunching=False,
+            computation_space=ML.ComputationSpace.FOCK,
         )
 
         experiment = pcvl.Experiment(circuit)
@@ -373,7 +374,7 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[1, 1],
-            no_bunching=False,
+            computation_space=ML.ComputationSpace.FOCK,
         )
 
         base_output = base_layer()
@@ -386,13 +387,11 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             circuit=circuit,
             input_state=[1, 1],
-            no_bunching=True,
         )
         loss_layer_unbunched = ML.QuantumLayer(
             input_size=0,
             experiment=experiment,
             input_state=[1, 1],
-            no_bunching=True,
         )
 
         assert loss_layer_unbunched.output_size > layer_unbunched.output_size
@@ -414,7 +413,7 @@ class TestPhotonLossWithQuantumLayer:
             experiment=experiment,
             input_state=[1, 1],
             input_parameters=["phi"],
-            no_bunching=False,
+            computation_space=ML.ComputationSpace.FOCK,
         )
 
         x = torch.rand(3, 1, requires_grad=True)
@@ -443,7 +442,7 @@ class TestPhotonLossWithQuantumLayer:
             experiment=experiment,
             input_state=[1, 1],
             trainable_parameters=["phi"],
-            no_bunching=False,
+            computation_space=ML.ComputationSpace.FOCK,
         )
 
         # Check that it has trainable parameters
@@ -478,7 +477,7 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=input_state,
-            no_bunching=False,
+            computation_space=ML.ComputationSpace.FOCK,
         )
 
         output = loss_layer()
@@ -519,7 +518,7 @@ class TestPhotonLossWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=input_state,
-            no_bunching=False,
+            computation_space=ML.ComputationSpace.FOCK,
         )
 
         output = loss_layer()

@@ -249,7 +249,8 @@ class TestSamplingIntegration:
 
         # Request sampling, but backend should disable it while training
         # (effectively shots -> 0)
-        x_out_req = layer(x, shots=100, sampling_method="multinomial")
+        with pytest.warns():
+            x_out_req = layer(x, shots=100, sampling_method="multinomial")
         sampled_out_train = model[1](x_out_req)
 
         # Should be (near-)identical to no-sampling output in training
