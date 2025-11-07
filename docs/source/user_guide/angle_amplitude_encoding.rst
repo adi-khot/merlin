@@ -19,9 +19,9 @@ Conceptual Overview
 
 - **Angle encoding** maps a *real feature vector*
   into *circuit parameters* (e.g., phase shifter angles). The circuit unitary
-  depends on your data.
-- **Amplitude encoding** feeds a *statevector* directly to the layer. Instead of
-  turning features into angles, you supply the input quantum state's amplitudes.
+  depends on your data. Data is encoded at specific points in the circuit using phase shifters.
+- **Amplitude encoding** feeds a *complex statevector* directly to the layer as input. Instead of
+  turning features into angles, you supply the input quantum state's amplitudes at the beginning of the circuit.
 
 Angle Encoding
 --------------
@@ -136,6 +136,7 @@ prefix(es) that the layer will map features to:
     # Example: add user-named input phase shifters (prefix 'input')
     for mode in range(6):
         circuit.add(mode, pcvl.PS(pcvl.P(f"input{mode}")))
+        circuit.add(mode, pcvl.PS(pcvl.P(f"theta{mode}")))
 
     # (Add interferometers, MZIs, etc. as you like)
     # ...
@@ -152,16 +153,6 @@ prefix(es) that the layer will map features to:
     x = torch.rand((1, 6))
     probs = layer(x)
 
-Common measurement choices (angle encoding)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-- :data:`~merlin.measurement.MeasurementStrategy.PROBABILITIES` (default):
-  returns a probability vector aligned with :pyattr:`QuantumLayer.output_keys`.
-- :data:`~merlin.measurement.MeasurementStrategy.MODE_EXPECTATIONS`:
-  returns per-mode expected photon counts.
-- :data:`~merlin.measurement.MeasurementStrategy.AMPLITUDES`:
-  returns complex amplitudes (simulation-only; bypasses detectors and noise).
-
 Amplitude Encoding
 ------------------
 
@@ -171,17 +162,30 @@ When to use
 Choose amplitude encoding when you already have a prepared **quantum state** to
 inject into the circuit (e.g., produced by an upstream simulator or another
 photonic block). Here your input to ``forward`` is the **statevector**
-amplitudes, not classical features.
+amplitudes, not classical features. This is useful for providing a prepared quantum state as input to a photonic circuit.
 
-Key differences
-^^^^^^^^^^^^^^^
+How to use
+^^^^^^^^^^
 
-- Set ``amplitude_encoding=True`` on :class:`~merlin.algorithms.QuantumLayer`.
-- Provide ``n_photons`` (to define the computational subspace).
-- Do **not** pass ``input_size`` or ``input_parameters``- they are irrelevant
-  because you are not mapping classical features to angles.
-- The **input tensor shape** must match the layer's basis size:
+- To activate amplitude encoding, set ``amplitude_encoding=True`` on :class:`~merlin.algorithms.QuantumLayer`.
+- Requires the parameter ``n_photons`` to define the computational subspace.
+- Angle and amplitude encoding are mutually exclusive. Thus, ``input_size`` or ``input_parameters`` will not be used and may cause errors if provided.
+- The **input tensor shape** must match the layer's state space size:
   ``len(layer.output_keys)`` (or ``[batch, len(output_keys)]``).
+
+
+Key input/output dimensions
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The principal difference is that in amplitude encoding, the number of inputs is conditioned by the number of photons and modes.
+The input dimension must equal the number of Fock states, given by ``num_states = len(layer.output_keys)``.
+Mathematically, the number of Fock states is:
+
+**C(n_modes + n_photons - 1, n_photons)**
+
+where C denotes the binomial coefficient "n choose k", also written as **(n_modes + n_photons - 1) choose n_photons**.
+
+This combinatorial formula gives the dimension of the Hilbert space for the photonic system.
 
 Minimal example (amplitudes out)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -206,72 +210,29 @@ Minimal example (amplitudes out)
     # Build (or sample) an input statevector compatible with the layer basis
     num_states = len(layer.output_keys)     # basis size for 2 photons over the modes
     psi_in = torch.randn(num_states, dtype=torch.complex64)
-    psi_in = psi_in / psi_in.norm()         # normalize
+    psi_in = psi_in / psi_in.norm()         # normalize - important to avoid exploding norms
 
     # Forward: returns complex amplitudes after the circuit
     psi_out = layer(psi_in)
 
-Batching amplitudes
-^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-    import torch
-
-    B = 8
-    num_states = len(layer.output_keys)
-    psi_batch = torch.randn(B, num_states, dtype=torch.complex64)
-    psi_batch = psi_batch / psi_batch.norm(dim=1, keepdim=True)
-
-    amps_out = layer(psi_batch)  # shape: [B, num_states]
-
-Probabilities or expectations from amplitudes
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-If you want classical outputs (e.g., probabilities) from amplitude-encoded
-inputs, use the corresponding measurement strategy:
-
-.. code-block:: python
-
-    from merlin.measurement import MeasurementStrategy
-
-    layer_probs = QuantumLayer(
-        circuit=circuit,
-        n_photons=2,
-        amplitude_encoding=True,
-        measurement_strategy=MeasurementStrategy.PROBABILITIES
-    )
-
-    probs = layer_probs(psi_in)  # shape: [num_states]
-
-    # Or mode-level expectations
-    layer_modes = QuantumLayer(
-        circuit=circuit,
-        n_photons=2,
-        amplitude_encoding=True,
-        measurement_strategy=MeasurementStrategy.MODE_EXPECTATIONS
-    )
-
-    mode_exp = layer_modes(psi_in)  # shape: [n_modes]
-
 Detectors, noise, and shots
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- With :data:`~merlin.measurement.MeasurementStrategy.AMPLITUDES`, the layer
+- With :data:`~merlin.measurement.MeasurementStrategy.AMPLITUDES`, only strong simulation is possible. Hence, the layer
   **bypasses** detectors and noise; ``shots`` must be unset or zero.
 - With probability-like strategies, detector/noise models (if present in a
   :class:`perceval.Experiment`) are applied *after* converting amplitudes to
   probabilities; shot sampling is supported when compatible.
 
-Interoperability checklist
-^^^^^^^^^^^^^^^^^^^^^^^^^^
+Quantum systems interoperability requirements
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 - The amplitude vector must be **compatible with the basis** used by the layer.
-  Check :pyattr:`QuantumLayer.output_keys` to see state ordering.
-- Normalize your amplitude inputs to avoid exploding norms.
+  Check ``layer.output_keys`` to see state ordering.
+- Always normalize your amplitude inputs to ensure proper probability mass and avoid unstable gradients.
 
-Choosing Between Angle and Amplitude
-------------------------------------
+Encodings Key Differences
+-------------------------
 
 +------------------------+----------------------------+----------------------------------+
 | Aspect                 | Angle Encoding             | Amplitude Encoding               |
@@ -284,11 +245,12 @@ Choosing Between Angle and Amplitude
 | Setup knobs            | ``add_angle_encoding(...)``| ``amplitude_encoding=True``,     |
 |                        | scales, multiple prefixes  | ``n_photons``                    |
 +------------------------+----------------------------+----------------------------------+
-| Typical use            | Feature maps, kernels,     | Passing prepared quantum states  |
-|                        | hybrid NN layers           | through a photonic circuit       |
+| Typical use            | Feature maps, kernels,     | Providing a prepared quantum     |
+|                        | hybrid NN layers           | state as input to a photonic     |
+|                        |                            | circuit                          |
 +------------------------+----------------------------+----------------------------------+
-| Measurement options    | Probabilities, modes,      | Amplitudes (bypass detectors) or |
-|                        | amplitudes (sim-only)      | probabilities/modes              |
+| Measurement options    | Probabilities, modes,      | Probabilities, modes,            |
+|                        | amplitudes (sim-only)      | amplitudes (sim-only)            |
 +------------------------+----------------------------+----------------------------------+
 
 Troubleshooting
@@ -296,9 +258,9 @@ Troubleshooting
 
 - **Shape errors (angle encoding)**: Ensure ``input_size`` equals the number of
   features you feed into the layer and matches the encoding specification
-  (number of encoded modes and prefixes).
+  (number of input phase shifters and prefixes).
 - **Too many features**: If you attempt to encode more features than modes in
-  your encoding stage, reduce features or expand the circuit's encoding modes.
+  your encoding stage, reduce features using dimensionality reduction techniques such as PCA or UMAP, or expand the circuit's encoding modes.
 - **Shape errors (amplitude encoding)**: The amplitude vector length must match
   the layer basis size: ``len(layer.output_keys)``. For batching, use
   ``[batch, len(output_keys)]``.
@@ -311,8 +273,8 @@ Troubleshooting
 Complete Examples
 -----------------
 
-Angle encoding with builder + probabilities
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Angle encoding with builder and probabilities out
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: python
 
@@ -385,4 +347,19 @@ Amplitude encoding with probabilities out
 
     probs = layer(psi_in)   # classical probabilities
 
+Measurement Strategies (Output Options)
+---------------------------------------
 
+Both angle and amplitude encoding support the following output measurement strategies:
+
+- :data:`~merlin.measurement.MeasurementStrategy.PROBABILITIES` (default):
+  returns a probability vector aligned with ``layer.output_keys``.
+- :data:`~merlin.measurement.MeasurementStrategy.MODE_EXPECTATIONS`:
+  returns per-mode expected photon counts.
+- :data:`~merlin.measurement.MeasurementStrategy.AMPLITUDES`:
+  returns complex amplitudes (simulation-only; bypasses detectors and noise).
+
+References
+----------
+
+Tak Hur et al., "Quantum convolutional neural network for classical data classification", 2022. https://arxiv.org/abs/2108.00661
