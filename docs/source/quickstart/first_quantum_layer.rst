@@ -17,7 +17,7 @@ Once the foundations are in place, we show how to reuse the same circuit through
 
 .. figure:: ../_static/img/diagrams.png
    :align: center
-   :width: 600px
+   :width: 800px
    :alt: Quantum Layer
 
 
