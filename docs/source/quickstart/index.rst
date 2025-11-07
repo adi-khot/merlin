@@ -11,5 +11,5 @@ Quickstart
    :caption: Table of Contents
 
    installation
-   basic_concepts
    first_quantum_layer
+   basic_concepts

@@ -10,11 +10,8 @@ Notebooks
    :maxdepth: 1
    :caption: Table of Contents
 
+   FirstQuantumLayers
+   Kernels
    iris_classification
-   QLLM_fine_tuning
-   quantum_reservoir
-   VQC_implementation
-   expressive_power_of_the_VQC
-   gaussian_kernel_with_quantum
-   Train_img2img_turbo
+    
 

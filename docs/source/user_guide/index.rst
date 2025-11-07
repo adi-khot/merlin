@@ -7,7 +7,7 @@ User Guide
 ==========
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 3
    :caption: Table of Contents
 
    layer
@@ -21,3 +21,6 @@ User Guide
    computation_space
    quantum_bridge
    kernels
+   quantum_layers
+   remote_processing
+   other_algorithms
