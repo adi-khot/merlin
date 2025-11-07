@@ -135,5 +135,4 @@ Shape & parameter checklist
 
 - **Pooling** (Section C):
   - Stand-alone: feed a tensor with width ``len(match_indices)+len(exclude_indices)``.
-  - End-to-end: place :class:`PoolingFeedForward` between a producer and a consumer
-    of amplitudes defined on matching mode spaces.
+  - End-to-end: place :class:`PoolingFeedForward` between a producer and a consumer of amplitudes defined on matching mode spaces.
