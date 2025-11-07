@@ -181,9 +181,7 @@ The principal difference is that in amplitude encoding, the number of inputs is 
 The input dimension must equal the number of Fock states, given by ``num_states = len(layer.output_keys)``.
 Mathematically, the number of Fock states is:
 
-**C(n_modes + n_photons - 1, n_photons)**
-
-where C denotes the binomial coefficient "n choose k", also written as **(n_modes + n_photons - 1) choose n_photons**.
+**(n_modes + n_photons - 1) choose n_photons**
 
 This combinatorial formula gives the dimension of the Hilbert space for the photonic system.
 
@@ -238,6 +236,9 @@ Encodings Key Differences
 | Aspect                 | Angle Encoding             | Amplitude Encoding               |
 +========================+============================+==================================+
 | Input to ``forward``   | Real features ``x``        | Complex statevector amplitudes   |
++------------------------+----------------------------+----------------------------------+
+| Number of inputs       | User-defined               | Fixed by n_modes and n_photons  |
+|                        | (``input_size``)           | (combinatorial formula)          |
 +------------------------+----------------------------+----------------------------------+
 | Circuit dependence     | Features set parameters    | State defines input quantum      |
 |                        | (phases/angles)            | state to propagate               |
@@ -350,7 +351,7 @@ Amplitude encoding with probabilities out
 Measurement Strategies (Output Options)
 ---------------------------------------
 
-Both angle and amplitude encoding support the following output measurement strategies:
+Both angle and amplitude encoding support the following output measurement strategies. For more details, see :doc:`measurement_strategy`.
 
 - :data:`~merlin.measurement.MeasurementStrategy.PROBABILITIES` (default):
   returns a probability vector aligned with ``layer.output_keys``.
