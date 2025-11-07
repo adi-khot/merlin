@@ -288,7 +288,12 @@ class QuantumLayer(nn.Module):
 
         # computation_space management - default is UNBUNCHED except if overridden by deprecated no_bunching
         if computation_space is None:
-            computation_space_value = ComputationSpace.default(no_bunching=no_bunching)
+            if no_bunching is None:
+                computation_space_value = ComputationSpace.UNBUNCHED
+            else:
+                computation_space_value = ComputationSpace.default(
+                    no_bunching=no_bunching
+                )
         else:
             computation_space_value = ComputationSpace.coerce(computation_space)
         # if no_bunching is provided, check consistency with ComputationSpace
@@ -405,7 +410,7 @@ class QuantumLayer(nn.Module):
         # Detectors are ignored if ComputationSpace is not FOCK
         if (
             self._has_custom_detectors
-            and not self.computation_space == ComputationSpace.FOCK
+            and self.computation_space is not ComputationSpace.FOCK
         ):
             self._detectors = [pcvl.Detector.pnr()] * resolved_circuit.m
             warnings.warn(
@@ -1225,7 +1230,7 @@ class QuantumLayer(nn.Module):
     def simple(
         cls,
         input_size: int,
-        n_params: int = 100,
+        n_params: int = 90,
         output_size: int | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,

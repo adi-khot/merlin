@@ -134,8 +134,8 @@ class TestOutputMappingIntegration:
             x = torch.rand(2, 2, requires_grad=True)
             output = model(x)
 
-            if output.dtype == torch.complex64:
-                output = output.to(torch.float32)
+            # mse_loss is a real loss so let us work on real
+            output = output.real
 
             # Use MSE loss instead of sum for better gradient flow
             target = torch.ones_like(output)

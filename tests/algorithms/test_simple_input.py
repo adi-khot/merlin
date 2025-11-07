@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import inspect
-import os
-from pathlib import Path
 
 import pytest
 import torch
@@ -10,17 +8,6 @@ import torch.nn as nn
 
 from merlin import Probabilities, QuantumLayer
 from merlin.utils.grouping import ModGrouping
-
-_PCVL_HOME = Path(__file__).resolve().parents[2] / ".pcvl_home"
-(
-    _PCVL_HOME / "Library" / "Application Support" / "perceval-quandela" / "job_group"
-).mkdir(parents=True, exist_ok=True)
-os.environ["HOME"] = str(_PCVL_HOME)
-
-
-@pytest.fixture(autouse=True)
-def perceval_home(monkeypatch):
-    monkeypatch.setenv("HOME", str(_PCVL_HOME))
 
 
 @pytest.fixture
@@ -41,7 +28,6 @@ def test_none_strategy_without_output_size(quantum_layer_api):
 
     layer = QuantumLayer.simple(
         input_size=3,
-        n_params=60,
         dtype=torch.float32,
     )
     base = _unwrap(layer)
@@ -58,13 +44,11 @@ def test_none_strategy_with_matching_output_size(quantum_layer_api):
 
     reference_layer = QuantumLayer.simple(
         input_size=3,
-        n_params=60,
     )
     dist_size = _unwrap(reference_layer).output_size
 
     layer = QuantumLayer.simple(
         input_size=3,
-        n_params=60,
         output_size=dist_size,
     )
 
@@ -81,7 +65,6 @@ def test_simple_groups_output_when_requested(quantum_layer_api):
     target_size = 16
     layer = QuantumLayer.simple(
         input_size=3,
-        n_params=40,
         output_size=target_size,
     )
 
@@ -100,7 +83,6 @@ def test_linear_strategy_creates_linear_mapping(quantum_layer_api):
 
     layer = QuantumLayer.simple(
         input_size=3,
-        n_params=60,
     )
     model = nn.Sequential(layer, nn.Linear(layer.output_size, 5))
 
@@ -204,7 +186,7 @@ def test_simple_allocates_full_mzi_pairs(quantum_layer_api):
 
 def test_gradient_flow_for_strategies(quantum_layer_api):
     QuantumLayer = quantum_layer_api
-    nb_params = 40
+    nb_params = 90
 
     layer = QuantumLayer.simple(
         input_size=3,
@@ -258,7 +240,6 @@ def test_quantum_layer_simple_raises_when_input_exceeds_modes(quantum_layer_api)
     ):
         QuantumLayer.simple(
             input_size=12,
-            n_params=30,
         )
 
 
@@ -267,7 +248,6 @@ def test_batch_shapes_and_probabilities(quantum_layer_api):
 
     layer = QuantumLayer.simple(
         input_size=4,
-        n_params=80,
     )
 
     for batch_size in [1, 5, 16]:
@@ -284,7 +264,6 @@ def test_dtype_propagation(quantum_layer_api):
     for dtype in (torch.float32, torch.float64):
         layer = QuantumLayer.simple(
             input_size=3,
-            n_params=60,
             dtype=dtype,
         )
 
@@ -302,7 +281,6 @@ def test_circuit_and_output_size_access(quantum_layer_api):
 
     simple_layer = QuantumLayer.simple(
         input_size=3,
-        n_params=60,
     )
     circuit = simple_layer.circuit
     output_size = simple_layer.output_size
@@ -310,7 +288,7 @@ def test_circuit_and_output_size_access(quantum_layer_api):
     assert circuit == simple_layer.quantum_layer.circuit
     assert output_size == simple_layer.quantum_layer.output_size
 
-    simple_layer = QuantumLayer.simple(input_size=3, n_params=60, output_size=3)
+    simple_layer = QuantumLayer.simple(input_size=3, output_size=3)
     output_size = simple_layer.output_size
     assert output_size == 3
     assert output_size != simple_layer.quantum_layer.output_size

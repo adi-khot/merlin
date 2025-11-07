@@ -26,6 +26,7 @@ import pytest
 import torch
 
 import merlin as ML
+from merlin.core.computation_space import ComputationSpace
 from merlin.measurement.strategies import MeasurementStrategy
 
 
@@ -87,7 +88,6 @@ class TestQuantumLayerMeasurementStrategy:
             trainable_parameters=[],
             input_parameters=["px"],
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
-            no_bunching=True,
         )
         x = torch.rand(2, 2, requires_grad=True)
         output = layer(x)
@@ -107,7 +107,6 @@ class TestQuantumLayerMeasurementStrategy:
             trainable_parameters=[],
             input_parameters=["px"],
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
-            no_bunching=True,
         )
 
         assert layer.input_size == 2
@@ -129,7 +128,6 @@ class TestQuantumLayerMeasurementStrategy:
             trainable_parameters=[],
             input_parameters=["px"],
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
-            no_bunching=True,
         )
 
         assert layer.input_size == 2
@@ -192,7 +190,6 @@ class TestQuantumLayerMeasurementStrategy:
             trainable_parameters=[],
             input_parameters=["px"],
             measurement_strategy=MeasurementStrategy.PROBABILITIES,
-            no_bunching=True,
         )
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 2))
         x = torch.rand(2, 2, requires_grad=True)
@@ -240,7 +237,6 @@ class TestQuantumLayerMeasurementStrategy:
             n_photons=n_photons,
             builder=builder,
             measurement_strategy=MeasurementStrategy.MODE_EXPECTATIONS,
-            no_bunching=True,
         )
         output = layer(x)
         assert output.shape == (2, n_modes)
@@ -260,7 +256,7 @@ class TestQuantumLayerMeasurementStrategy:
             input_state=[2, 1, 0],
             builder=builder,
             measurement_strategy=MeasurementStrategy.MODE_EXPECTATIONS,
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
         output = layer(x)
         assert output.shape == (2, n_modes)
@@ -306,7 +302,6 @@ class TestQuantumLayerMeasurementStrategy:
             trainable_parameters=[],
             input_parameters=["px"],
             measurement_strategy=MeasurementStrategy.MODE_EXPECTATIONS,
-            no_bunching=True,
         )
         x = torch.rand(2, 2, requires_grad=True)
         output = layer(x)
@@ -374,7 +369,6 @@ class TestQuantumLayerMeasurementStrategy:
             trainable_parameters=[],
             input_parameters=["px"],
             measurement_strategy=MeasurementStrategy.AMPLITUDES,
-            no_bunching=True,
         )
         x = torch.rand(2, 2, requires_grad=True)
         output = layer(x)

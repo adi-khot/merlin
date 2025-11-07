@@ -302,6 +302,8 @@ def test_computation_space_selector(make_layer):
         make_layer(amplitude_encoding=False, computation_space="invalid")
 
     with warnings.catch_warnings(record=True) as caught:
+        # don't fail because of the DeprecationWarning
+        warnings.filterwarnings("default", category=DeprecationWarning)
         with pytest.raises(
             ValueError,
             match="Incompatible 'no_bunching' value with selected 'computation_space'.",
@@ -312,7 +314,7 @@ def test_computation_space_selector(make_layer):
                 no_bunching=True,
             )
     # and a warning should also be raised about no_bunching being deprecated
-    assert caught
+    assert len(caught) == 1
 
 
 def test_computation_space_consistency_no_warning(make_layer):

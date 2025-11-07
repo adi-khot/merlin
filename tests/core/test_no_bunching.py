@@ -29,6 +29,7 @@ import math
 import torch
 
 from merlin.algorithms.layer import QuantumLayer
+from merlin.core.computation_space import ComputationSpace
 from merlin.core.generators import (
     CircuitGenerator,
     CircuitType,
@@ -102,7 +103,7 @@ class TestNoBunchingFunctionality:
             input_state=input_state,
             trainable_parameters=["phi_"],
             input_parameters=["pl"],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         # Create dummy parameters
@@ -145,7 +146,7 @@ class TestNoBunchingFunctionality:
             input_state=input_state,
             trainable_parameters=["phi_"],
             input_parameters=["pl"],
-            no_bunching=True,
+            computation_space=ComputationSpace.UNBUNCHED,
         )
 
         # Create dummy parameters
@@ -190,7 +191,9 @@ class TestNoBunchingFunctionality:
                 trainable_parameters=["phi_"],
                 input_parameters=["pl"],
                 measurement_strategy=MeasurementStrategy.PROBABILITIES,
-                no_bunching=no_bunching,
+                computation_space=ComputationSpace.UNBUNCHED
+                if no_bunching
+                else ComputationSpace.FOCK,
             )
 
             # Create dummy parameters

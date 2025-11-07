@@ -79,8 +79,8 @@ def test_2ps_1tensor_circ_to_torch(circuit_size):
 
     loss = torch_tensor.real.sum()
     loss.backward()
-    expected_gradx = np.real(1j * np.exp(1j * float(tensor_p[0])))
-    expected_grady = np.real(1j * np.exp(1j * float(tensor_p[1])))
+    expected_gradx = np.real(1j * np.exp(1j * float(tensor_p[0].detach())))
+    expected_grady = np.real(1j * np.exp(1j * float(tensor_p[1].detach())))
 
     assert torch.allclose(
         tensor_p.grad,
@@ -136,7 +136,7 @@ def test_bs_to_torch(bs_type):
 
     # compute unitary at the initial parameter value from perceval
     comp_param = c_bs.get_parameters()[0]
-    comp_param.set_value(param_theta)
+    comp_param.set_value(param_theta.detach().item())
     exptd_u = torch.tensor(c_bs.compute_unitary(), dtype=torch.complex64)
 
     torch.allclose(torch_tensor, exptd_u)
@@ -157,7 +157,7 @@ def test_non_param_comp_to_torch(component):
     assert torch_tensor.shape == torch.Size(2 * [circ.m])
 
     comp_param = circ.get_parameters()[0]
-    comp_param.set_value(params[comp_param.name])
+    comp_param.set_value(params[comp_param.name].detach().item())
     exptd_u = torch.tensor(circ.compute_unitary(), dtype=torch.complex64)
     torch.allclose(torch_tensor, exptd_u)
 
@@ -181,7 +181,7 @@ def test_mixed_comps():
     assert torch_tensor.dim() == 2  # single element tensor
 
     for each_param in circ.get_parameters():
-        each_param.set_value(params[each_param.name])
+        each_param.set_value(params[each_param.name].detach().item())
     exptd_u = torch.tensor(circ.compute_unitary(), dtype=torch.complex64)
 
     torch.allclose(torch_tensor, exptd_u)
@@ -204,7 +204,7 @@ def test_complex_circuit():
     assert torch_tensor.dim() == 2
 
     for each_param in circ.get_parameters():
-        each_param.set_value(params[each_param.name])
+        each_param.set_value(params[each_param.name].detach().item())
     exptd_u = torch.tensor(circ.compute_unitary(), dtype=torch.complex64)
 
     torch.allclose(torch_tensor, exptd_u)
@@ -221,7 +221,7 @@ def test_torch_input():
     assert torch_tensor.dim() == 2
 
     param_name = c_ps.get_parameters()[0]
-    param_name.set_value(params[0])
+    param_name.set_value(params[0].detach().item())
     exptd_u = torch.tensor(c_ps.compute_unitary(), dtype=torch.complex64)
 
     torch.allclose(torch_tensor, exptd_u)
@@ -240,7 +240,7 @@ def test_torch_input_batch_ps():
 
     param_name = c_ps.get_parameters()[0]
     for i in range(len(params)):
-        param_name.set_value(params[0])
+        param_name.set_value(params[i].detach().item())
         exptd_u = torch.tensor(c_ps.compute_unitary(), dtype=torch.complex64)
         torch.allclose(torch_tensor[i], exptd_u)
 
@@ -258,7 +258,7 @@ def test_torch_input_batch_bs(circuit_size):
 
     param_name = c_ps.get_parameters()[0]
     for i in range(len(params)):
-        param_name.set_value(params[0])
+        param_name.set_value(params[i].detach().item())
         exptd_u = torch.tensor(c_ps.compute_unitary(), dtype=torch.complex64)
         torch.allclose(torch_tensor[i], exptd_u)
 
@@ -274,7 +274,7 @@ def test_psfixed_to_torch():
     assert torch_tensor.dim() == 2
 
     comp_param = c_ps.get_parameters()[0]
-    comp_param.set_value(params[comp_param.name])
+    comp_param.set_value(params[comp_param.name].detach().item())
     exptd_u = torch.tensor(c_ps.compute_unitary(), dtype=torch.complex64)
 
     torch.allclose(torch_tensor, exptd_u)
@@ -297,7 +297,7 @@ def test_circuit_with_subcircuit():
     assert torch_tensor.dim() == 2
 
     for each_param in circ.get_parameters():
-        each_param.set_value(params[each_param.name])
+        each_param.set_value(params[each_param.name].detach().item())
     exptd_u = torch.tensor(circ.compute_unitary(), dtype=torch.complex64)
 
     torch.allclose(torch_tensor, exptd_u)
@@ -319,7 +319,7 @@ def test_circuit_with_perm_and_batch():
 
     for batch_idx in range(params["x"].shape[0]):
         for each_param in circ.get_parameters():
-            each_param.set_value(params[each_param.name][batch_idx])
+            each_param.set_value(params[each_param.name][batch_idx].detach().item())
         exptd_u = torch.tensor(circ.compute_unitary(), dtype=torch.complex64)
 
         torch.allclose(torch_tensor[batch_idx], exptd_u)

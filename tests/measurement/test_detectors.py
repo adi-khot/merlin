@@ -33,6 +33,7 @@ import torch
 from perceval.algorithm.sampler import Sampler
 
 import merlin as ML
+from merlin.core.computation_space import ComputationSpace
 
 N_MODES = 8
 INPUT_STATE = [1, 0, 1, 0, 1, 0, 1, 0]
@@ -140,6 +141,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[1, 0, 1],
+            computation_space=ComputationSpace.FOCK,
         )
 
         output = layer()
@@ -166,6 +168,7 @@ class TestDetectorsWithQuantumLayer:
                 experiment=experiment,
                 input_state=[1, 0],
                 measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
+                computation_space=ComputationSpace.FOCK,
             )
 
         # No error with MeasurementStrategy PROBABILITIES or MODE_EXPECTATIONS
@@ -174,12 +177,14 @@ class TestDetectorsWithQuantumLayer:
             experiment=experiment,
             input_state=[1, 0],
             measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+            computation_space=ComputationSpace.FOCK,
         )
         ML.QuantumLayer(
             input_size=0,
             experiment=experiment,
             input_state=[1, 0],
             measurement_strategy=ML.MeasurementStrategy.MODE_EXPECTATIONS,
+            computation_space=ComputationSpace.FOCK,
         )
 
     def test_pnr_detectors_match_default_distribution(self):
@@ -190,7 +195,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             circuit=circuit,
             input_state=[1, 1],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         experiment = pcvl.Experiment(circuit)
@@ -201,7 +206,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[1, 1],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         probs_default = default_layer()
@@ -224,14 +229,14 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[4, 0],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         layer_threshold = ML.QuantumLayer(
             input_size=0,
             experiment=experiment_threshold,
             input_state=[4, 0],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         output = layer()
@@ -262,7 +267,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[3, 4, 1, 0],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         output = layer()
@@ -289,7 +294,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[1, 1, 1, 0],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         output = layer()
@@ -335,7 +340,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[0, 0, 2],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         output = layer()
@@ -358,7 +363,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=input_state,
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         output = layer().squeeze(0)
@@ -397,7 +402,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=input_state,
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         output = layer().squeeze(0)
@@ -431,7 +436,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             circuit=circuit,
             input_state=input_state,
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         pnr_output_size = pnr_layer.output_size
@@ -446,7 +451,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=input_state,
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         threshold_output_size = threshold_layer.output_size
@@ -472,6 +477,7 @@ class TestDetectorsWithQuantumLayer:
             input_state=[1, 0],
             input_parameters=["phi"],
             trainable_parameters=["theta"],
+            computation_space=ComputationSpace.FOCK,
         )
         model = torch.nn.Sequential(layer, torch.nn.Linear(layer.output_size, 1))
 
@@ -501,7 +507,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=input_state,
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         output = layer().squeeze(0)
@@ -537,7 +543,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=exp,
             input_state=[1, 1, 1, 1],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         layer_probs = layer()
@@ -590,19 +596,19 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=experiment,
             input_state=[1, 1, 1, 1],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
         layer_unbunched = ML.QuantumLayer(
             input_size=0,
             experiment=experiment,
             input_state=[1, 1, 1, 1],
-            no_bunching=True,
+            computation_space=ComputationSpace.UNBUNCHED,
         )
         ML.QuantumLayer(
             input_size=0,
             experiment=experiment_pnr_detector,
             input_state=[1, 1, 1, 1],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
 
         with pytest.warns(UserWarning):
@@ -610,33 +616,33 @@ class TestDetectorsWithQuantumLayer:
                 input_size=0,
                 experiment=experiment_pnr_detector,
                 input_state=[1, 1, 1, 1],
-                no_bunching=True,
+                computation_space=ComputationSpace.UNBUNCHED,
             )
         ML.QuantumLayer(
             input_size=0,
             experiment=experiment_threshold_detector,
             input_state=[1, 1, 1, 1],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
         with pytest.warns(UserWarning):
             layer_threshold_unbunched = ML.QuantumLayer(
                 input_size=0,
                 experiment=experiment_threshold_detector,
                 input_state=[1, 1, 1, 1],
-                no_bunching=True,
+                computation_space=ComputationSpace.UNBUNCHED,
             )
         ML.QuantumLayer(
             input_size=0,
             experiment=experiment_ppnr_detector,
             input_state=[1, 1, 1, 1],
-            no_bunching=False,
+            computation_space=ComputationSpace.FOCK,
         )
         with pytest.warns(UserWarning):
             layer_ppnr_unbunched = ML.QuantumLayer(
                 input_size=0,
                 experiment=experiment_ppnr_detector,
                 input_state=[1, 1, 1, 1],
-                no_bunching=True,
+                computation_space=ComputationSpace.UNBUNCHED,
             )
 
         result_unbunched = layer_unbunched()
@@ -666,6 +672,7 @@ class TestDetectorsWithQuantumLayer:
             input_size=0,
             experiment=layer_experiment,
             input_state=INPUT_STATE,
+            computation_space=ComputationSpace.FOCK,
         )
         probabilities = layer().squeeze(0)
         keys = [_normalize_key(key) for key in layer.output_keys]
@@ -730,12 +737,14 @@ class TestDetectorsWithQuantumLayer:
             experiment=_build_experiment(detector_specs),
             input_state=INPUT_STATE,
             measurement_strategy=ML.MeasurementStrategy.MODE_EXPECTATIONS,
+            computation_space=ComputationSpace.FOCK,
         )
         expectations = expectation_layer().squeeze(0)
         assert [_normalize_key(key) for key in expectation_layer.output_keys] == keys
 
         keys_tensor = torch.tensor(keys, dtype=probabilities.dtype)
         reference_expectations = reference_probabilities @ keys_tensor
+
         assert torch.allclose(expectations, reference_expectations, atol=1e-5)
 
     def test_threshold_detectors_preserve_unbunched_distribution(self):
@@ -744,12 +753,13 @@ class TestDetectorsWithQuantumLayer:
         experiment_threshold = _build_experiment(threshold_specs)
         experiment_reference = _build_experiment([None] * N_MODES)
 
-        layer_threshold = ML.QuantumLayer(
-            input_size=0,
-            experiment=experiment_threshold,
-            input_state=INPUT_STATE,
-            computation_space=ML.ComputationSpace.UNBUNCHED,
-        )
+        with pytest.warns():
+            layer_threshold = ML.QuantumLayer(
+                input_size=0,
+                experiment=experiment_threshold,
+                input_state=INPUT_STATE,
+                computation_space=ML.ComputationSpace.UNBUNCHED,
+            )
         layer_reference = ML.QuantumLayer(
             input_size=0,
             experiment=experiment_reference,
