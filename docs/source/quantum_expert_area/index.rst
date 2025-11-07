@@ -13,3 +13,5 @@ Quantum Expert Area
    architectures
    SLOS
    experiment_support
+   quantum_bridge
+   kernels

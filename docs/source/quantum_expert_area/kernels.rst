@@ -1,6 +1,6 @@
-==============================
-Implementation details: kernels
-==============================
+==================================
+Kernels: Advanced Guide and Theory
+==================================
 
 This page dives into the implementation of MerLin's photonic kernel stack,
 backing the API documented in :mod:`merlin.algorithms.kernels`.

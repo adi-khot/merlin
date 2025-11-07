@@ -88,19 +88,19 @@ Interactive Exploration
 
 **Jupyter Notebooks**:
 
-:doc:`../../notebooks/GanEtAl_VQC_fourier_series`
+:doc:`../notebooks/GanEtAl_VQC_fourier_series`
 
 This notebook provides a tutorial on how to train a variational quantum circuit to fit a 1D Fourier series.
 
-:doc:`../../notebooks/GanEtAl_VQC_classification`
+:doc:`../notebooks/GanEtAl_VQC_classification`
 
 This notebook provides a tutorial on how to use a photonic quantum circuit for binary classification tasks. It is also a good environment for you to experiment by varying several hyperparameters.
 
-:doc:`../../notebooks/GanEtAl_q_gaussian_kernel`
+:doc:`../notebooks/GanEtAl_q_gaussian_kernel`
 
 This notebook provides a tutorial on how to use a photonic quantum circuit as a Gaussian kernel sampler. It also provides the possibility of putting to the test your trained Gaussian kernel sampler on three basic classifying tasks and observe the results.
 
-:doc:`../../notebooks/GanEtAl_q_random_kitchen_sinks`
+:doc:`../notebooks/GanEtAl_q_random_kitchen_sinks`
 
 
 This notebook provides a tutorial on how to use a photonic quantum circuit to approximate the random kitchen sinks algorithm with or without training. It also allows you to experiment by varying several hyperparameters.

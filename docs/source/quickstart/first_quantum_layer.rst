@@ -8,9 +8,9 @@ This walkthrough mirrors the ``FirstQuantumLayers.ipynb`` notebook: we build and
 photonic layers that classify the Iris dataset. Along the way, we focus on three core
 concepts you will reuse in every project:
 
-- **Angle encoding** via :class:`~merlin.builder.circuit_builder.CircuitBuilder`.
-- **Measurement strategies** that turn photonic outcomes into classical tensors.
-- **Computation spaces** controlling how the simulator truncates Fock states.
+- **Angle encoding** via :class:`~merlin.builder.circuit_builder.CircuitBuilder`. See :doc:`../user_guide/angle_amplitude_encoding` for more details on input encoding with MerLin. 
+- **Output measurement strategies** that turn photonic outcomes into classical tensors. See :doc:`../user_guide/measurement_strategy`.
+- **Computation spaces** controlling how the simulator truncates Fock states. See :doc:`../user_guide/computation_space`.
 
 Once the foundations are in place, we show how to reuse the same circuit through a
 :class:`perceval.Experiment` for detector-aware execution.
@@ -129,9 +129,10 @@ Angle encoding highlights
   conventions.
 - Normalise your features to :math:`[-1, 1]` or :math:`[0, 1]` before feeding them into
   the layer so the implied rotations stay stable during training.
+- In this tutorial, we focus on angle encoding. Amplitude encoding is also available. More information can be found in the :doc:`../user_guide/angle_amplitude_encoding` documentation.
 
-Exploring measurement strategies
-================================
+Exploring output measurement strategies
+=======================================
 
 MerLin exposes three strategies: probabilities (default), per-mode expectations, and
 complex amplitudes (simulation only). Swap the strategy to pick the classical output
@@ -182,13 +183,12 @@ that best matches the rest of your model.
 Measurement strategy tips
 -------------------------
 
-- ``PROBABILITIES`` returns the full Fock distribution – ideal for attaching dense
-  classical heads or groupings.
+- ``PROBABILITIES`` returns the Fock state probability distribution – Ideal for attaching dense classical heads, simple linear probings or grouping strategies.
 - ``MODE_EXPECTATIONS`` compresses the outputs to one value per mode, reducing the
   number of classical weights you need downstream.
-- ``AMPLITUDES`` yields complex tensors and is restricted to noiseless simulations
-  without detectors or photon-loss models. Convert them with ``torch.view_as_real`` or
-  flatten real/imaginary parts before feeding the data to classical layers.
+- ``AMPLITUDES`` yields tensors with complex values and is restricted to noiseless simulations without detectors. Convert them with ``torch.view_as_real`` or flatten real/imaginary parts before feeding the data to classical layers.
+
+More informations on measurement strategies can be found here: :doc:`../user_guide/measurement_strategy`.
 
 Choosing a computation space
 ============================
@@ -277,7 +277,8 @@ Next steps
 
 - Swap out ``builder.add_superpositions`` or introduce additional entangling layers to
   explore deeper circuits.
-- Combine ``LexGrouping`` or ``ModGrouping`` modules to tailor the classical feature
+- Combine :class:`~merlin.utils.grouping.LexGrouping` or :class:`~merlin.utils.grouping.ModGrouping` modules to tailor the classical feature
   count to your downstream model.
 - Re-run the experiments with alternative computation spaces to benchmark accuracy vs.
   runtime trade-offs.
+- Take a look at the :doc:`../user_guide/index` for more detailed explanations.

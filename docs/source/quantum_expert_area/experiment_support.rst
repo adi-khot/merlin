@@ -7,11 +7,20 @@ Experiment Support
 Photonic experiments in `Perceval <https://perceval.quandela.net/>`_ bundle the elements of an optical circuit and its post-processing rules. MerLin uses this abstraction:
 passing a :class:`perceval.Experiment` to :class:`~merlin.algorithms.layer.QuantumLayer` or to :class:`~merlin.algorithms.kernels.FeatureMap` lets you specify how each optical mode should be measured.
 
-Both of the features presented below cannot be used if combined with ``MeasurementStrategy.AMPLITUDES`` because adding photon loss or detectors corresponds to performing a measurement of the quantum state. 
-This collapses the quantum state and is therefore incompatible with amplitude retrieval.
+Why use an Experiment?
+---------------
+
+- **Single source of truth** – The circuit and every detector live in one object
+  that can be shared across QuantumLayers or kernels.
+- **Detector customization** – You can mix photon-number-resolving (PNR),
+  threshold, or partially projected detectors mode-by-mode while keeping the
+  rest of the configuration identical.
+- **Photon-loss modelling** – Attach a :class:`perceval.NoiseModel` and MerLin
+  will propagate its brightness/transmittance parameters before any detector
+  logic, exposing photon loss events in the returned classical outcomes.
 
 Noisy Simulations
-=================
+-----------------
 
 Perceval’s `NoiseModel <https://perceval.quandela.net/docs/v1.0/reference/utils/noise_model.html>`_ stores photon-loss parameters that
 MerLin reads automatically. Assign it to the ``experiment.noise`` attribute with 
@@ -60,7 +69,7 @@ Usage
 The default value for brightness and transmittance during noise model initialization is 1.0.
 
 Detector Support
-================
+----------------
 
 Perceval's `Dectectors <https://perceval.quandela.net/docs/v1.0/reference/components/detector.html>`_ are used to detect the number of photons on each mode. Indeed, every detector detects for one mode. Perceval exposes several detector families:
 
@@ -130,3 +139,19 @@ Usage
     # Construct the training & test kernel matrices
     K_train = kernel(X_train)
     K_test = kernel(X_test, X_train)
+
+Practical notes
+===============
+
+- Experiments used with QuantumLayer **must be unitary** and cannot carry
+  Perceval heralding detectors.
+- If at least one detector is defined, the quantum layer needs to have ``ComputationSpace.FOCK`` (default value). Photon filtering and detector post-processing are incompatible.
+- Adding photon loss or detectors corresponds to performing a measurement of the quantum state. This collapses the quantum state and is therefore **incompatible with amplitude retrieval** (MeasurementStrategy.AMPLITUDES).
+- Provide either brightness, transmittance, or both. Any missing parameter is
+  treated as 1.0 so you can model source-only or circuit-only loss independently.
+- Detector assignments use standard Python indexing or the Perceval
+  ``.detectors`` mapping interface. Out-of-range indices raise the original
+  Perceval error.
+- Experiments are reusable: the same object can be passed to
+  :class:`~merlin.algorithms.kernels.FeatureMap` or multiple QuantumLayers to
+  guarantee consistent measurement semantics.

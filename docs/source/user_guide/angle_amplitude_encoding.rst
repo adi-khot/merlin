@@ -1,5 +1,6 @@
 .. _angle_and_amplitude_encoding:
 
+=====================================
 Angle Encoding and Amplitude Encoding
 =====================================
 

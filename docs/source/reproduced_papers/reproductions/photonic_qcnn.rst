@@ -88,7 +88,7 @@ Interactive Exploration
 
 **Jupyter Notebooks**:
 
-:doc:`../../notebooks/photonic_QCNN`
+:doc:`../notebooks/photonic_QCNN`
 
 This notebook not only defines all components of the PQCNN, it allows the user to explore with certain hyperparameters and optimize the model for binary classification on MNIST (0 vs 1). Furthermore, it then compares the performance with the one of a classical CNN.
 

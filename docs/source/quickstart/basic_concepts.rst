@@ -120,7 +120,7 @@ The initial distribution of photons affects quantum behavior:
 
 Different patterns create different types of quantum interference and correlations.
 
-For detailed encoding strategies and optimization techniques, see :doc:`../user_guide/encoding`.
+For detailed encoding strategies and optimization techniques, see :doc:`../user_guide/angle_amplitude_encoding`.
 
 4. Measurement Strategy: Quantum-to-Classical Conversion
 ==================================================

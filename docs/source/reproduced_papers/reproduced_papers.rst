@@ -8,7 +8,7 @@ MerLin enables researchers to reproduce and build upon published quantum machine
 This section provides implementations of key papers in the quantum ML field, complete with working code, analysis, and extensions.
 
 Overview
-========
+--------
 
 Each reproduction may include:
 
@@ -23,7 +23,7 @@ Each reproduction may include:
    All reproductions are implemented using MerLin's high-level API, making them accessible to ML practitioners without deep quantum expertise.
 
 Available Reproductions
-=======================
+-----------------------
 
 .. list-table::
    :header-rows: 1
@@ -56,7 +56,7 @@ Available Reproductions
      - Photonic vision model
 
 Contributing Reproductions
-==========================
+--------------------------
 
 We welcome contributions of additional paper reproductions!
 
@@ -99,7 +99,7 @@ Contributors to reproductions are recognized in:
 * Academic citations in MerLin publications
 
 Upcoming Reproductions
-======================
+----------------------
 
 **Near-term (Q2 2025)**:
   *Currently accepting proposals*

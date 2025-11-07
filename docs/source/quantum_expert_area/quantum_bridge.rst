@@ -1,6 +1,6 @@
-==========================================
+=========================================
 Quantum Bridge: Advanced Guide and Theory
-==========================================
+=========================================
 
 .. Note about images:
    Images are located in quantum_expert_area/images/

@@ -1,6 +1,3 @@
-merlin package
-==============
-
 .. automodule:: merlin
    :members:
    :undoc-members:

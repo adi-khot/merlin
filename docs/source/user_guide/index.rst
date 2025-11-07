@@ -11,12 +11,10 @@ User Guide
    :caption: Table of Contents
 
    layer
-   quantum_layers
    angle_amplitude_encoding
-   output_mappings
-   experiment
+   measurement_strategy
    computation_space
    quantum_bridge
    kernels
    feed_forward
-   remote_processing
+   remote_execution

@@ -52,7 +52,7 @@ Key Contributions Reproduced
 Interactive Exploration
 =======================
 
-**Jupyter Notebook**: :doc:`../../notebooks/quantum_reservoir`
+**Jupyter Notebook**: :doc:`../notebooks/quantum_reservoir`
 
 The notebook provides:
 

@@ -1,17 +1,23 @@
 .. _quantum_layer:
 
+=======================
 QuantumLayer Essentials
 =======================
 
-The :class:`~merlin.algorithms.layer.QuantumLayer` is MerLin’s core building
-block for converting classical data into photonic probability distributions. It
-combines a Perceval circuit (or experiment), optional classical parameters, and
-detector logic into a single differentiable module.
+The :class:`~merlin.algorithms.layer.QuantumLayer` is MerLin’s core building block for integrating quantum computation, as a single module, in a machine learning pipeline. 
+It combines a Perceval photonic circuit (or experiment), optional classical parameters, and detector logic into a single differentiable module.
 
 ---------------
 Overview
 ---------------
 
+- **Autograd ready** – QuantumLayer exposes a PyTorch ``Module`` interface,
+  supports batching and differentiable forward passes, and plays nicely with
+  optimisers or higher-level architectures.
+- **Input encoding strategies** - Pick a data encoding method: angle or amplitude encoding.. See :doc:`./angle_amplitude_encoding` for more information.
+- **Output measurement strategies** – Select between probabilities, per-mode expectations,
+  or raw amplitudes through :class:`~merlin.measurement.strategies.MeasurementStrategy`.
+  The layer validates incompatible combinations (e.g. detectors with amplitude read-out). More information at :doc:`./measurement_strategy`.
 - **Multiple construction paths** – Build layers from
   the convenience :meth:`~merlin.algorithms.layer.QuantumLayer.simple` factory,
   a :class:`~merlin.builder.circuit_builder.CircuitBuilder`, a custom
@@ -21,12 +27,6 @@ Overview
 - **Photon-loss aware** – Experiments carrying a :class:`perceval.NoiseModel`
   trigger an automatic photon-loss transform so survival and loss outcomes share
   a single, normalised output distribution.
-- **Measurement strategies** – Select between probabilities, per-mode expectations,
-  or raw amplitudes through :class:`~merlin.measurement.strategies.MeasurementStrategy`.
-  The layer validates incompatible combinations (e.g. detectors with amplitude read-out).
-- **Autograd ready** – QuantumLayer exposes a PyTorch ``Module`` interface,
-  supports batching and differentiable forward passes, and plays nicely with
-  optimisers or higher-level architectures.
 
 -----------------------
 Initialisation recipes
@@ -48,7 +48,6 @@ learning experts without any prior knowledge in quantum machine learning.
        input_size=4,
        n_params=64,
        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
-       no_bunching=True,
    )
 
    x = torch.rand(16, 4)
@@ -57,10 +56,7 @@ learning experts without any prior knowledge in quantum machine learning.
 CircuitBuilder
 ~~~~~~~~~~~~~~
 
-Use MerLin’s :class:`CircuitBuilder` utilities to describe a circuit at a higher
-level. The builder records trainable and input parameter prefixes for you. This is
-an ideal tool for quantum machine learning experts who have do not have any experience 
-with Perceval.
+Use MerLin’s :class:`CircuitBuilder` utilities to describe a circuit at a higher level. The builder maintains a record of the trainable parameters and the parameters used as layer inputs. A prefix-based naming scheme separates trainable parameters from those used as layer inputs. This is an ideal tool for quantum machine learning experts who do not have any experience with Perceval.". More information in the CircuitBuilder API reference: :class:`~merlin.builder.circuit_builder.CircuitBuilder`
 
 .. code-block:: python
 
@@ -114,10 +110,7 @@ a good understanding of Perceval.
 Experiment-driven
 ~~~~~~~~~~~~~~~~~
 
-For detector-heavy workflows, configure a :class:`perceval.Experiment` and pass
-it directly. The layer inherits the circuit, detectors, and any photon-loss
-noise model you attached. This scheme
-is the one that gives the user the most options when utilizing a QuantumLayer.
+If you want to simulate a noise model or specify detectors characteristics, configure a :class:`perceval.Experiment` and pass it directly. The QuantumLayer inherits the circuit, detectors, and any photon-loss noise model you attached. This scheme is the one that gives the user the most options when utilizing a QuantumLayer.
 
 .. code-block:: python
 
@@ -164,15 +157,11 @@ Photon loss and detectors
 Notes
 -----------
 
-- ``input_state`` must match the number of circuit modes. When unspecified,
-  ``n_photons`` leads to an evenly spaced photon distribution (for instance, for dual-rail it
-  defaults to ``[1,0,1,0,...]``).
-- Sampling-based evaluations are available through ``shots`` and
-  ``sampling_method``; the default returns exact SLOS probabilities.
-- The layer registers trainable parameters (if any) with PyTorch so they appear
-  in ``layer.parameters()``.
+- ``input_state`` must match the number of circuit modes. When unspecified, the photons (denoted by ``n_photons``) are evenly distributed across the modes (for instance, for dual-rail it defaults to ``[1,0,1,0,...]``).
+- Both strong simulation (SLOS, which computes exact probabilities) and weak simulation (sampling) are supported. Sampling can be enabled using the ``shots`` and ``sampling_method`` parameters. See the :doc:`../quantum_expert_area/SLOS` for more information about strong and weak simulations.
+- The ``layer.parameters()`` method provides access to the trainable parameters (if any), just like any standard PyTorch layer.
 - Inspect ``layer.has_custom_noise_model`` and ``layer.output_keys`` to confirm
-  whether photon loss is active and how it alters the classical basis.
+  whether photon loss is active and how it alters the output distribution.
 
 -----------
 API Reference
