@@ -26,9 +26,11 @@ Tests for the main QuantumLayer class.
 
 import math
 
+import numpy as np
 import perceval as pcvl
 import pytest
 import torch
+from perceval import FFCircuitProvider
 
 import merlin as ML
 
@@ -80,6 +82,57 @@ class TestQuantumLayer:
                 input_size=0,
                 experiment=experiment,
                 input_state=[1],
+            )
+
+    def test_experiment_sequence_collapses_to_single_unitary(self):
+        """Experiments composed of multiple unitary components should collapse to a single circuit."""
+
+        experiment = pcvl.Experiment()
+        experiment.add(0, pcvl.BS())
+        experiment.add(0, pcvl.PS(pcvl.P("phi1")))
+        experiment.add(0, pcvl.BS())
+        experiment.add(0, pcvl.PS(pcvl.P("phi2")))
+
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 0],
+            trainable_parameters=["phi"],
+            measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+        )
+
+        expected = pcvl.Circuit(2)
+        expected.add(0, pcvl.BS())
+        expected.add(0, pcvl.PS(pcvl.P("phi1")))
+        expected.add(0, pcvl.BS())
+        expected.add(0, pcvl.PS(pcvl.P("phi2")))
+
+        for pname, val in {"phi1": 0.1, "phi2": 0.2}.items():
+            layer.circuit.param(pname).set_value(val)
+            expected.param(pname).set_value(val)
+
+        combined = np.array(layer.circuit.compute_unitary(), dtype=np.complex128)
+        target = np.array(expected.compute_unitary(), dtype=np.complex128)
+        assert np.allclose(combined, target, atol=1e-6)
+
+    def test_experiment_with_feedforward_not_supported(self):
+        """Experiments containing feed-forward components should be rejected."""
+
+        experiment = pcvl.Experiment()
+        experiment.add(0, pcvl.BS())
+        experiment.add(0, pcvl.Detector.pnr())
+        ff = FFCircuitProvider(1, 0, pcvl.Circuit(1))
+        experiment.add(0, ff)
+
+        with pytest.raises(
+            ValueError,
+            match="Feed-forward components are not supported inside a QuantumLayer experiment",
+        ):
+            ML.QuantumLayer(
+                input_size=0,
+                experiment=experiment,
+                input_state=[1, 0],
+                measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
             )
 
     def test_builder_based_layer_creation(self):

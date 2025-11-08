@@ -360,11 +360,23 @@ class QuantumLayer(nn.Module):
 
         if experiment is not None:
             if (
-                not experiment.is_unitary
-                or experiment.post_select_fn is not None
+                experiment.post_select_fn is not None
                 or experiment.heralds
                 or experiment.in_heralds
             ):
+                raise ValueError(
+                    "The provided experiment must not have post-selection or heralding."
+                )
+            if getattr(experiment, "has_feedforward", False):
+                raise ValueError(
+                    "Feed-forward components are not supported inside a QuantumLayer experiment."
+                )
+            has_td_attr = getattr(experiment, "has_td", None)
+            if callable(has_td_attr):
+                has_td = has_td_attr()
+            else:
+                has_td = bool(has_td_attr)
+            if has_td:
                 raise ValueError(
                     "The provided experiment must be unitary, and must not have post-selection or heralding."
                 )
@@ -429,10 +441,11 @@ class QuantumLayer(nn.Module):
                 UserWarning,
                 stacklevel=2,
             )
-        # Detector and NoiseModel not allowed with MeasurementStrategy.AMPLITUDES
+        # Noise models are incompatible with amplitude readout because amplitudes are computed assuming noiseless evolution
         if (
-            self._has_custom_detectors or self.has_custom_noise_model
-        ) and measurement_strategy == MeasurementStrategy.AMPLITUDES:
+            self.has_custom_noise_model
+            and measurement_strategy == MeasurementStrategy.AMPLITUDES
+        ):
             raise RuntimeError(
                 "measurement_strategy=MeasurementStrategy.AMPLITUDES cannot be used when Experiment contains at least one Detector or when it contains a defined NoiseModel."
             )
@@ -1070,6 +1083,8 @@ class QuantumLayer(nn.Module):
                 raise RuntimeError(
                     "Sampling cannot be applied when measurement_strategy=MeasurementStrategy.AMPLITUDES."
                 )
+            if self._has_custom_detectors:
+                return {"measure": amplitudes}
             results = amplitudes
 
         # Apply measurement mapping (returns tensor of shape [B, output_size])

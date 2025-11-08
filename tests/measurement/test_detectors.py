@@ -154,22 +154,23 @@ class TestDetectorsWithQuantumLayer:
             output[:, target_index], torch.ones_like(output[:, target_index])
         )
 
-    def test_amplitudes_strategy_rejected_with_detectors(self):
+    def test_amplitudes_strategy_with_detectors_returns_measurement_dict(self):
         circuit = pcvl.Circuit(2)
         experiment = pcvl.Experiment(circuit)
         experiment.detectors[0] = pcvl.Detector.threshold()
 
-        with pytest.raises(
-            RuntimeError,
-            match="cannot be used when Experiment contains at least one Detector",
-        ):
-            ML.QuantumLayer(
-                input_size=0,
-                experiment=experiment,
-                input_state=[1, 0],
-                measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
-                computation_space=ComputationSpace.FOCK,
-            )
+        layer = ML.QuantumLayer(
+            input_size=0,
+            experiment=experiment,
+            input_state=[1, 0],
+            measurement_strategy=ML.MeasurementStrategy.AMPLITUDES,
+            computation_space=ComputationSpace.FOCK,
+        )
+        output = layer()
+        assert isinstance(output, dict)
+        assert "measure" in output
+        assert torch.is_tensor(output["measure"])
+        assert output["measure"].shape[-1] == len(layer.output_keys)
 
         # No error with MeasurementStrategy PROBABILITIES or MODE_EXPECTATIONS
         ML.QuantumLayer(

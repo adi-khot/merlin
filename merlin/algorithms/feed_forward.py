@@ -1,11 +1,16 @@
+from collections.abc import Sequence
+from dataclasses import dataclass
 from itertools import product
 
 import perceval as pcvl
 import torch
 from perceval.components import BS, PS
+from perceval.components.feed_forward_configurator import FFCircuitProvider
+from perceval.components.linear_circuit import ACircuit
 
 from ..core.computation_space import ComputationSpace
 from ..core.generators import CircuitType, StateGenerator, StatePattern
+from ..measurement.detectors import DetectorTransform
 from ..measurement.strategies import MeasurementStrategy
 from .layer import QuantumLayer
 
@@ -556,6 +561,326 @@ class FeedForwardBlock(torch.nn.Module):
         # Update internal input size
         self.input_size = total_input_size
         print(f"New input size: {self.input_size}")
+
+
+@dataclass
+class FFStage:
+    unitary: pcvl.Circuit
+    measured_modes: tuple[int, ...]
+    detectors: list[pcvl.Detector | None]
+    provider: FFCircuitProvider | None
+
+
+@dataclass
+class StageRuntime:
+    pre_layer: QuantumLayer | None
+    detector_transform: DetectorTransform | None
+    conditional_layers: dict[tuple[int, ...], QuantumLayer]
+    measured_modes: tuple[int, ...]
+    provider: FFCircuitProvider | None
+
+
+class FeedForwardBlock2(torch.nn.Module):
+    """
+    Experimental feed-forward module built directly from a Perceval experiment.
+
+    It currently supports a single measurement stage (detectors) followed by one
+    :class:`perceval.components.feed_forward_configurator.FFCircuitProvider`.
+    The block returns a dictionary mapping each measurement outcome to the
+    probability distribution over the remaining optical modes.
+    """
+
+    def __init__(
+        self,
+        experiment: pcvl.Experiment,
+        *,
+        input_state: list[int] | pcvl.BasicState,
+        trainable_parameters: list[str] | None = None,
+        input_parameters: list[str] | None = None,
+        computation_space: ComputationSpace = ComputationSpace.FOCK,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ) -> None:
+        super().__init__()
+        self.device = device or torch.device("cpu")
+        self.dtype = dtype or torch.float32
+        self.computation_space = computation_space
+
+        self.stages = self._parse_experiment_stages(experiment)
+        if not self.stages:
+            raise ValueError(
+                "FeedForwardBlock2 could not identify any feed-forward stage in the provided experiment."
+            )
+
+        self.total_modes = experiment.circuit_size
+        self.n_photons = (
+            sum(input_state) if isinstance(input_state, list) else input_state.n
+        )
+        self._stage_runtimes: list[StageRuntime] = []
+        for idx, stage in enumerate(self.stages):
+            runtime = self._build_stage_runtime(
+                stage,
+                input_state=input_state,
+                trainable_parameters=trainable_parameters,
+                input_parameters=input_parameters,
+                is_first=(idx == 0),
+            )
+            self._stage_runtimes.append(runtime)
+        if not self._stage_runtimes:
+            raise ValueError("No executable stages were created for FeedForwardBlock2.")
+
+    def _parse_experiment_stages(self, experiment: pcvl.Experiment) -> list[FFStage]:
+        stages: list[FFStage] = []
+        total_modes = experiment.circuit_size
+        current_circuit = pcvl.Circuit(total_modes)
+        measured_modes: set[int] = set()
+        detectors: list[pcvl.Detector | None] = [None] * total_modes
+        stage_has_detectors = False
+
+        for modes, component in experiment.flatten():
+            if isinstance(component, ACircuit):
+                mapping = modes if len(modes) > 1 else modes[0]
+                current_circuit.add(mapping, component.copy(), merge=True)
+            elif isinstance(component, pcvl.Detector):
+                stage_has_detectors = True
+                for m in modes:
+                    measured_modes.add(m)
+                    detectors[m] = component
+            elif isinstance(component, FFCircuitProvider):
+                if not stage_has_detectors:
+                    raise ValueError(
+                        "Encountered a feed-forward configurator without preceding detectors."
+                    )
+                stage = FFStage(
+                    unitary=current_circuit.copy(),
+                    measured_modes=tuple(sorted(measured_modes)),
+                    detectors=list(detectors),
+                    provider=component,
+                )
+                stages.append(stage)
+                current_circuit = pcvl.Circuit(total_modes)
+                measured_modes = set()
+                detectors = [None] * total_modes
+                stage_has_detectors = False
+
+        if stage_has_detectors or current_circuit.ncomponents():
+            stage = FFStage(
+                unitary=current_circuit.copy(),
+                measured_modes=tuple(sorted(measured_modes)),
+                detectors=list(detectors),
+                provider=None,
+            )
+            stages.append(stage)
+
+        return stages
+
+    @staticmethod
+    def _analyze_experiment(
+        experiment: pcvl.Experiment,
+    ) -> tuple[pcvl.Circuit, tuple[int, ...], FFCircuitProvider | None]:
+        pre_circuit = pcvl.Circuit(experiment.circuit_size)
+        measured_modes: list[int] = []
+        ff_component: FFCircuitProvider | None = None
+        stage = "pre"
+
+        for modes, component in experiment.flatten():
+            if isinstance(component, ACircuit) and stage == "pre":
+                pre_circuit.add(
+                    modes if len(modes) > 1 else modes[0],
+                    component.copy(),
+                    merge=True,
+                )
+            elif isinstance(component, pcvl.Detector):
+                measured_modes.extend(modes)
+                stage = "meas"
+            elif isinstance(component, FFCircuitProvider):
+                ff_component = component
+                stage = "post"
+
+        return pre_circuit, tuple(sorted(set(measured_modes))), ff_component
+
+    def _build_partial_detector(
+        self,
+        layer: QuantumLayer,
+        experiment_detectors: Sequence[pcvl.Detector | None],
+        measured_modes: tuple[int, ...],
+    ) -> DetectorTransform:
+        detectors: list[pcvl.Detector | None] = []
+        for mode in range(self.total_modes):
+            detector = None
+            if experiment_detectors is not None:
+                try:
+                    detector = experiment_detectors[mode]
+                except Exception:
+                    getter = getattr(experiment_detectors, "get", None)
+                    if callable(getter):
+                        detector = getter(mode, None)
+            if detector is not None and mode in measured_modes:
+                detectors.append(detector)
+            else:
+                detectors.append(None)
+
+        return DetectorTransform(
+            layer.computation_process.simulation_graph.mapped_keys,
+            detectors,
+            dtype=layer.dtype,
+            device=layer.device,
+            partial_measurement=True,
+        )
+
+    def _build_stage_runtime(
+        self,
+        stage: FFStage,
+        *,
+        input_state: list[int] | pcvl.BasicState,
+        trainable_parameters: list[str] | None,
+        input_parameters: list[str] | None,
+        is_first: bool,
+    ) -> StageRuntime:
+        if is_first:
+            if not stage.measured_modes:
+                raise ValueError(
+                    "FeedForwardBlock2 requires detectors preceding the first feed-forward provider."
+                )
+            if stage.provider is None:
+                raise ValueError(
+                    "FeedForwardBlock2 expects the first stage to contain a FFCircuitProvider."
+                )
+            pre_layer = QuantumLayer(
+                input_size=0,
+                circuit=stage.unitary,
+                input_state=input_state,
+                trainable_parameters=trainable_parameters,
+                input_parameters=input_parameters,
+                measurement_strategy=MeasurementStrategy.AMPLITUDES,
+                computation_space=self.computation_space,
+                device=self.device,
+                dtype=self.dtype,
+            )
+            detector_transform = self._build_partial_detector(
+                pre_layer,
+                stage.detectors,
+                stage.measured_modes,
+            )
+            conditional_layers = self._build_conditional_layers(stage.provider)
+        else:
+            pre_layer = None
+            detector_transform = None
+            conditional_layers = {}
+        return StageRuntime(
+            pre_layer=pre_layer,
+            detector_transform=detector_transform,
+            conditional_layers=conditional_layers,
+            measured_modes=stage.measured_modes,
+            provider=stage.provider,
+        )
+
+    def _build_conditional_layers(
+        self, provider: FFCircuitProvider | None
+    ) -> dict[tuple[int, ...], QuantumLayer]:
+        if provider is None:
+            return {}
+        configurations = {
+            tuple(state): circuit for state, circuit in provider._map.items()
+        }
+        default_state = tuple([0] * provider.m)
+        configurations.setdefault(default_state, provider.default_circuit)
+
+        conditional_layers: dict[tuple[int, ...], QuantumLayer] = {}
+        for state_tuple, circuit in configurations.items():
+            n_remaining = self.n_photons - sum(state_tuple)
+            conditional_layer = QuantumLayer(
+                input_size=None,
+                circuit=circuit.copy(),
+                amplitude_encoding=True,
+                n_photons=max(n_remaining, 0),
+                measurement_strategy=MeasurementStrategy.AMPLITUDES,
+                computation_space=self.computation_space,
+                device=self.device,
+                dtype=self.dtype,
+            )
+            conditional_layers[state_tuple] = conditional_layer
+        return conditional_layers
+
+    def forward(self, x: torch.Tensor) -> dict[tuple[int, ...], torch.Tensor]:
+        if not self._stage_runtimes:
+            raise RuntimeError("FeedForwardBlock2 has no stage runtimes to execute.")
+
+        outputs = self._run_stage(self._stage_runtimes[0], x)
+
+        for runtime in self._stage_runtimes[1:]:
+            outputs = self._propagate_future_stage(outputs, runtime)
+
+        return outputs
+
+    def describe(self) -> str:
+        """Return a human-readable summary of the parsed feed-forward stages."""
+        lines: list[str] = []
+        for idx, stage in enumerate(self.stages):
+            provider_label = (
+                stage.provider.__class__.__name__ if stage.provider else "None"
+            )
+            lines.append(
+                f"Stage {idx + 1}: measured_modes={stage.measured_modes or 'None'}, provider={provider_label}"
+            )
+        return "\n".join(lines)
+
+    def _run_stage(
+        self,
+        runtime: StageRuntime,
+        x: torch.Tensor,
+    ) -> dict[tuple[int, ...], torch.Tensor]:
+        if runtime.pre_layer is None or runtime.detector_transform is None:
+            raise RuntimeError("Stage runtime is not fully initialised.")
+        if runtime.pre_layer.input_size == 0:
+            amplitudes = runtime.pre_layer()
+        else:
+            amplitudes = runtime.pre_layer(x)
+        measurement_data = runtime.detector_transform(amplitudes)
+        outputs: dict[tuple[int, ...], torch.Tensor] = {}
+
+        measured_modes = runtime.measured_modes
+        conditional_layers = runtime.conditional_layers or {}
+
+        for bucket in measurement_data:
+            for measurement_key, entries in bucket.items():
+                reduced_values = []
+                for idx in measured_modes:
+                    value = measurement_key[idx]
+                    reduced_values.append(0 if value is None else value)
+                reduced_key = tuple(reduced_values)
+                conditional_layer = conditional_layers.get(reduced_key)
+                if conditional_layer is None and conditional_layers:
+                    conditional_layer = list(conditional_layers.values())[0]
+                for probabilities, branch_amplitudes in entries:
+                    if conditional_layer is None:
+                        conditional_output = branch_amplitudes
+                    else:
+                        expected_dim = len(
+                            conditional_layer.computation_process.simulation_graph.mapped_keys
+                        )
+                        if branch_amplitudes.shape[-1] != expected_dim:
+                            conditional_output = branch_amplitudes
+                        else:
+                            conditional_output = conditional_layer(branch_amplitudes)
+                    branch_distribution = conditional_output.abs().pow(2)
+                    prob_weights = probabilities
+                    if prob_weights.ndim < branch_distribution.ndim:
+                        prob_weights = prob_weights.unsqueeze(-1)
+                    weighted = prob_weights * branch_distribution
+                    if measurement_key in outputs:
+                        outputs[measurement_key] = outputs[measurement_key] + weighted
+                    else:
+                        outputs[measurement_key] = weighted.clone()
+        return outputs
+
+    def _propagate_future_stage(
+        self,
+        current_outputs: dict[tuple[int, ...], torch.Tensor],
+        runtime: StageRuntime,
+    ) -> dict[tuple[int, ...], torch.Tensor]:
+        # Placeholder: future stages are not executed yet.
+        return current_outputs
 
 
 class PoolingFeedForward(torch.nn.Module):
