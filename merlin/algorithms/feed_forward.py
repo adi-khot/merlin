@@ -71,7 +71,9 @@ class FeedForwardBlock(torch.nn.Module):
     Parameters
     ----------
     experiment:
-        Perceval experiment containing the full feed-forward definition.
+        Perceval experiment containing the full feed-forward definition. The
+        current implementation requires noise-free experiments (``NoiseModel()``
+        or ``None``).
     input_state:
         Initial quantum state. May be provided as a Fock occupation list,
         :class:`pcvl.BasicState`, :class:`pcvl.StateVector`, or a tensor whose
@@ -81,22 +83,23 @@ class FeedForwardBlock(torch.nn.Module):
         Optional list of Perceval parameter prefixes that should remain
         learnable across all stages.
     input_parameters:
-        Perceval parameter prefixes that receive classical inputs. These are
-        routed to the *first* stage only (later stages operate in
-        amplitude-encoding mode).
+        Perceval parameter prefixes that receive classical inputs. They are
+        consumed by the *first* stage only; once the first detection happens all
+        branches switch to amplitude encoding and the classical tensor is
+        ignored.
     computation_space:
         Currently restricted to :attr:`~merlin.core.computation_space.ComputationSpace.FOCK`.
     measurement_strategy:
         Controls how classical outputs are produced:
 
         - ``MeasurementStrategy.PROBABILITIES`` (default) returns a tensor of
-          shape ``(batch_size, num_output_keys)`` whose columns already match
-          the fully specified Fock states stored in :pyattr:`output_keys`.
-        - ``MeasurementStrategy.MODE_EXPECTATIONS`` returns a tensor of shape
-          ``(batch_size, num_modes)`` describing the per-mode photon
-          expectations for every measurement branch. The same :pyattr:`output_keys`
-          list labels the branches while :pyattr:`output_state_sizes` reports
-          the number of modes (identical for every key).
+          shape ``(batch_size, num_output_keys)`` whose columns match the fully
+          specified Fock states stored in :pyattr:`output_keys`.
+        - ``MeasurementStrategy.MODE_EXPECTATIONS`` collapses every branch into
+          a single tensor of shape ``(batch_size, num_modes)`` that contains the
+          per-mode photon expectations aggregated across all measurement keys.
+          The :pyattr:`output_keys` attribute is retained for metadata while
+          :pyattr:`output_state_sizes` reports ``num_modes`` for every key.
         - ``MeasurementStrategy.AMPLITUDES`` yields a list of tuples
           ``(measurement_key, branch_probability, remaining_photons, amplitudes)``
           so callers can reason about the mixed state left by each branch.
@@ -556,7 +559,53 @@ class FeedForwardBlock(torch.nn.Module):
         configurations.setdefault(default_state, provider.default_circuit.copy())
         return configurations, default_state
 
-    def forward(self, x: torch.Tensor) -> dict[tuple[int, ...], torch.Tensor]:
+    def _prepare_classical_features(self, x: torch.Tensor | None) -> torch.Tensor:
+        """
+        Normalize/validate the classical input tensor expected by the first stage.
+        """
+        runtime = self._stage_runtimes[0]
+        classical_size = int(runtime.classical_input_size or 0)
+
+        def _ensure_tensor(tensor: torch.Tensor) -> torch.Tensor:
+            if tensor.ndim == 1:
+                tensor = tensor.unsqueeze(0)
+            if tensor.ndim == 0:
+                raise ValueError(
+                    "Classical feature tensors must expose at least one dimension."
+                )
+            return tensor.to(device=self.device, dtype=self.dtype)
+
+        if classical_size == 0:
+            if x is None:
+                return torch.zeros(
+                    (1, 0),
+                    device=self.device,
+                    dtype=self.dtype,
+                )
+            tensor = _ensure_tensor(x)
+            if tensor.shape[-1] != 0:
+                raise ValueError(
+                    "The underlying experiment does not accept classical inputs, "
+                    "so the provided tensor must have an empty feature dimension."
+                )
+            return tensor
+
+        if x is None:
+            raise ValueError(
+                f"This experiment exposes {classical_size} classical inputs for the first stage; "
+                "please provide a feature tensor."
+            )
+        tensor = _ensure_tensor(x)
+        if tensor.shape[-1] != classical_size:
+            raise ValueError(
+                f"Expected classical input dimension {classical_size}, "
+                f"received {tensor.shape[-1]}."
+            )
+        return tensor
+
+    def forward(
+        self, x: torch.Tensor | None = None
+    ) -> torch.Tensor | list[tuple[tuple[int, ...], torch.Tensor, int, torch.Tensor]]:
         """
         Execute the feed-forward experiment.
 
@@ -564,31 +613,29 @@ class FeedForwardBlock(torch.nn.Module):
         ----------
         x:
             Classical feature tensor. Only the first stage consumes classical
-            inputs; later stages operate purely in amplitude-encoding mode. The
-            tensor must therefore match the input-feature layout of the
-            Perceval experiment's classical parameters.
+            inputs; subsequent stages operate purely in amplitude-encoding mode.
+            When the experiment does not expose classical inputs this argument
+            may be omitted (or ``None``), in which case an empty tensor is
+            automatically supplied.
 
         Returns
         -------
         torch.Tensor | list
             ``PROBABILITIES`` returns a tensor of shape
-            ``(batch_size, len(output_keys))``. Each column already corresponds
-            to the fully specified Fock state listed in :pyattr:`output_keys`,
-            so no additional remapping is required.
-            ``MODE_EXPECTATIONS`` produces a tensor of shape
-            ``(batch_size, total_modes)`` storing the per-mode occupation
-            expectations for every measurement branch; the helper
-            :pyattr:`output_state_sizes` equals ``total_modes`` for each key.
-            ``AMPLITUDES`` yields a list of tuples
-            ``(measurement_key, branch_probability, remaining_photons, amplitudes)``
-            describing every branch of the resulting mixed state, where
-            ``amplitudes`` contains the normalized amplitude tensor for the
-            remaining modes.
+            ``(batch_size, len(output_keys))`` aligned with the fully specified
+            Fock states in :pyattr:`output_keys`. ``MODE_EXPECTATIONS`` produces
+            a tensor of shape ``(batch_size, total_modes)`` where the columns
+            already encode the per-mode expectations aggregated across all
+            measurement keys (:pyattr:`output_state_sizes` stores
+            ``total_modes`` for every key). ``AMPLITUDES`` yields a list of
+            tuples ``(measurement_key, branch_probability, remaining_photons,
+            amplitudes)`` describing every branch of the resulting mixed state.
         """
         if not self._stage_runtimes:
             raise RuntimeError("FeedForwardBlock has no stage runtimes to execute.")
 
-        branches = self._run_stage(self._stage_runtimes[0], x)
+        feature_tensor = self._prepare_classical_features(x)
+        branches = self._run_stage(self._stage_runtimes[0], feature_tensor)
 
         for runtime in self._stage_runtimes[1:]:
             branches = self._propagate_future_stage(branches, runtime)
@@ -600,9 +647,11 @@ class FeedForwardBlock(torch.nn.Module):
         """
         Return the measurement keys associated with the most recent classical forward pass.
 
-        The list is populated after :meth:`forward` completes when ``measurement_strategy``
-        is ``PROBABILITIES`` or ``MODE_EXPECTATIONS``. Calling it before running the block
-        raises ``RuntimeError``.
+        The list is populated after :meth:`forward` completes. For the
+        ``PROBABILITIES`` strategy the list lines up with the tensor columns. For
+        ``MODE_EXPECTATIONS`` it is retained for reference even though the
+        returned tensor already aggregates all measurement outcomes. Calling the
+        property before running the block raises ``RuntimeError``.
         """
         if self._output_keys is None:
             raise RuntimeError(

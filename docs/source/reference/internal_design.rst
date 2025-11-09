@@ -82,6 +82,12 @@ For each ``FFStage`` the block builds a runtime bundle consisting of:
 * A partial ``DetectorTransform`` tied to the stage’s measured modes.
 * A dictionary of conditional ``QuantumLayer`` objects – one per feed-forward branch.
 
+The current implementation expects noise-free experiments (a bare
+``NoiseModel()`` or ``None``) and only the first stage is allowed to consume
+classical inputs defined via ``input_parameters``. Once detectors fire, every
+branch progresses in amplitude-encoding mode and additional classical tensors
+are ignored.
+
 During the forward pass, ``FeedForwardBlock`` iterates over the stages. Each
 stage takes the incoming branch amplitudes, applies the unitary, runs the
 partial detector transform, and spawns new branches for the next stage based on
@@ -104,7 +110,9 @@ mixed state. ``PROBABILITIES`` collapses every branch into a tensor of shape
 fully specified Fock states recorded in
 :pyattr:`~merlin.algorithms.feed_forward.FeedForwardBlock.output_keys`.
 ``MODE_EXPECTATIONS`` produces a ``(batch_size, num_modes)`` tensor describing
-the photon expectations per mode; the helper
+the photon expectations per mode. The result is already aggregated across all
+measurement keys, so :pyattr:`~merlin.algorithms.feed_forward.FeedForwardBlock.output_keys`
+is retained solely for metadata while
 :pyattr:`~merlin.algorithms.feed_forward.FeedForwardBlock.output_state_sizes`
 equals ``num_modes`` for every key so consumers can reason about downstream
 reshaping without additional bookkeeping.

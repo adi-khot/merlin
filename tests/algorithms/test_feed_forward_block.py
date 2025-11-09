@@ -111,8 +111,7 @@ def test_feedforward_block2_balanced_split():
         input_state=[2, 0, 0],
     )
 
-    x = torch.zeros((1, 0))
-    outputs = block(x)
+    outputs = block()
     distribution_map = _as_keyed_tensors(block, outputs)
 
     total_prob = 0.0
@@ -148,8 +147,7 @@ def test_feedforward_block_uses_experiment_input_state():
     exp_reference = _build_balanced_feedforward_experiment()
     block_reference = FeedForwardBlock(exp_reference, input_state=[2, 0, 0])
 
-    x = torch.zeros((1, 0))
-    assert torch.allclose(block_from_experiment(x), block_reference(x))
+    assert torch.allclose(block_from_experiment(), block_reference())
 
 
 def test_feedforward_block_warns_on_conflicting_input_state():
@@ -171,8 +169,7 @@ def test_feedforward_block2_matches_perceval_two_stage():
     input_state = [1, 1, 0, 0]
     block = FeedForwardBlock(exp, input_state=input_state)
 
-    x = torch.zeros((1, 0))
-    block_outputs = block(x)
+    block_outputs = block()
     distribution_map = _as_keyed_tensors(block, block_outputs)
     block_probs = {
         key: float(value.item() if value.ndim == 0 else value.squeeze().item())
@@ -202,10 +199,9 @@ def test_feedforward_block2_amplitude_strategy_matches_probabilities():
         measurement_strategy=MeasurementStrategy.AMPLITUDES,
     )
 
-    x = torch.zeros((1, 0))
-    prob_outputs = block_prob(x)
+    prob_outputs = block_prob()
     prob_map = _as_keyed_tensors(block_prob, prob_outputs)
-    amp_outputs = block_amp(x)
+    amp_outputs = block_amp()
     assert isinstance(amp_outputs, list)
 
     full_probabilities = {
@@ -244,9 +240,8 @@ def test_feedforward_block2_mode_expectations():
         measurement_strategy=MeasurementStrategy.MODE_EXPECTATIONS,
     )
 
-    x = torch.zeros((1, 0))
-    prob_outputs = block_prob(x)
-    expect_outputs = block_expect(x)
+    prob_outputs = block_prob()
+    expect_outputs = block_expect()
     prob_map = _as_keyed_tensors(block_prob, prob_outputs)
     prob_scalars = {
         key: float(value.item() if value.ndim == 0 else value.squeeze().item())
@@ -270,9 +265,8 @@ def test_feedforward_block2_accepts_tensor_input_state():
     amplitudes[basis.index((2, 0, 0))] = 1.0
     block_tensor = FeedForwardBlock(exp, input_state=amplitudes)
 
-    x = torch.zeros((1, 0))
-    ref_outputs = _as_keyed_tensors(block_basic, block_basic(x))
-    tensor_outputs = _as_keyed_tensors(block_tensor, block_tensor(x))
+    ref_outputs = _as_keyed_tensors(block_basic, block_basic())
+    tensor_outputs = _as_keyed_tensors(block_tensor, block_tensor())
     for key in block_basic.output_keys:
         assert torch.allclose(ref_outputs[key], tensor_outputs[key], atol=1e-6)
 
@@ -284,9 +278,8 @@ def test_feedforward_block2_accepts_state_vector_input():
     state_vector += pcvl.StateVector(pcvl.BasicState([2, 0, 0])) * 1.0
     block_sv = FeedForwardBlock(exp, input_state=state_vector)
 
-    x = torch.zeros((1, 0))
-    ref_outputs = _as_keyed_tensors(block_basic, block_basic(x))
-    sv_outputs = _as_keyed_tensors(block_sv, block_sv(x))
+    ref_outputs = _as_keyed_tensors(block_basic, block_basic())
+    sv_outputs = _as_keyed_tensors(block_sv, block_sv())
     for key in block_basic.output_keys:
         assert torch.allclose(ref_outputs[key], sv_outputs[key], atol=1e-6)
 
@@ -323,6 +316,34 @@ def test_feedforward_block2_input_and_trainable_parameters_backward():
         parameter.grad is not None and torch.any(parameter.grad != 0)
         for parameter in block.parameters()
     )
+
+
+def test_feedforward_block2_forward_without_inputs_matches_explicit_tensor():
+    exp = _build_balanced_feedforward_experiment()
+    block = FeedForwardBlock(exp, input_state=[2, 0, 0])
+
+    automatic = block()
+    explicit = block(torch.zeros((1, 0)))
+    assert torch.allclose(automatic, explicit)
+
+
+def test_feedforward_block2_requires_classical_features_when_needed():
+    exp = pcvl.Experiment()
+    circuit = pcvl.Circuit(2)
+    circuit.add(0, pcvl.PS(pcvl.P("phi")))
+    exp.add(0, circuit)
+    exp.add(0, pcvl.Detector.pnr())
+    provider = pcvl.FFCircuitProvider(1, 0, pcvl.Circuit(1))
+    exp.add(0, provider)
+
+    block = FeedForwardBlock(exp, input_state=[1, 0], input_parameters=["phi"])
+
+    with pytest.raises(ValueError, match="provide a feature tensor"):
+        block()
+
+    one_d = torch.tensor([0.2], dtype=torch.float32)
+    block(one_d.unsqueeze(0))
+    block(one_d)
 
 
 def _fourier_unitary(dim: int) -> Unitary:

@@ -37,6 +37,12 @@ them sequentially.  Classical inputs (``input_parameters``) are only consumed by
 the first stage; once the first measurement happens the remaining branches are
 propagated in amplitude-encoding mode.
 
+.. note::
+
+   The current implementation expects noise-free experiments (``NoiseModel()``
+   or ``None``). Adding detectors and feed-forward configurators to a noisy
+   experiment is rejected during construction.
+
 **Measurement strategy**
 
 ``measurement_strategy`` controls the classical view exposed by
@@ -47,8 +53,10 @@ propagated in amplitude-encoding mode.
   fully specified Fock state listed in
   :pyattr:`~merlin.algorithms.feed_forward.FeedForwardBlock.output_keys`.
 * ``MODE_EXPECTATIONS``: returns a tensor of shape
-  ``(batch_size, num_modes)`` containing the per-mode photon expectations for
-  every branch. The key list is shared with the probability view while
+  ``(batch_size, num_modes)`` containing the per-mode photon expectations
+  aggregated across **all** measurement keys. The
+  :pyattr:`~merlin.algorithms.feed_forward.FeedForwardBlock.output_keys` list is
+  retained for metadata while
   :pyattr:`~merlin.algorithms.feed_forward.FeedForwardBlock.output_state_sizes`
   stores ``num_modes`` for each entry.
 * ``AMPLITUDES``: list of tuples
@@ -58,8 +66,9 @@ propagated in amplitude-encoding mode.
 For tensor outputs the attribute
 :pyattr:`~merlin.algorithms.feed_forward.FeedForwardBlock.output_keys` lists the
 measurement tuple corresponding to each column. ``PROBABILITIES`` therefore
-directly aligns with the dictionary keys, whereas ``MODE_EXPECTATIONS`` uses
-the same ordering while exposing a dense expectation vector per entry.
+directly aligns with the dictionary keys, whereas ``MODE_EXPECTATIONS``
+retains the key ordering purely as metadata because the returned tensor is
+already aggregated across all outcomes.
 
 If you rely on the legacy API (explicit layer trees, ``state_injection``, …) you
 can import :class:`~merlin.algorithms.feed_forward_legacy.FeedForwardBlockLegacy`
@@ -106,6 +115,9 @@ Example
    outputs = block(x)                    # tensor (batch, num_keys, dim)
    for idx, key in enumerate(block.output_keys):
        distribution = outputs[:, idx]    # probabilities for this measurement
+
+When the experiment does not expose classical inputs you may call ``block()``
+without passing a tensor (an empty feature tensor is injected automatically).
 
 Legacy pooling feedforward
 --------------------------
