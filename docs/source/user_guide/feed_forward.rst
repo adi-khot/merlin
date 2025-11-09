@@ -70,10 +70,6 @@ directly aligns with the dictionary keys, whereas ``MODE_EXPECTATIONS``
 retains the key ordering purely as metadata because the returned tensor is
 already aggregated across all outcomes.
 
-If you rely on the legacy API (explicit layer trees, ``state_injection``, …) you
-can import :class:`~merlin.algorithms.feed_forward_legacy.FeedForwardBlockLegacy`
-from :mod:`merlin.algorithms.feed_forward_legacy`.
-
 API Reference
 -------------
 
@@ -119,24 +115,6 @@ Example
 When the experiment does not expose classical inputs you may call ``block()``
 without passing a tensor (an empty feature tensor is injected automatically).
 
-Legacy pooling feedforward
---------------------------
-
-Earlier versions of MerLin exposed a convenience pooling layer that aggregated
-photons after a partial measurement.  That implementation is still available as
-:class:`~merlin.algorithms.feed_forward_legacy.PoolingFeedForwardLegacy`.  The API
-is unchanged – you configure ``n_modes``, ``n_photons``, ``n_output_modes`` and an
-optional grouping structure – but the class now lives in
-``merlin.algorithms.feed_forward_legacy`` alongside the legacy feed-forward block.
-
-.. code-block:: python
-
-   import torch
-   from merlin.algorithms.feed_forward_legacy import PoolingFeedForwardLegacy
-
-   pooling = PoolingFeedForwardLegacy(n_modes=16, n_photons=4, n_output_modes=8)
-   amplitudes = torch.randn(1, pooling.match_indices.numel(), dtype=torch.cfloat)
-   amplitudes = pooling(amplitudes)
 
 Further Reading
 ---------------

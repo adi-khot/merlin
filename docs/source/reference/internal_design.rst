@@ -4,9 +4,12 @@
 Internal Design Overview
 ========================
 
-This page documents two of MerLin’s infrastructure components that often come up
-in advanced workflows: the **partial** :class:`~merlin.measurement.detectors.DetectorTransform`
-and the new experimental :class:`~merlin.algorithms.feed_forward.FeedForwardBlock`.
+This page provides an overview of key internal design elements that underpin
+MerLin’s simulation pipeline and advanced workflows. It covers core pieces such
+as the **partial** :class:`~merlin.measurement.detectors.DetectorTransform`, the
+experimental :class:`~merlin.algorithms.feed_forward.FeedForwardBlock`, and the
+SLOS TorchScript simulation helpers that execute photonic circuit evolution
+efficiently in both angle- and amplitude-encoding regimes.
 
 Partial DetectorTransform
 =========================
@@ -121,3 +124,102 @@ This design allows every stage to be simulated with amplitude access, while
 still exposing convenient classical views. The mixed-state format (list of
 tuples) is particularly useful for downstream probabilistic reasoning or for
 feeding the remaining amplitudes into additional differentiable modules.
+
+SLOS Torch simulation helpers
+=============================
+
+MerLin provides TorchScript-optimized primitives in
+:mod:`merlin.pcvl_pytorch.slos_torchscript` to simulate photonic circuits with
+high throughput. These helpers separate graph construction from evaluation and
+offer two primary execution paths matching the two common encoding schemes:
+
+* :meth:`~merlin.pcvl_pytorch.slos_torchscript.SLOSComputeGraph.compute` –
+  Simulates a single input Fock state across a batch of unitary matrices. This
+  path is used by MerLin’s angle-encoding implementation, where the input state
+  is fixed and the circuit parameters (unitary) vary across the batch.
+* :meth:`~merlin.pcvl_pytorch.slos_torchscript.SLOSComputeGraph.compute_batch` –
+  Simulates a collection of input Fock states (all with the same total photon
+  number) against a single unitary. This path is used by MerLin’s
+  amplitude-encoding implementation, where a superposition of inputs is
+  propagated through a fixed circuit.
+
+Both methods rely on a pre-built sparse computation graph created by
+:class:`~merlin.pcvl_pytorch.slos_torchscript.SLOSComputeGraph`, which encodes
+layer-by-layer transitions between intermediate Fock configurations. The graph
+is parameterized by the computation space (e.g., ``FOCK``, ``UNBUNCHED``,
+``DUAL_RAIL``), the number of modes and photons, and optional state mapping.
+
+Creating a compute graph
+------------------------
+
+You can either build the graph explicitly for repeated reuse:
+
+.. code-block:: python
+
+  from merlin.pcvl_pytorch.slos_torchscript import build_slos_distribution_computegraph
+  from merlin.core.computation_space import ComputationSpace
+  import torch
+
+  m = 6                     # number of modes
+  n_photons = 2             # total photons
+  graph = build_slos_distribution_computegraph(
+     m,
+     n_photons,
+     computation_space=ComputationSpace.UNBUNCHED,
+     keep_keys=True,
+     dtype=torch.float,
+  )
+
+  # Prepare a batch of random unitaries (here 4 samples) with matching complex dtype
+  complex_dtype = torch.cfloat  # inferred from chosen real dtype
+  unitary_batch = torch.linalg.qr(torch.randn(4, m, m, dtype=complex_dtype))[0]
+  input_state = [1, 1, 0, 0, 0, 0]
+  keys, amplitudes = graph.compute(unitary_batch, input_state)
+
+Or invoke the convenience function which builds a transient graph on the fly
+based on the provided unitary (dtype and device inferred):
+
+.. code-block:: python
+
+  from merlin.pcvl_pytorch.slos_torchscript import compute_slos_distribution
+
+  single_unitary = unitary_batch[0]
+  keys, amplitudes = compute_slos_distribution(single_unitary, input_state)
+
+If you need to sweep *inputs* for amplitude encoding, prepare a list of Fock
+states (same photon count) and call ``compute_batch`` on the existing graph.
+
+Contract
+--------
+
+* ``compute(unitary, input_state)``
+  - Input: ``unitary`` with shape ``[B, m, m]`` (or ``[m, m]``), complex dtype
+    matching the graph precision; ``input_state`` as a length-``m`` list of
+    integers whose sum equals the photon count.
+  - Output: ``(keys, amplitudes)`` where ``amplitudes`` has shape
+    ``[B, S]`` and ``keys`` enumerates the output Fock states (or
+    ``None`` if keys are not retained).
+  - Usage: angle encoding (vary unitaries over the batch).
+
+* ``compute_batch(unitary, input_states)``
+  - Input: ``unitary`` with shape ``[m, m]`` (or ``[1, m, m]``) and
+    ``input_states`` as a list of Fock states; all states must have the same
+    total photon number.
+  - Output: ``(keys, amplitudes)`` where ``amplitudes`` has shape
+    ``[1, S, N]`` (or squeezed), with ``N`` the number of input states.
+  - Usage: amplitude encoding (vary inputs while the unitary is fixed).
+
+Integration in QuantumLayer
+---------------------------
+
+:class:`~merlin.algorithms.layer.QuantumLayer` selects the execution path based
+on the encoding mode:
+
+* Angle encoding: calls ``compute`` to evaluate a batch of circuit instances
+  over a fixed input state.
+* Amplitude encoding: calls ``compute_batch`` to propagate a collection of
+  input states (superposition components) through a single unitary.
+
+Refer to ``QuantumLayer`` for the exact wiring and measurement strategies
+(``PROBABILITIES``, ``AMPLITUDES``, ``MODE_EXPECTATIONS``) layered on top of the
+SLOS outputs.
