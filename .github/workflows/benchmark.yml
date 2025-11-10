@@ -105,23 +105,6 @@ jobs:
         echo "NUMEXPR_NUM_THREADS=1" >> $GITHUB_ENV
         echo "OPENBLAS_NUM_THREADS=1" >> $GITHUB_ENV
 
-    - name: Run no bunching benchmarks
-      run: |
-        pytest benchmarks/benchmark_no_bunching.py --benchmark-json=no-bunching-results.json -v --benchmark-only
-
-    - name: Store no bunching benchmark results
-      uses: benchmark-action/github-action-benchmark@v1
-      with:
-        tool: 'pytest'
-        output-file-path: no-bunching-results.json
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        benchmark-data-dir-path: 'dev/bench/no-bunching'
-        fail-on-alert: true
-        alert-threshold: '120%'
-        comment-on-alert: true
-        summary-always: true
-
   benchmark-layer:
     runs-on: ubuntu-latest
     needs: setup
@@ -292,13 +275,6 @@ jobs:
                     <p>Performance benchmarks for core SLOS functions: build_graph, compute, and compute_pa_inc</p>
                     <p><strong>Functions tested:</strong> build_slos_distribution_computegraph, SLOSComputeGraph.compute</p>
                     <p><strong>Configurations:</strong> 4-10 modes, CPU, multiple precisions</p>
-                </div>
-                
-                <div class="benchmark-card">
-                    <h3><a href="dev/bench/no-bunching/">No Bunching Tests</a></h3>
-                    <p>Performance benchmarks for photon bunching prevention algorithms</p>
-                    <p><strong>Functions tested:</strong> No bunching computation, Fock space comparison</p>
-                    <p><strong>Configurations:</strong> 6 modes, 3 photons, both bunching modes</p>
                 </div>
                 
                 <div class="benchmark-card">
