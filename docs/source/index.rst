@@ -28,9 +28,11 @@ Advanced users can leverage the underlying `Perceval <https://perceval.quandela.
    Welcome <self>
    quickstart/index
    user_guide/index
-   research/index
+   quantum_expert_area/index
    notebooks/index
-   reference/index
+   reproduced_papers/index
+   api_reference/index
+   performance/index
 
 Who Should Use MerLin?
 ======================
@@ -94,6 +96,22 @@ Roadmap
   - Improved documentation and examples
   - Integration with Quandela's photonic hardware
   - additional machine learning models
+  -
+
+- **v0.2**: current release with additional features such as
+- new features :
+
+  - feedforward
+  - entangled boson sampling
+  - quantum kernels
+  - quantum bridge
+  - remote processing
+
+- **v0.3**
+- In development:
+
+  - Optimisation and consolidation of existing code
+  - Bugfixes
 
 Contributing
 ============

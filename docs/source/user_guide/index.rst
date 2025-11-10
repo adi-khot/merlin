@@ -10,13 +10,12 @@ User Guide
    :maxdepth: 2
    :caption: Table of Contents
 
-   circuit_types
-   experiment
    layer
-   hybrid_models
-   output_mappings
-   feed_forward
-   algorithms
+   measurement_strategy
+   angle_amplitude_encoding
    computation_space
+   grouping
    quantum_bridge
    kernels
+   feed_forward
+   remote_execution

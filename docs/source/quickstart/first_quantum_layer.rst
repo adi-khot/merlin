@@ -1,435 +1,279 @@
 :github_url: https://github.com/merlinquantum/merlin
 
 =========================
-Your First Quantum Layers
+Your First Quantum Layer
 =========================
-Merlin provides three approaches to create quantum neural networks, from simple to advanced:
 
-1. `Simple API <#method-1-simple-api-easiest>`_ : Quick start with minimal configuration
-2. `Factory Method <#method-2-factory-method-intermediate>`_ : More control with pre-built architectures
-3. `Direct Circuit Definition <#method-3-direct-circuit-definition-advanced>`_ : Full control over quantum circuit design
+This walkthrough mirrors the ``FirstQuantumLayers.ipynb`` notebook: we build and train
+photonic layers that classify the Iris dataset. Along the way, we focus on three core
+concepts you will reuse in every project:
 
-We'll start with the easiest approach and progress to more advanced methods.
+- **Angle encoding** via :class:`~merlin.builder.circuit_builder.CircuitBuilder`. See :doc:`../user_guide/angle_amplitude_encoding` for more details on input encoding with MerLin. 
+- **Output measurement strategies** that turn photonic outcomes into classical tensors. See :doc:`../user_guide/measurement_strategy`.
+- **Computation spaces** controlling how the simulator truncates Fock states. See :doc:`../user_guide/computation_space`.
 
-Method 1: Simple API (Easiest)
-------------------------------
+Once the foundations are in place, we show how to reuse the same circuit through a
+:class:`perceval.Experiment` for detector-aware execution.
 
-The simplest way to create a quantum layer is using the ``.simple()`` method. This is perfect for beginners who want to quickly integrate quantum processing into their neural networks.
 
-Basic Example
-^^^^^^^^^^^^^
+Set up the dataset
+==================
 
 .. code-block:: python
 
+    import numpy as np
     import torch
     import torch.nn as nn
-    import merlin as ML
+    import torch.nn.functional as F
+    from sklearn.datasets import load_iris
+    from sklearn.model_selection import train_test_split
 
-    class HybridIrisClassifier(nn.Module):
-        """
-        Hybrid model for Iris classification:
-        - Classical layer reduces 4 features to 3
-        - Quantum layer processes the 3 features
-        - Classical output layer for 3-class classification
-        """
-        def __init__(self):
-            super(HybridIrisClassifier, self).__init__()
+    from merlin import LexGrouping, MeasurementStrategy, QuantumLayer
+    from merlin.builder import CircuitBuilder
 
-            # Classical preprocessing layer
-            self.classical_in = nn.Sequential(
-                nn.Linear(4, 8),
-                nn.ReLU(),
-                nn.Linear(8, 3),
-                nn.Tanh()  # Normalize to [-1, 1] for quantum layer
-            )
+    torch.manual_seed(0)
+    np.random.seed(0)
 
-            # Quantum layer
-            # Just specify input size and approximate parameter count
-            self.quantum = ML.QuantumLayer.simple(
-                input_size=3,      # 3 input features
-                n_params=100,      # ~100 quantum parameters
-                shots=10000        # Number of measurements
-            )
+    iris = load_iris()
+    X = iris.data.astype("float32")
+    y = iris.target.astype("int64")
 
-            # ``QuantumLayer.simple`` returns a lightweight wrapper that exposes the underlying
-            # quantum layer through ``.quantum_layer`` and any post-processing through
-            # ``.post_processing``.  Common attributes such as ``.output_size`` and ``.circuit`` are
-            # forwarded, so existing code can continue to treat the result like a standard
-            # ``QuantumLayer`` when preferred.
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.25,
+        stratify=y,
+        random_state=42,
+    )
 
-            # Classical output layer
-            self.classical_out = nn.Sequential(
-                nn.Linear(self.quantum.output_size, 8),
-                nn.ReLU(),
-                nn.Dropout(0.1),
-                nn.Linear(8, 3)  # 3 classes
-            )
+    X_train = torch.tensor(X_train, dtype=torch.float32)
+    X_test = torch.tensor(X_test, dtype=torch.float32)
+    y_train = torch.tensor(y_train, dtype=torch.long)
+    y_test = torch.tensor(y_test, dtype=torch.long)
 
-            print(f"\nModel Architecture:")
-            print(f"  Input: 4 features")
-            print(f"  Classical preprocessing: 4 → 3")
-            print(f"  Quantum layer: 3 → {self.quantum.output_size}")
-            print(f"  Classical output: {self.quantum.output_size} → 3 classes")
+    # Normalise features before encoding them as phases
+    mean = X_train.mean(dim=0, keepdim=True)
+    std = X_train.std(dim=0, keepdim=True).clamp_min(1e-6)
+    X_train = (X_train - mean) / std
+    X_test = (X_test - mean) / std
 
-        def forward(self, x):
-            # Preprocess with classical layer
-            x = self.classical_in(x)
-
-            # Process through quantum layer
-            # Note: quantum layer expects inputs in [0, 1], so we shift tanh output
-            x = (x + 1) / 2  # Convert from [-1, 1] to [0, 1]
-            x = self.quantum(x)
-
-            # Final classification
-            x = self.classical_out(x)
-            return x
-
-Training the Simple Model
-^^^^^^^^^^^^^^^^^^^^^^^^^
+Shared training utilities
+=========================
 
 .. code-block:: python
 
-    # Create model
-    model = HybridIrisClassifier()
+    def run_experiment(model: nn.Module, epochs: int = 60, lr: float = 0.05):
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        for _ in range(epochs):
+            model.train()
+            optimizer.zero_grad()
+            logits = model(X_train)
+            loss = F.cross_entropy(logits, y_train)
+            loss.backward()
+            optimizer.step()
 
-    # Standard PyTorch training
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-    criterion = nn.CrossEntropyLoss()
+        model.eval()
+        with torch.no_grad():
+            train_preds = model(X_train).argmax(dim=1)
+            test_preds = model(X_test).argmax(dim=1)
+            train_acc = (train_preds == y_train).float().mean().item()
+            test_acc = (test_preds == y_test).float().mean().item()
+        return train_acc, test_acc
 
-    # Training loop (standard PyTorch)
-    for epoch in range(50):
-        optimizer.zero_grad()
-        outputs = model(X_train)
-        loss = criterion(outputs, y_train)
-        loss.backward()
-        optimizer.step()
+CircuitBuilder walkthrough
+==========================
 
-
-
-Method 2: Factory Method (Intermediate)
----------------------------------------
-
-For more control over the quantum architecture while still using pre-built circuits, use the factory method approach.
-
-Creating Quantum Layers with Factories
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. note::
-
-   ``Ansatz`` helpers now live in :mod:`merlin.builder.ansatz` (formerly
-   ``merlin.core.ansatz``). The top-level ``merlin`` namespace continues to
-   re-export :class:`~merlin.builder.ansatz.Ansatz` and
-   :class:`~merlin.builder.ansatz.AnsatzFactory` for convenience.
+:class:`CircuitBuilder` is the recommended way to author circuits for training. We
+stack entangling layers, angle encoding, and additional rotations before handing the
+result to :class:`~merlin.algorithms.layer.QuantumLayer`.
 
 .. code-block:: python
 
-    from merlin import (
-        PhotonicBackend,
-        CircuitType,
-        StatePattern,
-        AnsatzFactory,
-        QuantumLayer,
-        MeasurementStrategy,
-        LexGrouping,
+    builder = CircuitBuilder(n_modes=6)
+    builder.add_entangling_layer(trainable=True, name="U1")
+    builder.add_angle_encoding(
+        modes=list(range(X_train.shape[1])),  # one mode per Iris feature
+        name="input",
+        scale=np.pi,
     )
+    builder.add_rotations(trainable=True, name="theta")
+    builder.add_superpositions(depth=1, trainable=True)
 
-    # Define the quantum experiment configuration
-    n_modes = 6
-    n_photons = 3
-    input_size = 4
-
-    # Create experiment with Series circuit
-    photonicbackend = PhotonicBackend(
-        circuit_type=CircuitType.SERIES,
-        n_modes=n_modes,
-        n_photons=n_photons,
-        reservoir_mode=True,         # Non-trainable quantum layer
-        use_bandwidth_tuning=False,  # No bandwidth tuning
-        state_pattern=StatePattern.PERIODIC
-    )
-
-    # Create ansatz with automatic output size
-    ansatz = AnsatzFactory.create(
-        PhotonicBackend=photonicbackend,
-        input_size=input_size,
-        # output_size not specified - will be calculated automatically unless specified
+    quantum_core = QuantumLayer(
+        input_size=X_train.shape[1],
+        builder=builder,
+        n_photons=3,                             # Equivalent to input_state=[1,1,1,0,0,0]
         measurement_strategy=MeasurementStrategy.PROBABILITIES,
     )
 
-    # Create quantum layer
-    quantum_layer = QuantumLayer(
-        input_size=input_size,
-        ansatz=ansatz,
-        shots=10000,           # Number of measurement shots
-        no_bunching=False
+    model = nn.Sequential(
+        quantum_core,
+        LexGrouping(quantum_core.output_size, 3),
+        nn.Linear(3, 3),
     )
 
-Available Circuit Types
-^^^^^^^^^^^^^^^^^^^^^^^
+    train_acc, test_acc = run_experiment(model, epochs=80, lr=0.05)
+    print(f"Train accuracy: {train_acc:.3f} – Test accuracy: {test_acc:.3f}")
 
-merlin provides several pre-built circuit architectures:
+Angle encoding highlights
+-------------------------
 
-- ``CircuitType.SERIES``: Gan et al paper circuit design implementation
-- Other circuit types available in the library
+- ``add_angle_encoding`` generates input-driven phase shifters whose prefixes (``name``)
+  must appear inside ``input_parameters`` when you instantiate the layer manually.
+- Scaling by ``np.pi`` keeps rotations in a range compatible with Perceval’s phase
+  conventions.
+- Normalise your features to :math:`[-1, 1]` or :math:`[0, 1]` before feeding them into
+  the layer so the implied rotations stay stable during training.
+- In this tutorial, we focus on angle encoding. Amplitude encoding is also available. More information can be found in the :doc:`../user_guide/angle_amplitude_encoding` documentation.
 
-State Patterns
-^^^^^^^^^^^^^^
+Exploring output measurement strategies
+=======================================
 
-Control how photons are distributed:
-
-- ``StatePattern.PERIODIC``: 1 photon every 2 modes i.e 101010
-- ``StatePattern.SEQUENTIAL``: photons injected into the first modes seen i.e 111000
-
-Using Factory-Created Layers in Models
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+MerLin exposes three strategies: probabilities (default), per-mode expectations, and
+complex amplitudes (simulation only). Swap the strategy to pick the classical output
+that best matches the rest of your model.
 
 .. code-block:: python
 
-    class FactoryHybridModel(nn.Module):
-        def __init__(self):
-            super().__init__()
+    strategies = {
+        "probabilities": MeasurementStrategy.PROBABILITIES,
+        "mode_expectations": MeasurementStrategy.MODE_EXPECTATIONS,
+    }
 
-            # Classical preprocessing
-            self.preprocess = nn.Linear(10, 4)
+    for label, strategy in strategies.items():
+        layer = QuantumLayer(
+            input_size=X_train.shape[1],
+            builder=builder,
+            n_photons=3,
+            measurement_strategy=strategy,
+        )
+        head = nn.Sequential(
+            layer,
+            nn.Linear(layer.output_size, 3),
+        )
+        train_acc, test_acc = run_experiment(head, epochs=60, lr=0.05)
+        print(f"{label}: train {train_acc:.3f} – test {test_acc:.3f}")
 
-            # Quantum layer from factory
-            photonicbackend = PhotonicBackend(
-                circuit_type=CircuitType.SERIES,
-                n_modes=8,
-                n_photons=4,
-                state_pattern=StatePattern.PERIODIC
-            )
-
-            ansatz = AnsatzFactory.create(
-                PhotonicBackend=photonicbackend,
-                input_size=4,
-                measurement_strategy=MeasurementStrategy.PROBABILITIES,
-            )
-
-            self.quantum = QuantumLayer(
-                input_size=4,
-                ansatz=ansatz,
-                shots=5000
-            )
-
-            # Classical output
-            self.output = nn.Linear(self.quantum.output_size, 3)
-
+    # Amplitudes provide complex tensors — convert them before handing off to nn.Linear
+    amp_layer = QuantumLayer(
+        input_size=X_train.shape[1],
+        builder=builder,
+        n_photons=3,
+        measurement_strategy=MeasurementStrategy.AMPLITUDES,
+    )
+    class ComplexToReal(nn.Module):
         def forward(self, x):
-            x = torch.relu(self.preprocess(x))
-            x = torch.sigmoid(x)  # Normalize to [0, 1]
-            x = self.quantum(x)
-            return self.output(x)
+            # view_as_real -> (..., 2) with last dim holding [real, imag]
+            parts = torch.view_as_real(x)
+            return parts.flatten(start_dim=1)
 
+    amp_head = nn.Sequential(
+        amp_layer,
+        ComplexToReal(),
+        nn.Linear(2 * amp_layer.output_size, 3),
+    )
+    train_acc, test_acc = run_experiment(amp_head, epochs=60, lr=0.05)
+    print(f"amplitudes (with real/imag flattening): train {train_acc:.3f} – test {test_acc:.3f}")
 
+Measurement strategy tips
+-------------------------
 
-Method 3: Direct Circuit Definition (Advanced)
-----------------------------------------------
+- ``PROBABILITIES`` returns the Fock state probability distribution – Ideal for attaching dense classical heads, simple linear probings or grouping strategies.
+- ``MODE_EXPECTATIONS`` compresses the outputs to one value per mode, reducing the
+  number of classical weights you need downstream.
+- ``AMPLITUDES`` yields tensors with complex values and is restricted to noiseless simulations without detectors. Convert them with ``torch.view_as_real`` or flatten real/imaginary parts before feeding the data to classical layers.
 
-For complete control over the quantum circuit, define it directly using Perceval.
+More informations on measurement strategies can be found here: :doc:`../user_guide/measurement_strategy`.
 
-Circuit Definition
-^^^^^^^^^^^^^^^^^^
+Choosing a computation space
+============================
 
-The quantum circuit consists of three main parts:
+The ``computation_space`` parameter controls how Perceval truncates the Fock space. If
+you omit it, MerLin falls back to ``ComputationSpace.FOCK`` (or ``UNBUNCHED`` when the
+legacy ``no_bunching`` flag is active). Override the default when you need explicit
+control:
+
+.. code-block:: python
+
+    from merlin import ComputationSpace
+
+    fock_layer = QuantumLayer(
+        input_size=X_train.shape[1],
+        builder=builder,
+        n_photons=3,
+        computation_space=ComputationSpace.FOCK,       # Full Fock basis
+    )
+
+    unbunched_layer = QuantumLayer(
+        input_size=X_train.shape[1],
+        builder=builder,
+        n_photons=3,
+        computation_space=ComputationSpace.UNBUNCHED,  # Forbid multiple photons per mode
+    )
+
+    dual_rail_layer = QuantumLayer(
+        input_size=X_train.shape[1],
+        builder=builder,
+        n_photons=3,
+        computation_space=ComputationSpace.DUAL_RAIL,  # Pair modes to encode qubits
+    )
+
+- ``FOCK`` keeps the entire combinatorial space of the declared photons.
+- ``UNBUNCHED`` assumes at most one photon per mode, reducing the state count when the
+  circuit satisfies that constraint.
+- ``DUAL_RAIL`` models qubits as photon pairs, which is useful when interfacing with
+  dual-rail encodings or threshold detectors.
+
+Detector-aware execution with Experiments
+=========================================
+
+Wrapping the circuit in a :class:`perceval.Experiment` lets you attach detectors and
+noise models without re-authoring the layer. The experiment becomes the single source
+of truth for measurement semantics.
 
 .. code-block:: python
 
     import perceval as pcvl
 
-    def create_quantum_circuit(m):
-        # 1. Left interferometer - trainable transformation
-        wl = pcvl.GenericInterferometer(
-            m,
-            lambda i: pcvl.BS() // pcvl.PS(pcvl.P(f"theta_li{i}")) //
-                     pcvl.BS() // pcvl.PS(pcvl.P(f"theta_lo{i}")),
-            shape=pcvl.InterferometerShape.RECTANGLE
-        )
+    # Reuse the circuit produced by the builder
+    circuit = builder.circuit
+    experiment = pcvl.Experiment(circuit)
+    experiment.noise = pcvl.NoiseModel(brightness=0.95, transmittance=0.9)
+    experiment.detectors[0] = pcvl.Detector.threshold()
+    experiment.detectors[1] = pcvl.Detector.pnr()
 
-        # 2. Input encoding - maps classical data to quantum parameters
-        c_var = pcvl.Circuit(m)
-        for i in range(4):  # 4 input features
-            px = pcvl.P(f"px{i + 1}")
-            c_var.add(i + (m - 4) // 2, pcvl.PS(px))
-
-        # 3. Right interferometer - trainable transformation
-        wr = pcvl.GenericInterferometer(
-            m,
-            lambda i: pcvl.BS() // pcvl.PS(pcvl.P(f"theta_ri{i}")) //
-                     pcvl.BS() // pcvl.PS(pcvl.P(f"theta_ro{i}")),
-            shape=pcvl.InterferometerShape.RECTANGLE
-        )
-
-        # Combine all components
-        return wl // c_var // wr
-
-**Key Components**:
-
-- ``pcvl.BS()``: Beam splitter for quantum interference
-- ``pcvl.PS(pcvl.P("name"))``: Phase shifter with trainable parameter
-- ``pcvl.GenericInterferometer``: Creates complex interference patterns
-- ``pcvl.Circuit``: Container for quantum components
-
-Create Quantum Layer from Circuit
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-    # Create quantum layer
-    m = 6  # 6 optical modes
-    circuit = create_quantum_circuit(m)
-
-    quantum_layer = ML.QuantumLayer(
-        input_size=4,                                              # 4 input features
-        circuit=circuit,                                           # Quantum circuit
-        trainable_parameters=["theta"],                            # Parameters to train
-        input_parameters=["px"],                                   # Input encoding parameters
-        input_state=[1, 0, 1, 0, 1, 0],                           # Initial photon state
-        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
+    experiment_layer = QuantumLayer(
+        input_size=X_train.shape[1],
+        experiment=experiment,
+        input_state=[1, 1, 1, 0, 0, 0],
+        input_parameters=["input"],
+        measurement_strategy=MeasurementStrategy.PROBABILITIES,
     )
 
-    # Optional: reshape the Fock distribution to 3 features
-    mapped_layer = nn.Sequential(
-        quantum_layer,
-        ML.LexGrouping(quantum_layer.output_size, 3),
+    model_with_noise = nn.Sequential(
+        experiment_layer,
+        LexGrouping(experiment_layer.output_size, 3),
+        nn.Linear(3, 3),
     )
+    train_acc, test_acc = run_experiment(model_with_noise, epochs=80, lr=0.05)
+    print(f"Experiment-backed layer – test accuracy: {test_acc:.3f}")
 
-    # Test the layer
-    x = torch.rand(10, 4)  # Batch of 10 samples, 4 features each
-    output = mapped_layer(x)
-    print(f"Input shape: {x.shape}")      # [10, 4]
-    print(f"Output shape: {output.shape}")  # [10, 3]
+Experiment notes
+----------------
 
-Understanding Parameters
-^^^^^^^^^^^^^^^^^^^^^^^^
+- Attaching detectors or photon-loss models disables ``MeasurementStrategy.AMPLITUDES``
+  because amplitudes are no longer observable.
+- ``input_parameters`` must match the prefixes emitted by ``add_angle_encoding`` (``"input"`` in this example).
+- You can reuse the same experiment across multiple layers or kernel feature maps to
+  keep detector settings consistent.
 
-.. code-block:: python
+Next steps
+==========
 
-    quantum_layer = ML.QuantumLayer(
-        input_size=4,                                              # Classical input features
-        circuit=circuit,                                           # Quantum circuit
-        trainable_parameters=["theta"],                            # Which parameters to train
-        input_parameters=["px"],                                   # Input encoding parameters
-        input_state=[1, 0] * (m // 2) + [0] * (m % 2),           # Initial photon distribution
-        no_bunching=False,                                         # Allow photon bunching
-        measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
-    )
-
-**Parameter Explanation**:
-
-- ``trainable_parameters``: Parameters updated during backpropagation
-- ``input_parameters``: Parameters that encode classical input data
-- ``input_state``: Initial photon configuration (e.g., [1,0,1,0,0,0] = photons in modes 0,2)
-- ``no_bunching``: Whether multiple photons can occupy the same mode
-- ``measurement_strategy``: Which measurement post-processing Merlin applies (e.g., Fock distribution or mode expectation)
-- Add ``ML.LexGrouping`` or ``ML.ModGrouping`` *after* the quantum layer to reduce the Fock distribution when needed
-
-Complete Hybrid Network Example
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-    class AdvancedHybridClassifier(nn.Module):
-        def __init__(self, input_dim=8, n_classes=3, n_modes=6):
-            super().__init__()
-
-            # Classical preprocessing
-            self.classical_input = nn.Sequential(
-                nn.Linear(input_dim, 6),
-                nn.ReLU(),
-                nn.Linear(6, 4)  # Reduce to quantum layer input size
-            )
-
-            # Create quantum circuit
-            circuit = create_quantum_circuit(n_modes)
-
-            # Quantum processing layer + grouping
-            quantum_core = ML.QuantumLayer(
-                input_size=4,
-                circuit=circuit,
-                trainable_parameters=["theta"],
-                input_parameters=["px"],
-                input_state=[1, 0] * (n_modes // 2) + [0] * (n_modes % 2),
-                measurement_strategy=ML.MeasurementStrategy.PROBABILITIES,
-            )
-            self.quantum = nn.Sequential(
-                quantum_core,
-                ML.LexGrouping(quantum_core.output_size, 6),
-            )
-
-            # Classical output layer
-            self.classifier = nn.Sequential(
-                nn.Linear(6, n_classes),
-                nn.Softmax(dim=1)
-            )
-
-        def forward(self, x):
-            # Classical preprocessing
-            x = self.classical_input(x)
-
-            # Normalize for quantum layer (required: inputs must be in [0,1])
-            x = torch.sigmoid(x)
-
-            # Quantum transformation
-            x = self.quantum(x)
-
-            # Classical output
-            return self.classifier(x)
-
-    # Create and test model
-    model = AdvancedHybridClassifier(input_dim=8, n_classes=3, n_modes=6)
-    x = torch.rand(16, 8)  # Batch of 16 samples
-    output = model(x)
-    print(f"Model output shape: {output.shape}")  # [16, 3]
-
-Training the Advanced Model
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Train your hybrid model with standard PyTorch workflows:
-
-.. code-block:: python
-
-    import torch.optim as optim
-    from sklearn.datasets import make_classification
-    from sklearn.model_selection import train_test_split
-
-    # Generate synthetic dataset
-    X, y = make_classification(
-        n_samples=1000, n_features=8, n_classes=3,
-        n_informative=6, random_state=42
-    )
-
-    # Prepare data
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
-    X_train = torch.FloatTensor(X_train)
-    X_test = torch.FloatTensor(X_test)
-    y_train = torch.LongTensor(y_train)
-    y_test = torch.LongTensor(y_test)
-
-    # Setup training
-    model = AdvancedHybridClassifier()
-    optimizer = optim.Adam(model.parameters(), lr=0.01)
-    criterion = nn.CrossEntropyLoss()
-
-    # Training loop
-    model.train()
-    for epoch in range(50):
-        # Forward pass
-        optimizer.zero_grad()
-        outputs = model(X_train)
-        loss = criterion(outputs, y_train)
-
-        # Backward pass
-        loss.backward()
-        optimizer.step()
-
-        # Evaluation
-        if epoch % 10 == 0:
-            model.eval()
-            with torch.no_grad():
-                test_outputs = model(X_test)
-                test_loss = criterion(test_outputs, y_test)
-                test_acc = (test_outputs.argmax(1) == y_test).float().mean()
-
-            print(f"Epoch {epoch}: Loss={loss:.4f}, Test Loss={test_loss:.4f}, Test Acc={test_acc:.4f}")
-            model.train()
+- Swap out ``builder.add_superpositions`` or introduce additional entangling layers to
+  explore deeper circuits.
+- Combine :class:`~merlin.utils.grouping.LexGrouping` or :class:`~merlin.utils.grouping.ModGrouping` modules to tailor the classical feature
+  count to your downstream model.
+- Re-run the experiments with alternative computation spaces to benchmark accuracy vs.
+  runtime trade-offs.
+- Take a look at the :doc:`../user_guide/index` for more detailed explanations.
