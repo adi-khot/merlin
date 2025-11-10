@@ -111,7 +111,7 @@ class TestPhotonLossWithQuantumLayer:
 
         with pytest.raises(
             RuntimeError,
-            match="cannot be used when Experiment contains at least one Detector or when it contains a defined NoiseModel",
+            match="measurement_strategy=MeasurementStrategy.AMPLITUDES cannot be used when the experiment defines a NoiseModel.",
         ):
             ML.QuantumLayer(
                 input_size=0,

@@ -12,3 +12,4 @@ Reference
 
    api/modules
    performance
+   internal_design

@@ -131,6 +131,10 @@ class Combinadics:
             return self._unrank_unbunched(index)
         return self._unrank_dualrail(index)
 
+    def __getitem__(self, index: int) -> TupleInt:
+        """Shortcut for :meth:`index_to_fock`."""
+        return self.index_to_fock(index)
+
     def compute_space_size(self) -> int:
         """Return the number of admissible Fock states for this configuration.
 

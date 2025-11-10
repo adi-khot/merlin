@@ -28,7 +28,14 @@ into PyTorch neural networks with automatic differentiation support.
 """
 
 # Core API - Most users will only need these
-from .algorithms.feed_forward import FeedForwardBlock, PoolingFeedForward
+from .algorithms.feed_forward import FeedForwardBlock
+from .algorithms.feed_forward_legacy import (
+    FeedForwardBlockLegacy,
+    PoolingFeedForwardLegacy,
+    create_circuit,
+    define_layer_no_input,
+    define_layer_with_input,
+)
 from .algorithms.kernels import FeatureMap, FidelityKernel
 from .algorithms.layer import QuantumLayer
 from .algorithms.loss import NKernelAlignment
@@ -87,6 +94,10 @@ __all__ = [
     "FeatureMap",
     "FidelityKernel",
     "FeedForwardBlock",
-    "PoolingFeedForward",
+    "FeedForwardBlockLegacy",
+    "PoolingFeedForwardLegacy",
+    "create_circuit",
+    "define_layer_no_input",
+    "define_layer_with_input",
     "CircuitBuilder",
 ]

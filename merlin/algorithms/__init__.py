@@ -25,6 +25,13 @@ Merlin algorithms package containing various quantum machine learning algorithms
 """
 
 from .feed_forward import FeedForwardBlock
+from .feed_forward_legacy import (
+    FeedForwardBlockLegacy,
+    PoolingFeedForwardLegacy,
+    create_circuit,
+    define_layer_no_input,
+    define_layer_with_input,
+)
 from .kernels import FeatureMap, FidelityKernel
 from .layer import QuantumLayer
 from .loss import NKernelAlignment
@@ -35,4 +42,9 @@ __all__ = [
     "NKernelAlignment",
     "QuantumLayer",
     "FeedForwardBlock",
+    "FeedForwardBlockLegacy",
+    "PoolingFeedForwardLegacy",
+    "create_circuit",
+    "define_layer_no_input",
+    "define_layer_with_input",
 ]
