@@ -552,11 +552,46 @@ class FeedForwardBlock(torch.nn.Module):
     ) -> tuple[dict[tuple[int, ...], pcvl.Circuit], tuple[int, ...] | None]:
         if provider is None:
             return {}, None
-        configurations = {
-            tuple(state): circuit.copy() for state, circuit in provider._map.items()
-        }
+        # Normalize provider mappings: accept either Circuit or ACircuit entries.
+        # When an ACircuit is provided, wrap it into a single-component Circuit
+        # with matching mode count so downstream layers can consume a Circuit.
+        configurations: dict[tuple[int, ...], pcvl.Circuit] = {}
+        for state, element in provider._map.items():
+            key = tuple(state)
+            if isinstance(element, pcvl.Circuit):
+                configurations[key] = element.copy()
+            elif isinstance(element, ACircuit):
+                # ACircuit represents a single photonic component; embed it into
+                # a shell Circuit of the same width.
+                width = getattr(element, "m", None)
+                if width is None:
+                    raise TypeError(
+                        "Feed-forward configuration element exposes no mode count 'm'."
+                    )
+                wrapped = pcvl.Circuit(int(width))
+                wrapped.add(tuple(range(int(width))), element.copy(), merge=True)
+                configurations[key] = wrapped
+            else:
+                raise TypeError(
+                    f"Unsupported feed-forward configuration element: {type(element).__name__}"
+                )
         default_state = tuple([0] * provider.m)
-        configurations.setdefault(default_state, provider.default_circuit.copy())
+        default_elem = provider.default_circuit
+        if isinstance(default_elem, pcvl.Circuit):
+            configurations.setdefault(default_state, default_elem.copy())
+        elif isinstance(default_elem, ACircuit):
+            width = getattr(default_elem, "m", None)
+            if width is None:
+                raise TypeError(
+                    "Default feed-forward element exposes no mode count 'm'."
+                )
+            wrapped = pcvl.Circuit(int(width))
+            wrapped.add(tuple(range(int(width))), default_elem.copy(), merge=True)
+            configurations.setdefault(default_state, wrapped)
+        else:
+            raise TypeError(
+                f"Unsupported default feed-forward element: {type(default_elem).__name__}"
+            )
         return configurations, default_state
 
     def _prepare_classical_features(self, x: torch.Tensor | None) -> torch.Tensor:
@@ -1024,28 +1059,33 @@ class FeedForwardBlock(torch.nn.Module):
         for key, branch_list in branches.items():
             if not branch_list:
                 continue
-            (
-                probability_total,
-                amplitude_total,
-                weight_total,
-                basis_keys,
-                remaining_n,
-            ) = self._aggregate_branch_list(branch_list)
-            if probability_total is None:
-                continue
-            if (
-                weight_total is None
-                and self.measurement_strategy != MeasurementStrategy.PROBABILITIES
-            ):
-                continue
-            entries.append((
-                key,
-                probability_total,
-                amplitude_total,
-                weight_total,
-                basis_keys,
-                remaining_n,
-            ))
+            # Partition branches by remaining_n to avoid mixing basis dimensions
+            by_remaining: dict[int, list[BranchState]] = {}
+            for b in branch_list:
+                by_remaining.setdefault(b.remaining_n, []).append(b)
+            for remaining_n, subgroup in by_remaining.items():
+                (
+                    probability_total,
+                    amplitude_total,
+                    weight_total,
+                    basis_keys,
+                    _rn,
+                ) = self._aggregate_branch_list(subgroup)
+                if probability_total is None:
+                    continue
+                if (
+                    weight_total is None
+                    and self.measurement_strategy != MeasurementStrategy.PROBABILITIES
+                ):
+                    continue
+                entries.append((
+                    key,
+                    probability_total,
+                    amplitude_total,
+                    weight_total,
+                    basis_keys,
+                    remaining_n,
+                ))
 
         if not entries:
             self._output_keys = []
@@ -1287,6 +1327,23 @@ class FeedForwardBlock(torch.nn.Module):
             normalized_amplitudes = self._normalize_amplitudes(
                 amplitude_total, weight_total
             )
+            # Reindex amplitudes to the standard basis order expected by clients.
+            # Determine unmeasured modes from the measurement key (positions with None).
+            unmeasured_indices = [idx for idx, v in enumerate(key) if v is None]
+            standard_basis = self._basis_states_for(
+                len(unmeasured_indices), remaining_n
+            )
+            if basis_keys and basis_keys != standard_basis:
+                # Map from current basis_keys to standard_basis
+                index_of = {state: i for i, state in enumerate(basis_keys)}
+                src = normalized_amplitudes
+                out_shape = list(src.shape[:-1]) + [len(standard_basis)]
+                reordered = torch.zeros(*out_shape, dtype=src.dtype, device=src.device)
+                for tgt_idx, state in enumerate(standard_basis):
+                    src_idx = index_of.get(state)
+                    if src_idx is not None:
+                        reordered[..., tgt_idx] = src[..., src_idx]
+                normalized_amplitudes = reordered
             mixed_states.append((
                 key,
                 branch_probability,
@@ -1311,24 +1368,91 @@ class FeedForwardBlock(torch.nn.Module):
         weight_total: torch.Tensor | None = None
         if not branch_list:
             return None, None, None, (), 0
-        basis_keys = branch_list[0].basis_keys
+        # Fast path: if all branches expose the *same* ordered basis we can
+        # accumulate without reindexing (preserves original probability math).
+        first_basis = branch_list[0].basis_keys
+        uniform_ordered_basis = all(b.basis_keys == first_basis for b in branch_list)
         remaining_n = branch_list[0].remaining_n
+        if uniform_ordered_basis:
+            basis_keys = first_basis
+            for branch in branch_list:
+                weight_tensor = torch.nan_to_num(branch.weight, nan=0.0)
+                if not torch.any(weight_tensor):
+                    continue
+                prob_contrib = self._branch_probability_contribution(
+                    branch, weight_tensor
+                )
+                probability_total = (
+                    prob_contrib
+                    if probability_total is None
+                    else probability_total + prob_contrib
+                )
+                amp_contrib = self._branch_amplitude_contribution(branch, weight_tensor)
+                amplitude_total = (
+                    amp_contrib
+                    if amplitude_total is None
+                    else amplitude_total + amp_contrib
+                )
+                weight_total = (
+                    weight_tensor
+                    if weight_total is None
+                    else weight_total + weight_tensor
+                )
+            return (
+                probability_total,
+                amplitude_total,
+                weight_total,
+                basis_keys,
+                remaining_n,
+            )
+
+        # General path: build a canonical basis as the sorted union of all branch
+        # bases to align heterogeneous detector enumerations.
+        all_states: set[tuple[int, ...]] = set()
+        for b in branch_list:
+            all_states.update(b.basis_keys)
+        if not all_states:
+            canonical_basis = ()
+        else:
+            canonical_basis = tuple(sorted(all_states))
+        basis_keys = canonical_basis
 
         for branch in branch_list:
             weight_tensor = torch.nan_to_num(branch.weight, nan=0.0)
             if not torch.any(weight_tensor):
                 continue
+            # Reindex branch amplitudes to the canonical basis if necessary,
+            # padding missing states with zeros.
+            amplitudes = self._sanitize_amplitudes(branch.amplitudes)
             if branch.basis_keys != basis_keys:
-                raise ValueError(
-                    "Inconsistent basis ordering detected for measurement outcome."
-                )
-            prob_contrib = self._branch_probability_contribution(branch, weight_tensor)
+                # Build source index map
+                index_of: dict[tuple[int, ...], int] = {
+                    state: idx for idx, state in enumerate(branch.basis_keys)
+                }
+                tgt_len = len(basis_keys)
+                src = amplitudes
+                # Prepare output tensor filled with zeros
+                out_shape = list(src.shape[:-1]) + [tgt_len]
+                reindexed = torch.zeros(*out_shape, dtype=src.dtype, device=src.device)
+                # Copy matching indices
+                for tgt_idx, state in enumerate(basis_keys):
+                    src_idx = index_of.get(state)
+                    if src_idx is not None:
+                        reindexed[..., tgt_idx] = src[..., src_idx]
+                amplitudes = reindexed
+            # Compute contributions in the canonical basis
+            distribution = amplitudes.abs().pow(2)
+            prob_contrib = weight_tensor.unsqueeze(-1) * distribution
             probability_total = (
                 prob_contrib
                 if probability_total is None
                 else probability_total + prob_contrib
             )
-            amp_contrib = self._branch_amplitude_contribution(branch, weight_tensor)
+            # Scale amplitudes by sqrt(weight) before accumulation
+            scale = torch.sqrt(torch.clamp(weight_tensor, min=0.0)).to(amplitudes.dtype)
+            while scale.ndim < amplitudes.ndim:
+                scale = scale.unsqueeze(-1)
+            amp_contrib = amplitudes * scale
             amplitude_total = (
                 amp_contrib
                 if amplitude_total is None
