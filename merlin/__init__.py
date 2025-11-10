@@ -32,23 +32,24 @@ from .algorithms.feed_forward import FeedForwardBlock, PoolingFeedForward
 from .algorithms.kernels import FeatureMap, FidelityKernel
 from .algorithms.layer import QuantumLayer
 from .algorithms.loss import NKernelAlignment
-from .builder.circuit_builder import CircuitBuilder
 from .bridge.quantum_bridge import QuantumBridge
+from .builder.circuit_builder import CircuitBuilder
+
 # Essential enums
 # Advanced components (for power users)
 from .core.computation_space import ComputationSpace
 from .core.generators import CircuitGenerator, CircuitType, StateGenerator, StatePattern
 from .core.merlin_processor import MerlinProcessor
 from .core.photonicbackend import PhotonicBackend
+from .core.process import ComputationProcess
 from .measurement import (
     Amplitudes,
+    DetectorTransform,
     ModeExpectations,
     OutputMapper,
     Probabilities,
+    resolve_detectors,
 )
-from .core.process import ComputationProcess
-from .measurement import DetectorTransform
-from .measurement import resolve_detectors
 from .measurement.autodiff import AutoDiffProcess
 from .measurement.process import SamplingProcess
 from .measurement.strategies import MeasurementStrategy
@@ -56,6 +57,7 @@ from .pcvl_pytorch import CircuitConverter, build_slos_distribution_computegraph
 from .utils.combinadics import Combinadics
 from .utils.grouping import LexGrouping, ModGrouping
 from .utils.torch_codes import FeatureEncoder
+
 # Version and metadata
 __version__ = "0.1.0"
 __author__ = "Merlin Team"
@@ -87,5 +89,5 @@ __all__ = [
     "FeatureMap",
     "FidelityKernel",
     "FeedForwardBlock",
-    "CircuitBuilder",
+    "CircuitBuilder", "PoolingFeedForward", "CircuitGenerator", "CircuitType", "StateGenerator", "StatePattern", "PhotonicBackend", "AutoDiffProcess", "SamplingProcess", "FeatureEncoder",
 ]

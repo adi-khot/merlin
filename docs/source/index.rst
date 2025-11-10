@@ -97,6 +97,15 @@ Roadmap
   - Integration with Quandela's photonic hardware
   - additional machine learning models
 
+- **v0.2**: current release with additional features such as feedforward, entangled boson sampling,
+quantum kernels, quantum bridge, remote processing etc
+
+- **v0.3**
+- In development:
+
+  - Optimisation and consolidation of existing code
+  - Bugfixes
+
 Contributing
 ============
 
