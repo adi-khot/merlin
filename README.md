@@ -11,9 +11,9 @@ MerLin brings quantum computing capabilities to AI practitioners through easy-to
 
 **Key Goals:**
 
-- **Paper Reproduction**: Simple tools to reproduce published quantum ML papers and benchmark algorithms - see our [reproduced papers](https://merlinquantum.ai/research/reproduced_papers.html) list.
-- **Quantum Architecture Bridge**: Access to latest and next-gen quantum photonic architectures as a bridge between AI and quantum worlds - see our [quantum architectures](https://merlinquantum.ai/research/architectures.html).
-- **GPU-Optimized Performance**: Fast simulation scaling up to 500+ mode chips with 10-20 photons near the simulability threshold - see [performance benchmarks](https://merlinquantum.ai/reference/performance.html).
+- **Paper Reproduction**: Simple tools to reproduce published quantum ML papers and benchmark algorithms - see our [reproduced papers](https://merlinquantum.ai/reproduced_papers/reproduced_papers.html) list.
+- **Quantum Architecture Bridge**: Access to latest and next-gen quantum photonic architectures as a bridge between AI and quantum worlds - see our [quantum architectures](https://merlinquantum.ai/quantum_expert_area/architectures.html).
+- **GPU-Optimized Performance**: Fast simulation scaling up to 500+ mode chips with 10-20 photons near the simulability threshold - see [performance benchmarks](https://merlinquantum.ai/performance/performance.html).
 
 Together, these provide researchers with comprehensive tools for exploring and developing new quantum-classical hybrid algorithms.
 
