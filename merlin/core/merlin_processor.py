@@ -9,7 +9,7 @@ import zlib
 from collections.abc import Iterable
 from contextlib import suppress
 from math import comb
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import perceval as pcvl
@@ -161,7 +161,7 @@ class MerlinProcessor:
 
         original_device = input.device
         original_dtype = input.dtype
-        layers = list(self._iter_layers_in_order(module))
+        layers: list[Any] = list(self._iter_layers_in_order(module))
 
         fut: Future = Future()
         state = {
@@ -280,7 +280,9 @@ class MerlinProcessor:
         # Ensure we have (and cache) layer config
         cache = self._layer_cache.get(id(layer))
         if cache is None:
-            config = layer.export_config()
+            # export_config is provided by QuantumLayer but not on MerlinModule's
+            # static type, so we treat it dynamically for mypy.
+            config = cast(Any, layer).export_config()
             self._layer_cache[id(layer)] = {"config": config}
         else:
             config = cache["config"]
@@ -373,7 +375,7 @@ class MerlinProcessor:
         """Non-chunking simple path using the per-call RP pool."""
         cache = self._layer_cache.get(id(layer))
         if cache is None:
-            config = layer.export_config()
+            config = cast(Any, layer).export_config()
             self._layer_cache[id(layer)] = {"config": config}
         else:
             config = cache["config"]
@@ -702,47 +704,57 @@ class MerlinProcessor:
         If neither is available, a RuntimeError is raised rather than falling back
         to an arbitrary default size.
         """
+        # Preferred path: use the computation_process simulation graph when present.
         if hasattr(layer, "computation_process") and hasattr(
             layer.computation_process, "simulation_graph"
         ):
-            graph = layer.computation_process.simulation_graph
+            graph: Any = layer.computation_process.simulation_graph
 
-            if hasattr(graph, "final_keys") and graph.final_keys:
-                dist_size = len(graph.final_keys)
-                state_to_index = {
-                    state: idx for idx, state in enumerate(graph.final_keys)
-                }
+            final_keys = getattr(graph, "final_keys", None)
+            if final_keys:
+                keys = list(final_keys)
+                dist_size = len(keys)
+                state_to_index = {state: idx for idx, state in enumerate(keys)}
                 valid_states = (
-                    set(graph.final_keys)
-                    if getattr(layer, "no_bunching", False)
-                    else None
+                    set(keys) if getattr(layer, "no_bunching", False) else None
                 )
-            else:
-                n_modes = layer.circuit.m if hasattr(layer, "circuit") else graph.m
-                n_photons = (
-                    sum(layer.input_state)
-                    if hasattr(layer, "input_state")
-                    else graph.n_photons
-                )
+                return dist_size, state_to_index, valid_states
 
-                if getattr(layer, "no_bunching", False):
-                    dist_size = comb(n_modes, n_photons)
-                    valid_states = set(
-                        self._generate_no_bunching_states(n_modes, n_photons)
-                    )
-                    state_to_index = {
-                        state: idx for idx, state in enumerate(sorted(valid_states))
-                    }
-                else:
-                    dist_size = comb(n_modes + n_photons - 1, n_photons)
-                    state_to_index = None
-                    valid_states = None
+            # Fallback: compute combinatorial size from modes / photons
+            if hasattr(layer, "circuit") and hasattr(layer.circuit, "m"):
+                n_modes = int(layer.circuit.m)  # type: ignore[arg-type]
+            else:
+                n_modes = int(graph.m)  # type: ignore[arg-type]
+
+            if hasattr(layer, "input_state"):
+                input_state = layer.input_state
+                n_photons = int(sum(input_state))  # type: ignore[arg-type]
+            else:
+                n_photons = int(graph.n_photons)  # type: ignore[arg-type]
+
+            if getattr(layer, "no_bunching", False):
+                dist_size = comb(n_modes, n_photons)
+                valid_states = set(
+                    self._generate_no_bunching_states(n_modes, n_photons)
+                )
+                state_to_index = {
+                    state: idx for idx, state in enumerate(sorted(valid_states))
+                }
+            else:
+                dist_size = comb(n_modes + n_photons - 1, n_photons)
+                state_to_index = None
+                valid_states = None
 
             return dist_size, state_to_index, valid_states
 
+        # Secondary path: a layer with direct circuit + input_state attributes
+        # Secondary path: a layer with direct circuit + input_state attributes
         if hasattr(layer, "circuit") and hasattr(layer, "input_state"):
-            n_modes = layer.circuit.m
-            n_photons = sum(layer.input_state)
+            circuit = cast(Any, layer.circuit)
+            input_state = cast(Any, layer.input_state)
+
+            n_modes = int(circuit.m)
+            n_photons = int(sum(input_state))
 
             if getattr(layer, "no_bunching", False):
                 dist_size = comb(n_modes, n_photons)
@@ -801,7 +813,9 @@ class MerlinProcessor:
 
         NOTE: This does not submit any cloud jobs; it only uses the estimator.
         """
-        if not hasattr(layer, "export_config") or not callable(layer.export_config):
+        if not hasattr(layer, "export_config") or not callable(
+            cast(Any, layer).export_config
+        ):
             raise TypeError("layer must provide export_config() for shot estimation")
 
         # Normalize input to [B, D]
@@ -813,7 +827,7 @@ class MerlinProcessor:
             raise ValueError("input must be 1D or 2D tensor")
 
         # Prepare a child RemoteProcessor mirroring user's processor (token/proxies)
-        config = layer.export_config()
+        config = cast(Any, layer).export_config()
         child_rp = self._clone_remote_processor(self.remote_processor)
         child_rp.set_circuit(config["circuit"])
 

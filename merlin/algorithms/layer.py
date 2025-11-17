@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Iterable, Sequence
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import exqalibur as xqlbr
 import perceval as pcvl
@@ -64,7 +64,8 @@ class QuantumLayer(MerlinModule):
     # Map of deprecated kwargs to (message, raise_error)
     # If raise_error is True the presence of the deprecated parameter will raise a ValueError.
     # If raise_error is False the presence will emit a DeprecationWarning but continue.
-    _deprecated_params: dict[str, tuple[str, bool]] = {
+    # ClassVar[...] so mypy knows this overrides the base class variable.
+    _deprecated_params: ClassVar[dict[str, tuple[str, bool] | str]] = {
         "__init__.ansatz": (
             "Use 'circuit' or 'CircuitBuilder' to define the quantum circuit.",
             True,

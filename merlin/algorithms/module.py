@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Mapping
 from contextlib import contextmanager
 from typing import Any, ClassVar
 
@@ -30,7 +31,9 @@ import torch.nn as nn
 
 
 class MerlinModule(nn.Module):
-    _deprecated_params: ClassVar[dict[str, tuple[str, bool] | str]] = {}
+    # Allow both tuple[str, bool] and str for backwards compatibility.
+    # Mapping[...] here lets subclasses override with a plain dict[...] safely.
+    _deprecated_params: ClassVar[Mapping[str, tuple[str, bool] | str]] = {}
     """Generic MerLin module with shared utility functions
 
     Merlin remote execution policy:
@@ -40,7 +43,6 @@ class MerlinModule(nn.Module):
       - `should_offload(processor, shots)` encapsulates the current offload policy:
             return supports_offload() and not force_local
       - `as_simulation()` provide local context forcing use as simulation
-
     """
 
     # -------------------- Execution policy & helpers --------------------
