@@ -285,12 +285,12 @@ def test_feedforward_block2_input_and_trainable_parameters_backward():
     exp = pcvl.Experiment()
     root = pcvl.Circuit(2)
     root.add(0, pcvl.PS(pcvl.P("phi")))
-    root.add((0, 1), pcvl.BS(theta=pcvl.P("theta")))
+    root.add((0, 1), pcvl.BS(theta=pcvl.P("theta_1")))
     exp.add(0, root)
     exp.add(0, pcvl.Detector.pnr())
 
     conditional = pcvl.Circuit(1)
-    conditional.add(0, pcvl.PS(pcvl.P("theta")))
+    conditional.add(0, pcvl.PS(pcvl.P("theta_2")))
     provider = pcvl.FFCircuitProvider(1, 0, conditional)
     exp.add(0, provider)
 
