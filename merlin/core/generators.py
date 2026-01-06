@@ -93,8 +93,10 @@ class CircuitGenerator:
             # For reservoir mode: use fixed random values instead of parameters
             return pcvl.GenericInterferometer(
                 n_modes,
-                lambda idx: pcvl.BS(theta=np.pi * 2 * random.random())
-                // (0, pcvl.PS(phi=np.pi * 2 * random.random())),
+                lambda idx: (
+                    pcvl.BS(theta=np.pi * 2 * random.random())
+                    // (0, pcvl.PS(phi=np.pi * 2 * random.random()))
+                ),
                 shape=pcvl.InterferometerShape.RECTANGLE,
                 depth=2 * n_modes,
                 phase_shifter_fun_gen=lambda idx: pcvl.PS(
@@ -105,7 +107,8 @@ class CircuitGenerator:
             # Original implementation with named parameters
             def mzi(P1, P2):
                 return (
-                    pcvl.Circuit(2)
+                    pcvl
+                    .Circuit(2)
                     .add((0, 1), pcvl.BS())
                     .add(0, pcvl.PS(P1))
                     .add((0, 1), pcvl.BS())
