@@ -41,7 +41,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    environment: pypi
+    environment: testpypi
     steps:
       - name: Download dist artifacts
         uses: actions/download-artifact@v4
@@ -54,4 +54,4 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
           #user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          #password: ${{ secrets.PYPI_API_TOKEN }}
