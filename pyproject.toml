@@ -7,7 +7,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "merlinquantum"
+name = "merlin-aditya"
 dynamic = ["version"]
 description = "Quantum neural network models using photonic circuits - Preview"
 readme= "README.md"
@@ -15,7 +15,7 @@ requires-python = ">=3.10"
 license = "MIT"
 authors = [
     {name = "MerLin Team"},
-    {name = "MerLin", email = "MerLin@quandela.com"}
+    {name = "MerLin", email = "aditya.khot@quandela.com"}
 ]
 
 classifiers=[

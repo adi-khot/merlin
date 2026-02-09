@@ -49,9 +49,7 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Publish to PyPI (Trusted Publishing)
+      - name: Publish to TestPyPI (Trusted Publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
-          user: __token__
-          password: ${{ secrets.TESTPYPI_API_TOKEN }}
