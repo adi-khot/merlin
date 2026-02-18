@@ -24,17 +24,17 @@
 Setup script for Merlin - Photonic Quantum Neural Networks.
 """
 
-# from setuptools import find_packages, setup
+from setuptools import find_packages, setup
 
-# with open("README.md", encoding="utf-8") as fh:
-#     long_description = fh.read()
+with open("README.md", encoding="utf-8") as fh:
+    long_description = fh.read()
 
-# setup(
-#     scmver=True,
-#     setup_requires=["scmver"],
-#     long_description=long_description,
-#     package_dir={"": "."},
-#     packages=find_packages(),
-#     include_package_data=True,
-#     zip_safe=False,
-# )
+setup(
+    scmver=True,
+    setup_requires=["scmver"],
+    long_description=long_description,
+    package_dir={"": "."},
+    packages=find_packages(),
+    include_package_data=True,
+    zip_safe=False,
+)
