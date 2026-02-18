@@ -28,8 +28,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install build twine
 
-      - name: Clean dist
-        run: rm -rf dist build *.egg-info
+      - name: Clean build artifacts
+        run: rm -rf dist build *.egg-info **/*.egg-info
 
       - name: Build sdist and wheel
         run: python -m build
