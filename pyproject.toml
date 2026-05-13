@@ -2,7 +2,6 @@
 requires = [
     "setuptools>=45",
     "setuptools-scm>=8",
-    "scmver",
     "wheel"
 ]
 build-backend = "setuptools.build_meta"
@@ -73,7 +72,7 @@ source = "https://github.com/merlinquantum/merlin"
 issues = "https://github.com/merlinquantum/merlin/issues"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = {"" = "."}
 packages = [
     "merlin",
     "merlin.algorithms",
